@@ -35,7 +35,7 @@ Useful options:
 | Option | |
 |---|---|
 | `--mode vga` | 640x480 input instead of 1440x1080 |
-| `--targets 5\|9\|13\|16` | calibration dots (default 16) |
+| `--targets 5\|9\|13\|16\|25` | calibration dots (default 16) |
 | `--normalise roll\|frontal\|none` | straighten the face before the model (default roll) |
 | `--measure` | run the head-still + head-moving measurement after launch |
 | `--recalibrate` | ignore the saved calibration |
