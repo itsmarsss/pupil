@@ -26,7 +26,8 @@ Later runs reuse the saved calibration after a 3-dot check, and only ask you to
 recalibrate if it has drifted.
 
 The ◉ menu-bar item has Recalibrate, Check accuracy (9 dots), and toggles for the
-ring and click learning. Esc leaves any fullscreen screen.
+ring, click learning, snapping to buttons and recording. Esc leaves any fullscreen
+screen; Ctrl+C in the terminal quits and saves.
 
 Useful options:
 
@@ -38,6 +39,8 @@ Useful options:
 | `--no-clicks` | don't learn from clicks |
 | `--profile NAME` | separate calibration per person/setup |
 | `--results FILE` | append accuracy checks to a CSV |
+| `--record FILE` | write every gaze sample (and clicks) to a CSV |
+| `--snap` | snap the ring to nearby buttons and links (asks for Accessibility access) |
 
 Calibration profiles and accuracy logs live in `~/Library/Application Support/Gaze/`.
 
