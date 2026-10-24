@@ -6,6 +6,7 @@ import math
 import cv2
 import numpy as np
 
+from ..core.device import Device, load_device
 from ..core.paths import ensure_face_landmarker
 from ..core.types import FaceObservation, Frame, HeadPose, Rect
 from ..filter.one_euro import OneEuroFilter
@@ -86,7 +87,7 @@ class FaceTracker:
     """Detects one face per frame. Landmarks are found on a copy no wider than
     `detect_width` and scaled back, so crops come from the full-resolution frame."""
 
-    def __init__(self, detect_width: int = 640, smooth: bool = True, hfov_deg: float = 54.0):
+    def __init__(self, detect_width: int = 640, smooth: bool = True, device: Device | None = None):
         import mediapipe as mp
         from mediapipe.tasks import python as mp_python
         from mediapipe.tasks.python import vision
@@ -102,19 +103,20 @@ class FaceTracker:
             min_face_detection_confidence=0.3,
             min_face_presence_confidence=0.3,
             min_tracking_confidence=0.3,
+            output_facial_transformation_matrixes=True,
         )
         self._landmarker = vision.FaceLandmarker.create_from_options(options)
         self._last_ts_ms = -1
         self.detect_width = detect_width
         self.smooth = smooth
-        self.hfov_deg = hfov_deg  # horizontal field of view of the (cropped) frame
+        self.device = device or load_device()  # camera focal length
         self._filters = {k: OneEuroFilter(min_cutoff=1.0, beta=0.01) for k in ("face", "left", "right")}
 
     def reset(self) -> None:
         for f in self._filters.values():
             f.reset()
 
-    def _landmarks(self, frame: Frame) -> np.ndarray | None:
+    def _landmarks(self, frame: Frame) -> tuple[np.ndarray, np.ndarray | None] | None:
         image = frame.image
         h, w = image.shape[:2]
         if w > self.detect_width:
@@ -128,16 +130,19 @@ class FaceTracker:
         if not result.face_landmarks:
             return None
         pts = result.face_landmarks[0]
-        return np.array([[p.x * w, p.y * h, p.z * w] for p in pts], dtype=np.float64)
+        lm = np.array([[p.x * w, p.y * h, p.z * w] for p in pts], dtype=np.float64)
+        mats = result.facial_transformation_matrixes
+        return lm, (np.asarray(mats[0], dtype=np.float64).reshape(4, 4) if mats else None)
 
     def process(self, frame: Frame) -> FaceObservation | None:
         """Returns None when there's no usable face (missing, or eyes/mouth off-frame)."""
         h, w = frame.height, frame.width
-        lm = self._landmarks(frame)
-        if lm is None:
+        found = self._landmarks(frame)
+        if found is None:
             self.reset()
             return None
-        lm = np.round(lm)
+        raw, transform = found  # raw: sub-pixel landmarks, kept for the geometric model
+        lm = np.round(raw)  # crop boxes use whole pixels, as in the gaze model's training
         if np.mean(lm[LIP, 1]) >= h:
             self.reset()
             return None
@@ -160,20 +165,22 @@ class FaceTracker:
 
         openness = (self._openness(lm, L_OUTER, L_INNER, L_TOP, L_BOTTOM), self._openness(lm, R_INNER, R_OUTER, R_TOP, R_BOTTOM))
         iris_px = self._iris_diameter(lm)
-        focal_px = (w / 2) / math.tan(math.radians(self.hfov_deg) / 2)
+        focal_px = self.device.focal_px(h)
         distance = focal_px * IRIS_DIAMETER_MM / iris_px if iris_px > 1 else None
 
         return FaceObservation(
             t_ns=frame.t_ns,
             frame_size=(w, h),
-            landmarks=lm,
+            landmarks=raw,
             face_rect=f_rect,
             left_eye_rect=l_rect,
             right_eye_rect=r_rect,
             eye_openness=openness,
             iris_diameter_px=iris_px,
-            head_pose=self._head_pose(lm, focal_px, w, h),
+            head_pose=self._head_pose(raw, focal_px, w, h),
             distance_mm=distance,
+            focal_px=focal_px,
+            transform=transform,
         )
 
     @staticmethod

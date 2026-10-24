@@ -46,7 +46,7 @@ class HeadPose:
 class FaceObservation:
     t_ns: int
     frame_size: tuple[int, int]  # (w, h)
-    landmarks: np.ndarray  # 478 x 3, frame pixels (z scaled like x)
+    landmarks: np.ndarray  # 478 x 3, frame pixels, sub-pixel (z scaled like x)
     face_rect: Rect
     left_eye_rect: Rect  # eye on the image's left (subject's right eye)
     right_eye_rect: Rect
@@ -54,6 +54,8 @@ class FaceObservation:
     iris_diameter_px: float
     head_pose: HeadPose | None = None
     distance_mm: float | None = None  # eye to camera, from iris size
+    focal_px: float | None = None  # camera focal length for this frame size
+    transform: np.ndarray | None = None  # MediaPipe facial transformation matrix (4x4), for the geometric model
 
     @property
     def is_blinking(self) -> bool:

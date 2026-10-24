@@ -47,7 +47,7 @@ def test_frontal_warp_centres_face():
     canvas[100 : 100 + img.shape[0], 150 : 150 + img.shape[1]] = img  # face well off-centre
     frame = Frame(1, canvas)
     face = FaceTracker(smooth=False).process(frame)
-    H = frontal_warp(face, camera_matrix(1440, 1080, 54.0))
+    H = frontal_warp(face, camera_matrix(1440, 1080, face.focal_px))
     _, warped = apply_warp(frame, face, H)
     x, y, w, h = warped.face_rect
     assert abs(x + w / 2 - 720) < 60 and abs(y + h / 2 - 540) < 60

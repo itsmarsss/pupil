@@ -27,9 +27,8 @@ NORMALISED_DISTANCE_MM = 500.0
 _CENTRE_ROWS = [2, 3, 4, 5]
 
 
-def camera_matrix(w: int, h: int, hfov_deg: float) -> np.ndarray:
-    f = (w / 2) / math.tan(math.radians(hfov_deg) / 2)
-    return np.array([[f, 0, w / 2], [0, f, h / 2], [0, 0, 1]], dtype=np.float64)
+def camera_matrix(w: int, h: int, focal_px: float) -> np.ndarray:
+    return np.array([[focal_px, 0, w / 2], [0, focal_px, h / 2], [0, 0, 1]], dtype=np.float64)
 
 
 def frontal_warp(face: FaceObservation, K: np.ndarray, distance_mm: float = NORMALISED_DISTANCE_MM) -> np.ndarray | None:
@@ -80,20 +79,17 @@ def apply_warp(frame: Frame, face: FaceObservation, H: np.ndarray) -> tuple[Fram
 class NormalisedModel:
     """Wraps a GazeModel: normalises each frame, then runs the model on the result."""
 
-    def __init__(self, model, method: str = "frontal", hfov_deg: float = 54.0):
+    def __init__(self, model, method: str = "frontal"):
         if method not in ("frontal", "roll"):
             raise ValueError(method)
-        self.model, self.method, self.hfov_deg = model, method, hfov_deg
+        self.model, self.method = model, method
         self.model_id = f"{model.model_id}+{method}"
-        self._K: np.ndarray | None = None
 
     def infer(self, frame: Frame, face: FaceObservation) -> GazeFeatures | None:
         if self.method == "roll":
             H = roll_warp(face)
         else:
-            if self._K is None or self._K[0, 2] != frame.width / 2:
-                self._K = camera_matrix(frame.width, frame.height, self.hfov_deg)
-            H = frontal_warp(face, self._K)
+            H = frontal_warp(face, camera_matrix(frame.width, frame.height, face.focal_px))
         out = apply_warp(frame, face, H) if H is not None else None
         if out is None:
             return None
