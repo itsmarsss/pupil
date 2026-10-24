@@ -10,13 +10,15 @@ from dataclasses import dataclass, field, replace
 
 import numpy as np
 
-ALPHAS = (1.0, 10.0, 100.0, 1000.0)
+# Pooled over 36 live validation dots, α=1 produced the worst outliers in every pipeline
+# variant and the "rawpose" family was ~2x worse than the rest; both are left out.
+ALPHAS = (10.0, 100.0, 1000.0)
 
 
 def _design(X: np.ndarray, kind: str, pose_dim: int) -> np.ndarray:
     """Model inputs, where the last `pose_dim` columns are the head-pose block:
-    'raw' = the model's own (x, y); 'rawpose' = that plus pose;
-    'model' = all model features (no pose); 'full' = model features plus pose."""
+    'raw' = the model's own (x, y); 'model' = all model features (no pose);
+    'full' = model features plus pose. ('rawpose' = raw plus pose; kept for replays.)"""
     n = X.shape[1] - pose_dim
     if kind == "raw":
         return X[:, :2]
@@ -67,7 +69,6 @@ def candidates(pose_dim: int = 0, use_pose: bool = False) -> list[Ridge]:
     cands = [Ridge("raw", 1e-3, pose_dim)]  # near-zero alpha keeps the 2-d affine map unbiased
     cands += [Ridge("model", a, pose_dim) for a in ALPHAS]
     if use_pose and pose_dim:
-        cands += [Ridge("rawpose", a, pose_dim) for a in (0.1, 10.0)]
         cands += [Ridge("full", a, pose_dim) for a in ALPHAS]
     return cands
 
@@ -105,17 +106,30 @@ def group_cv_error(model: Ridge, X, Y, w, groups, score_groups=None) -> float:
     return float(np.median(errors))
 
 
+# Within this factor of the best CV error, prefer the simpler candidate: with ~9 targets
+# the CV ranking is noisy and the lowest-error fit is often the most overfit one.
+CV_TOLERANCE = 1.10
+_KIND_RANK = {"raw": 0, "model": 1, "full": 2}
+
+
+def _simplicity(c: Ridge) -> tuple:
+    return (_KIND_RANK[c.kind], -c.alpha)  # simpler kind first, then stronger regularisation
+
+
 def fit_best(X: np.ndarray, Y: np.ndarray, w: np.ndarray, groups: np.ndarray, pose_dim: int = 0,
              score_groups: np.ndarray | None = None, use_pose: bool = False) -> tuple[Ridge, FitReport]:
-    """Fit every candidate on all data; return the one with the lowest group-CV error."""
+    """Fit the simplest candidate whose group-CV error is within CV_TOLERANCE of the best.
+    The 2-d "raw" map is only a fallback when there are too few targets to cross-validate."""
     report = FitReport(chosen="", n_samples=len(X), n_groups=len(np.unique(groups)))
-    best, best_err = None, float("inf")
-    for cand in candidates(pose_dim, use_pose):
-        err = group_cv_error(cand, X, Y, w, groups, score_groups) if report.n_groups >= 4 else float("inf")
-        report.cv_error_pt[cand.name] = err
-        if err < best_err:
-            best, best_err = cand, err
-    if best is None:  # too few targets to cross-validate: the simplest model is safest
-        best = candidates(pose_dim)[0]
+    cands = candidates(pose_dim, use_pose)
+    if report.n_groups >= 4:
+        cands = [c for c in cands if c.kind != "raw"]
+        errs = {c.name: group_cv_error(c, X, Y, w, groups, score_groups) for c in cands}
+        report.cv_error_pt = errs
+        best_err = min(errs.values())
+        close = [c for c in cands if errs[c.name] <= best_err * CV_TOLERANCE]
+        best = min(close, key=_simplicity)
+    else:  # too few targets to cross-validate: the simplest model is safest
+        best = cands[0]
     report.chosen = best.name
     return best.fit(X, Y, w), report

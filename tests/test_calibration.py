@@ -38,11 +38,18 @@ def test_ridge_recovers_affine_map():
     assert np.abs(pred - Y).max() < 1e-3
 
 
-def test_few_targets_choose_simple_model():
-    X, Y, w, g = synth(grid(9, *SCREEN), signal="raw")
+def test_too_few_targets_fall_back_to_raw():
+    X, Y, w, g = synth(grid(3, *SCREEN), signal="raw")
     model, report = fit_best(X, Y, w, g)
     assert report.chosen == "raw"
-    assert report.cv_error_pt["raw"] < 100
+
+
+def test_prefers_stronger_regularisation_when_close():
+    X, Y, w, g = synth(grid(9, *SCREEN), signal="raw")
+    model, report = fit_best(X, Y, w, g)
+    best = min(report.cv_error_pt.values())
+    close = [n for n, e in report.cv_error_pt.items() if e <= best * 1.10]
+    assert report.chosen == max(close, key=lambda n: float(n.split("=")[1]))
 
 
 def test_rich_signal_chooses_full_model():
@@ -51,7 +58,7 @@ def test_rich_signal_chooses_full_model():
     X, Y, w, g = synth(targets, per_target=5, signal="hidden", noise=0.05)
     model, report = fit_best(X, Y, w, g)
     assert report.chosen.startswith("model")
-    assert report.cv_error_pt[report.chosen] < report.cv_error_pt["raw"]
+    assert report.cv_error_pt[report.chosen] < 100
 
 
 def test_profile_roundtrip(tmp_path):
