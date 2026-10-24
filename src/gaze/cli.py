@@ -32,8 +32,29 @@ def _build_tracker(args):
     return Tracker(source, FaceTracker(), model, main_screen(), smoothing=args.smoothing)
 
 
+def _single_instance():
+    """Hold an exclusive lock for the app's lifetime; None if another copy already has it."""
+    import fcntl
+
+    from .core.paths import APP_SUPPORT
+
+    APP_SUPPORT.mkdir(parents=True, exist_ok=True)
+    lock = open(APP_SUPPORT / "app.lock", "w")
+    try:
+        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        lock.close()
+        return None
+    return lock
+
+
 def cmd_run(args) -> int:
     from .ui.app import GazeApp
+
+    lock = _single_instance()
+    if lock is None:
+        print("gaze is already running (◉ in the menu bar). Quit it first: ◉ → Quit.", file=sys.stderr)
+        return 1
 
     tracker = _build_tracker(args)
     GazeApp(
