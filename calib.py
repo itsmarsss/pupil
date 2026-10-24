@@ -11,6 +11,9 @@ eyes or per eye. Optional fixes, each switchable via GazeConfig so a test can co
                        "affine" (strongly shrunk toward no change) or "quad" (quadratic in x, y; corrects the
                        curved leftover error seen in real runs)
   blink_reject         drop frames whose eye openness is well below the user's normal
+  head_comp            linear correction for head movement away from the calibration pose (yaw, pitch, nose x/y),
+                       learned from "head sweep" frames: eyes on a dot while the head moves. Dot calibration alone
+                       can't learn it (the head is still). Off automatically without sweep frames.
 
 The camera FOV is NOT fitted: with free gains it can't be separated from them (see test_calib.py); measure it once
 with calibrate_fov.py.
@@ -40,10 +43,12 @@ class GazeConfig:
     rigid_pose: bool = False
     residual: str = "quad"       # "none", "affine" or "quad"
     blink_reject: bool = False
+    head_comp: bool = True
 
     def label(self) -> str:
         on = [n for n, v in (("equator", self.iris_mode == "equator"), ("per-eye", self.per_eye), ("rigid", self.rigid_pose),
-                             (self.residual, self.residual != "none"), ("blink", self.blink_reject)) if v]
+                             (self.residual, self.residual != "none"), ("blink", self.blink_reject),
+                             ("headcomp", self.head_comp)) if v]
         return "+".join(on) or "baseline"
 
     @classmethod
@@ -57,15 +62,18 @@ class GazeConfig:
 # Cumulative ablation: each row adds one fix to the previous one, then the quadratic correction on its own and
 # on top of everything
 ABLATION = [
-    GazeConfig("center", False, False, "none", False),
-    GazeConfig("center", False, False, "none", True),
-    GazeConfig("equator", False, False, "none", True),
-    GazeConfig("equator", True, False, "none", True),
-    GazeConfig("equator", True, True, "none", True),
-    GazeConfig("equator", True, True, "affine", True),
-    GazeConfig("center", False, False, "quad", False),
-    GazeConfig("equator", True, True, "quad", True),
+    GazeConfig("center", False, False, "none", False, False),
+    GazeConfig("center", False, False, "none", True, False),
+    GazeConfig("equator", False, False, "none", True, False),
+    GazeConfig("equator", True, False, "none", True, False),
+    GazeConfig("equator", True, True, "none", True, False),
+    GazeConfig("equator", True, True, "affine", True, False),
+    GazeConfig("center", False, False, "quad", False, False),
+    GazeConfig("equator", True, True, "quad", True, False),
+    GazeConfig("center", False, False, "quad", False, True),
 ]
+SWEEP_GROUP0 = 1000      # calibration groups >= this are head-sweep frames
+HEAD_COMP_RIDGE = 0.5    # x number of frames, on standardised features
 RESIDUAL_RIDGE = {"affine": 1.0, "quad": 0.02}  # x number of dots; shrinks the correction toward zero
 RESIDUAL_MIN_GROUPS = {"affine": 4, "quad": 8}
 
@@ -90,6 +98,7 @@ class UserCalib:
     residual: dict | None = None     # {"kind", "center", "half", "coef"}: hit + features(hit) @ coef (cm)
     affine: list | None = None       # legacy 2x3 affine from older files
     rigid_ref: list | None = None    # (N, 3) rigid landmarks in the head frame
+    head_comp: dict | None = None    # {"ref": [yaw, pitch, nose x, nose y], "scale": [...], "coef": 4x2}
     ear_ref: float | None = None     # median eye openness during calibration
     rms_cm: float = float("nan")
 
@@ -165,6 +174,18 @@ def apply_residual(uc: UserCalib, hit: np.ndarray) -> np.ndarray:
     return hit
 
 
+def head_features(gf: g.GazeFrame) -> np.ndarray:
+    """Head yaw, pitch (degrees) and nose-tip x, y (cm)."""
+    return np.array([gf.head_ypr_deg[0], gf.head_ypr_deg[1], gf.head_origin[0], gf.head_origin[1]])
+
+
+def apply_head_comp(uc: UserCalib, gf: g.GazeFrame) -> None:
+    hc = uc.head_comp
+    z = (head_features(gf) - np.array(hc["ref"])) / np.array(hc["scale"])
+    d = z @ np.array(hc["coef"])
+    gf.hit = np.array([gf.hit[0] + d[0], gf.hit[1] + d[1], 0.0])
+
+
 def predict(lms: np.ndarray, pose: np.ndarray, intr: g.Intrinsics, screen: g.Screen, uc: UserCalib | None,
             base: g.EyeParams = g.EyeParams(), depth_scale: float | None = None, aspect: float | None = None) -> g.GazeFrame | None:
     """Gaze for one frame with the user's calibration and its config. None = blink (when blink rejection is on)."""
@@ -177,6 +198,9 @@ def predict(lms: np.ndarray, pose: np.ndarray, intr: g.Intrinsics, screen: g.Scr
     gf = g.compute(lms, pose, intr, screen, uc.eye(base), depth_scale, iris_points(lms, cfg.iris_mode), head_R)
     if cfg.residual != "none" and (uc.residual is not None or uc.affine is not None) and gf.hit is not None:
         gf.hit = apply_residual(uc, gf.hit)
+    if cfg.head_comp and uc.head_comp is not None and gf.hit is not None:
+        apply_head_comp(uc, gf)
+    if gf.hit is not None and (cfg.residual != "none" or cfg.head_comp):
         gf.hit_px = screen.to_px(gf.hit)
         gf.direction = g.normalize(gf.hit - gf.origin)
     return gf
@@ -258,6 +282,9 @@ def fit(fix: list[Fixation], intr: g.Intrinsics, screen: g.Screen, cfg: GazeConf
         base: g.EyeParams = g.EyeParams()) -> UserCalib:
     aspect = intr.width / intr.height
     uc = UserCalib(config=asdict(cfg))
+    sweep = [f for f in fix if f.group >= SWEEP_GROUP0]  # head-sweep frames: only for head compensation
+    fix = [f for f in fix if f.group < SWEEP_GROUP0]
+    all_dot_frames = list(fix)
     ears = np.array([F.ear(f.lms, aspect) for f in fix])
     uc.ear_ref = float(np.median(ears))
     if cfg.blink_reject:
@@ -312,8 +339,34 @@ def fit(fix: list[Fixation], intr: g.Intrinsics, screen: g.Screen, cfg: GazeConf
         coef = np.linalg.solve(X.T @ X + reg, X.T @ (Y - H))
         uc.residual = {"kind": kind, "center": center, "half": half, "coef": coef.tolist()}
     final = [np.linalg.norm(apply_residual(uc, h)[:2] - f.target[:2]) for h, f in ok]
+    if cfg.head_comp and len({f.group for f in sweep}) >= 2:
+        uc.head_comp = _fit_head_comp(uc, all_dot_frames, sweep, intr, screen, base)
     uc.rms_cm = float(np.sqrt(np.mean(np.square(final)))) if final else float("nan")
     return uc
+
+
+def _fit_head_comp(uc: UserCalib, dots: list[Fixation], sweep: list[Fixation], intr: g.Intrinsics,
+                   screen: g.Screen, base: g.EyeParams) -> dict | None:
+    """Ridge regression of the remaining error on head-pose changes, using per-frame data (dots: still head,
+    sweep: moving head). Features are standardised; the reference is the mean pose during the dots."""
+    no_hc = replace(uc, head_comp=None)
+    feats, resid, dot_feats = [], [], []
+    for f in dots + sweep:
+        gf = predict(f.lms, f.pose, intr, screen, no_hc, base)
+        if gf is None or gf.hit is None:
+            continue
+        feats.append(head_features(gf))
+        resid.append(f.target[:2] - gf.hit[:2])
+        if f.group < SWEEP_GROUP0:
+            dot_feats.append(feats[-1])
+    if len(feats) < 30 or not dot_feats:
+        return None
+    X, Y = np.array(feats), np.array(resid)
+    ref = np.mean(dot_feats, axis=0)
+    scale = np.maximum(X.std(axis=0), [0.5, 0.5, 0.2, 0.2])  # floors: degrees, degrees, cm, cm
+    Z = (X - ref) / scale
+    coef = np.linalg.solve(Z.T @ Z + HEAD_COMP_RIDGE * len(Z) * np.eye(4), Z.T @ Y)
+    return {"ref": ref.tolist(), "scale": scale.tolist(), "coef": coef.tolist()}
 
 
 def drift_correct(uc: UserCalib, fix: list[Fixation], intr: g.Intrinsics, screen: g.Screen,

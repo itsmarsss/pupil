@@ -105,7 +105,8 @@ def main():
         res[cfg] = score(calib.fit(fix, INTR, SCREEN, cfg), test, INTR)
         print(f"  {cfg.label():40s} {res[cfg]:.2f} cm")
     assert res[calib.ABLATION[2]] < res[calib.ABLATION[1]]  # equator beats the dragged centre landmark
-    assert res[calib.ABLATION[-1]] < res[calib.ABLATION[0]]
+    full = calib.GazeConfig("equator", True, True, "quad", True, False)
+    assert res[full] < res[calib.ABLATION[0]]
 
     # 3) drift correction recovers a head shift with one dot
     uc = calib.fit(fix, INTR, SCREEN, calib.ABLATION[-1])
@@ -120,3 +121,44 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
+def rot_x(deg):
+    a = np.radians(deg)
+    return np.array([[1, 0, 0], [0, np.cos(a), -np.sin(a)], [0, np.sin(a), np.cos(a)]])
+
+
+def test_head_comp():
+    """True eyeball centres sit deeper than the model assumes -> errors that grow with head movement, invisible
+    to a still-head dot calibration. Head-sweep frames should let head compensation remove most of it."""
+    from dataclasses import replace as rep
+    deep = {e: rep(p, center_depth_cm=1.2) for e, p in TRUE.items()}
+    rng = np.random.default_rng(5)
+    home = np.array([1.0, -9.0, -50.0])
+    fix = []
+    for gi, (fx, fy) in enumerate(CALIB):
+        t = SCREEN.from_px(np.array([fx * 1512, fy * 950]))
+        for _ in range(10):
+            fix.append(calib.Fixation(*make(home + rng.normal(0, 0.2, 3), rot_y(3), t, rng, eyes=deep), t, gi))
+    for si, (fx, fy) in enumerate([(0.5, 0.5), (0.25, 0.5), (0.75, 0.5)]):  # head sweep: eyes on the dot, head moving
+        t = SCREEN.from_px(np.array([fx * 1512, fy * 950]))
+        for k in range(60):
+            a = 2 * np.pi * k / 60
+            R = rot_y(3 + 8 * np.cos(a)) @ rot_x(5 * np.sin(a))
+            pos = home + [3 * np.sin(a), 2 * np.cos(2 * a), 0]
+            fix.append(calib.Fixation(*make(pos, R, t, rng, eyes=deep), t, calib.SWEEP_GROUP0 + si))
+    test = []
+    for fx, fy in TEST:
+        t = SCREEN.from_px(np.array([fx * 1512, fy * 950]))
+        test.append((t, [make(home + [3.5, -1.5, 0], rot_y(-5) @ rot_x(4), t, rng, eyes=deep) for _ in range(10)]))
+    off = score(calib.fit(fix, INTR, SCREEN, calib.GazeConfig(head_comp=False)), test, INTR)
+    uc = calib.fit(fix, INTR, SCREEN, calib.GazeConfig(head_comp=True))
+    on = score(uc, test, INTR)
+    still = [(t, [make(home, rot_y(3), t, rng, eyes=deep) for _ in range(10)]) for t, _ in test]
+    print(f"head moved after calibration: without head comp {off:.2f} cm -> with {on:.2f} cm "
+          f"(head still: {score(uc, still, INTR):.2f} cm)")
+    assert uc.head_comp is not None and on < off
+
+
+if __name__ == "__main__":
+    test_head_comp()
