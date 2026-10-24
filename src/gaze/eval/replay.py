@@ -75,12 +75,12 @@ def extract(root: Path, model: GazeModel, mode: str, timings: dict[str, TargetTi
 
 
 def evaluate(data: list[Extracted], screen: Screen, config: str = "dots+pose+motion",
-             calibrator: str = "auto") -> tuple[str, ValidationResult, ValidationResult | None]:
+             calibrator: str = "auto", valid_phase: str | None = None) -> tuple[str, ValidationResult, ValidationResult | None]:
     """Fit on the config's phases, score on validation. Also returns the score over only
     the validation targets where the head was inside the calibrated pose range."""
     phases, use_pose = CONFIGS[config]
     fit_on = [d for d in data if d.phase in phases and len(d.features)]
-    valid = [d for d in data if d.phase == "valid"]
+    valid = [d for d in data if d.phase.startswith("valid") and valid_phase in (None, d.phase)]
 
     X = np.vstack([d.features for d in fit_on])
     Y = np.vstack([np.tile(d.target, (len(d.features), 1)) for d in fit_on])
@@ -127,17 +127,22 @@ def load(root: Path, screen: Screen | None = None):
 
 def replay(root: Path, model: GazeModel, screen: Screen | None = None, modes=("hd", "vga"),
            all_calibrators: bool = False):
-    """Rows of (mode, config, calibrator, overall result, result with head in range)."""
+    """Rows of (mode, config, calibrator, validation phase, result, result with head in range).
+    Phase "all" pools every check; sessions from the measure routine also get
+    "valid_still" and "valid_moving" rows."""
     screen, timings = load(root, screen)
     rows = []
     for mode in modes:
         data = extract(root, model, mode, timings)
         has_motion = any(d.phase == "motion" for d in data)
+        valid_phases = sorted({d.phase for d in data if d.phase.startswith("valid")})
+        phases = [None] + (valid_phases if len(valid_phases) > 1 else [])
         for config, (_, use_pose) in CONFIGS.items():
             if "motion" in config and not has_motion:
                 continue
             cals = ["auto"] + ([c.name for c in candidates(POSE_DIM, use_pose)] if all_calibrators else [])
             for cal in cals:
-                name, overall, in_range = evaluate(data, screen, config, cal)
-                rows.append((mode, config, name, overall, in_range))
+                for vp in phases:
+                    name, overall, in_range = evaluate(data, screen, config, cal, vp)
+                    rows.append((mode, config, name, vp or "all", overall, in_range))
     return rows
