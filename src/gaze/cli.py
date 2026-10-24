@@ -73,6 +73,75 @@ def cmd_replay(args) -> int:
     return 0
 
 
+def cmd_fov(args) -> int:
+    """Measure the camera's focal length from iris size at a known distance (paper sheet as the spacer)."""
+    import math
+    import time
+
+    import numpy as np
+
+    from .capture.camera import CameraSource
+    from .core.device import load_device
+    from .face.tracker import FaceTracker, IRIS_DIAMETER_MM
+
+    paper_cm = {"a4": 29.7, "letter": 27.94}
+    brow_to_eye_cm = 1.5  # the eyes sit this far behind the brow the paper touches
+    distance_mm = 10 * (args.distance_cm if args.distance_cm else paper_cm[args.paper] + brow_to_eye_cm)
+    if args.paper:
+        print(f"Rest one short edge of a sheet of {args.paper.upper()} paper on the screen just below the camera,")
+        print("touch the other end to your forehead between the eyebrows, then take the paper away")
+        print(f"and keep still, looking at the camera (eyes ~{distance_mm / 10:.1f} cm from it).")
+    input("Press Enter when you're in position... ")
+
+    device = load_device()
+    source = CameraSource(mode="hd", camera=int(args.camera) if args.camera.isdigit() else args.camera)
+    tracker = FaceTracker(detect_width=1440, smooth=False, device=device)  # full resolution: iris size is the measurement
+    source.start()
+    focals, depth_focals, last, deadline = [], [], 0, time.monotonic() + 20
+    try:
+        while len(focals) < args.frames and time.monotonic() < deadline:
+            frame = source.latest(after_t_ns=last, timeout=1.0)
+            if frame is None:
+                continue
+            last = frame.t_ns
+            face = tracker.process(frame)
+            if face is None or face.is_blinking:
+                continue
+            lm = face.landmarks
+            iris = np.mean([max(math.dist(lm[a, :2], lm[c, :2]), math.dist(lm[b, :2], lm[d, :2]))
+                            for a, b, c, d in ((469, 470, 471, 472), (474, 475, 476, 477))])
+            focals.append(iris * distance_mm / IRIS_DIAMETER_MM * 1080 / frame.height)
+            if face.transform is not None:  # MediaPipe solves pose assuming a 63° vertical field of view
+                f_mp = (frame.height / 2) / math.tan(math.radians(31.5))
+                depth_focals.append(f_mp * distance_mm / (10 * abs(face.transform[2, 3])) * 1080 / frame.height)
+            print(f"\r{len(focals)}/{args.frames} frames", end="", flush=True)
+    finally:
+        source.stop()
+        tracker.close()
+    print()
+    if len(focals) < 10:
+        print("Not enough frames with your face and open eyes; try again with more light.")
+        return 1
+    f = float(np.median(focals))
+    spread = float(np.std(focals) / f * 100)
+    hfov_full = math.degrees(2 * math.atan(960 / f))
+    hfov_crop = math.degrees(2 * math.atan(720 / f))
+    print(f"focal length {f:.0f} px at 1080p (spread {spread:.1f} %)")
+    print(f"field of view: {hfov_full:.1f}° across the full 1920 frame, {hfov_crop:.1f}° across the 1440 crop")
+    if depth_focals:
+        fd = float(np.median(depth_focals))
+        print(f"cross-check from MediaPipe's head depth (assumes an average head): {fd:.0f} px "
+              f"({100 * (fd / f - 1):+.0f} %; within ~15 % is normal)")
+    print(f"previous value: {device.focal_px_1080:.0f} px ({'measured' if device.measured else 'assumed'})")
+    if args.dry_run:
+        return 0
+    device.focal_px_1080, device.measured = f, True
+    device.method = f"iris at {distance_mm / 10:.1f} cm, {len(focals)} frames, spread {spread:.1f} %"
+    device.save()
+    print("saved. Recalibrate (`gaze --recalibrate`) so the calibration uses it.")
+    return 0
+
+
 def cmd_cameras(_args) -> int:
     from .capture.camera import list_cameras
 
@@ -105,6 +174,13 @@ def cmd_doctor(args) -> int:
     print(("✓ " if lm.exists() else "• ") + ("face landmarker present" if lm.exists() else "face landmarker downloads on first run"))
     s = main_screen()
     print(f"• screen {s.width_pt:.0f}x{s.height_pt:.0f} pt, {s.width_mm:.0f}x{s.height_mm:.0f} mm")
+    from .core.device import load_device
+
+    dev = load_device()
+    if dev.measured:
+        print(f"✓ camera focal length {dev.focal_px_1080:.0f} px at 1080p, measured ({dev.method})")
+    else:
+        print(f"• camera field of view not measured (assuming {dev.hfov_deg(1920, 1080):.0f}°); run `gaze fov --paper a4`")
     from .core.lid import LidSensor
 
     lid = LidSensor().angle()
@@ -145,6 +221,13 @@ def main(argv: list[str] | None = None) -> int:
                        help="straighten the face before the gaze model (default: level the eyes)")
     sub.add_parser("control", help="look at something and say what to do (see `gaze control -h`)")
     sub.add_parser("cameras", help="list cameras")
+    fov = sub.add_parser("fov", help="measure the camera's field of view (once per camera)")
+    spacer = fov.add_mutually_exclusive_group(required=True)
+    spacer.add_argument("--paper", choices=["a4", "letter"], help="paper sheet used as the spacer")
+    spacer.add_argument("--distance-cm", type=float, help="measured eye-to-camera distance instead")
+    fov.add_argument("--camera", default="FaceTime")
+    fov.add_argument("--frames", type=int, default=90)
+    fov.add_argument("--dry-run", action="store_true", help="measure and print, don't save")
     doctor = sub.add_parser("doctor", help="check camera access, models and screen")
     doctor.add_argument("--camera", default="FaceTime")
     rp = sub.add_parser("replay", help="score pipeline variants on a saved session")
@@ -159,7 +242,7 @@ def main(argv: list[str] | None = None) -> int:
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
         datefmt="%H:%M:%S",
     )
-    commands = {"cameras": cmd_cameras, "doctor": cmd_doctor, "replay": cmd_replay}
+    commands = {"cameras": cmd_cameras, "doctor": cmd_doctor, "replay": cmd_replay, "fov": cmd_fov}
     return commands.get(args.command, cmd_run)(args)
 
 
