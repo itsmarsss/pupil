@@ -34,6 +34,7 @@ from ..calibration.targets import TargetTiming, grid, shuffled
 from ..core.paths import APP_SUPPORT, recordings_dir
 from ..core.types import TrackingState
 from ..eval.metrics import ValidationResult, append_result, score
+from ..eval.session import SessionWriter
 from ..sinks.recorder import GazeRecorder
 from ..sinks.snapper import Element, Snapper
 from ..tracker import Tracker
@@ -72,6 +73,7 @@ class GazeApp:
         learn_from_clicks: bool = True,
         snap: bool = False,
         record_path: Path | None = None,
+        session_dir: Path | None = None,
     ):
         self.tracker = tracker
         self.screen = tracker.screen
@@ -87,6 +89,8 @@ class GazeApp:
         self._snap_pending: int | None = None
         self.recorder: GazeRecorder | None = None
         self._record_path = record_path
+        self._session_dir = session_dir
+        self.session: SessionWriter | None = None
 
         self.ring: GazeRing | None = None
         self.targets: TargetScreen | None = None
@@ -115,6 +119,17 @@ class GazeApp:
             self._toggle_snap()
         if self._record_path is not None:
             self._start_recording(self._record_path)
+        if self._session_dir is not None:
+            self.session = SessionWriter(self._session_dir, {
+                "screen_pt": [self.screen.width_pt, self.screen.height_pt],
+                "screen_mm": [self.screen.width_mm, self.screen.height_mm],
+                "timing": vars(self.timing),
+                "mode": getattr(getattr(self.tracker.source, "mode", None), "name", ""),
+                "model": self.tracker.model.model_id,
+                "camera": self.tracker.source.source_id,
+            })
+            self.tracker.add_frame_listener(self.session.on_frame)
+            log.info("saving calibration/validation frames to %s", self._session_dir)
         self.tracker.start()
         self._timers.append(NSTimer.scheduledTimerWithTimeInterval_repeats_block_(1 / 60, True, self._tick))
         self._timers.append(NSTimer.scheduledTimerWithTimeInterval_repeats_block_(1.0, True, self._update_status))
@@ -138,6 +153,9 @@ class GazeApp:
         self._shut_down = True
         self.tracker.stop()
         self._stop_recording()
+        if self.session is not None:
+            self.session.close()
+            log.info("session: %d frames in %s", self.session.frames, self.session.root)
         if self.tracker.profile is not None and self.tracker.profile.calibrated:
             self.tracker.profile.save()
 
@@ -207,6 +225,7 @@ class GazeApp:
         points = shuffled(grid(self.n_targets, self.screen.width_pt, self.screen.height_pt))
 
         def on_target(target, onset_ns, end_ns):
+            self._label(None)
             feats = self._features_for(onset_ns)
             if len(feats) >= MIN_SAMPLES_PER_TARGET:
                 collected[target] = feats
@@ -234,7 +253,12 @@ class GazeApp:
             self.tracker.profile = profile
             self._validate(n=3, launch_check=False)
 
-        TargetSequence(self.targets, points, self.timing, on_target, on_done).start()
+        TargetSequence(self.targets, points, self.timing, on_target, on_done,
+                       on_start=lambda t, onset: self._label("calib", t, onset)).start()
+
+    def _label(self, phase, target=None, onset_ns: int = 0) -> None:
+        if self.session is not None:
+            self.session.label(phase, target, onset_ns)
 
     def _features_for(self, onset_ns: int) -> np.ndarray:
         start = onset_ns + int(self.timing.settle_s * 1e9)
@@ -253,6 +277,7 @@ class GazeApp:
         distances = []
 
         def on_target(target, onset_ns, end_ns):
+            self._label(None)
             start = onset_ns + int(self.timing.settle_s * 1e9)
             end = onset_ns + int((self.timing.dwell_s - self.timing.tail_s) * 1e9)
             self.tracker.wait_until(end, timeout=0.2)
@@ -285,7 +310,8 @@ class GazeApp:
             self._message(lines, {RETURN: self._start_overlay, SPACE: self._calibrate, ESC: self._start_overlay},
                           auto_continue=None if n > 3 else 2.5)
 
-        TargetSequence(self.targets, points, self.timing, on_target, on_done).start()
+        TargetSequence(self.targets, points, self.timing, on_target, on_done,
+                       on_start=lambda t, onset: self._label("valid", t, onset)).start()
 
     def _message(self, lines, keys: dict, auto_continue: float | None = None) -> None:
         state = {"done": False}

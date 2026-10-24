@@ -35,7 +35,31 @@ def cmd_run(args) -> int:
         learn_from_clicks=not args.no_clicks,
         snap=args.snap,
         record_path=Path(args.record) if args.record else None,
+        session_dir=_session_dir(args.save_session),
     ).run()
+    return 0
+
+
+def _session_dir(value):
+    if value is None:
+        return None
+    if value == "auto":
+        import time
+
+        from .core.paths import recordings_dir
+
+        return recordings_dir() / time.strftime("session-%Y%m%d-%H%M%S")
+    return Path(value)
+
+
+def cmd_replay(args) -> int:
+    from .eval.replay import replay
+    from .models.mnn_face_eye import MNNFaceEyeModel
+
+    rows = replay(Path(args.session), MNNFaceEyeModel(args.model), modes=args.modes.split(","))
+    print(f"{'mode':5} {'calibrator':22} {'accuracy':>9} {'p95':>7} {'precision':>9} {'loss':>6}")
+    for mode, cal, r in rows:
+        print(f"{mode:5} {cal:22} {r.accuracy_deg:8.2f}° {r.accuracy_p95_deg:6.2f}° {r.precision_rms_deg:8.2f}° {r.data_loss:6.0%}")
     return 0
 
 
@@ -92,9 +116,15 @@ def main(argv: list[str] | None = None) -> int:
         p.add_argument("--results", help="CSV to append accuracy checks to")
         p.add_argument("--snap", action="store_true", help="snap the ring to nearby buttons (needs Accessibility access)")
         p.add_argument("--record", help="write every gaze sample to this CSV")
+        p.add_argument("--save-session", nargs="?", const="auto", metavar="DIR",
+                       help="save calibration/validation frames for `gaze replay`")
     sub.add_parser("cameras", help="list cameras")
     doctor = sub.add_parser("doctor", help="check camera access, models and screen")
     doctor.add_argument("--camera", default="FaceTime")
+    rp = sub.add_parser("replay", help="score pipeline variants on a saved session")
+    rp.add_argument("session")
+    rp.add_argument("--modes", default="hd,vga")
+    rp.add_argument("--model", help="path to the gaze model")
 
     args = parser.parse_args(argv)
     logging.basicConfig(
@@ -102,7 +132,7 @@ def main(argv: list[str] | None = None) -> int:
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
         datefmt="%H:%M:%S",
     )
-    commands = {"cameras": cmd_cameras, "doctor": cmd_doctor}
+    commands = {"cameras": cmd_cameras, "doctor": cmd_doctor, "replay": cmd_replay}
     return commands.get(args.command, cmd_run)(args)
 
 
