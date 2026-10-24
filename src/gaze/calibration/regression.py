@@ -6,17 +6,24 @@ targets best. As click samples accumulate, richer models start winning on their 
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 import numpy as np
 
 ALPHAS = (1.0, 10.0, 100.0, 1000.0)
 
 
-def _design(X: np.ndarray, kind: str) -> np.ndarray:
-    """Model inputs: 'raw' = affine on the model's own (x, y); 'full' = all features."""
+def _design(X: np.ndarray, kind: str, pose_dim: int) -> np.ndarray:
+    """Model inputs, where the last `pose_dim` columns are the head-pose block:
+    'raw' = the model's own (x, y); 'rawpose' = that plus pose;
+    'model' = all model features (no pose); 'full' = model features plus pose."""
+    n = X.shape[1] - pose_dim
     if kind == "raw":
         return X[:, :2]
+    if kind == "rawpose":
+        return np.hstack([X[:, :2], X[:, n:]])
+    if kind == "model":
+        return X[:, :n]
     return X
 
 
@@ -26,16 +33,17 @@ class Ridge:
 
     kind: str = "full"
     alpha: float = 10.0
+    pose_dim: int = 0
     mean: np.ndarray | None = None
     scale: np.ndarray | None = None
     coef: np.ndarray | None = None  # (d + 1) x 2, last row = intercept
 
     @property
     def name(self) -> str:
-        return f"{self.kind}" if self.kind == "raw" else f"{self.kind}/a={self.alpha:g}"
+        return "raw" if self.kind == "raw" else f"{self.kind}/a={self.alpha:g}"
 
     def fit(self, X: np.ndarray, Y: np.ndarray, w: np.ndarray | None = None) -> "Ridge":
-        Z = _design(X, self.kind).astype(np.float64)
+        Z = _design(X, self.kind, self.pose_dim).astype(np.float64)
         w = np.ones(len(Z)) if w is None else np.asarray(w, dtype=np.float64)
         self.mean = np.average(Z, axis=0, weights=w)
         self.scale = np.sqrt(np.average((Z - self.mean) ** 2, axis=0, weights=w)) + 1e-6
@@ -49,13 +57,19 @@ class Ridge:
 
     def predict(self, X: np.ndarray) -> np.ndarray:
         X = np.atleast_2d(X)
-        Zs = (_design(X, self.kind) - self.mean) / self.scale
+        Zs = (_design(X, self.kind, self.pose_dim) - self.mean) / self.scale
         return np.hstack([Zs, np.ones((len(Zs), 1))]) @ self.coef
 
 
-def candidates() -> list[Ridge]:
-    # A near-zero alpha keeps the 2-d affine map unbiased.
-    return [Ridge("raw", 1e-3)] + [Ridge("full", a) for a in ALPHAS]
+def candidates(pose_dim: int = 0, use_pose: bool = False) -> list[Ridge]:
+    """Pose-aware candidates only when asked: fitting pose on data where the head never
+    moved independently of gaze (dots only) makes extrapolation worse, not better."""
+    cands = [Ridge("raw", 1e-3, pose_dim)]  # near-zero alpha keeps the 2-d affine map unbiased
+    cands += [Ridge("model", a, pose_dim) for a in ALPHAS]
+    if use_pose and pose_dim:
+        cands += [Ridge("rawpose", a, pose_dim) for a in (0.1, 10.0)]
+        cands += [Ridge("full", a, pose_dim) for a in ALPHAS]
+    return cands
 
 
 @dataclass
@@ -69,9 +83,12 @@ class FitReport:
 MAX_FOLDS = 10
 
 
-def group_cv_error(model: Ridge, X, Y, w, groups) -> float:
+def group_cv_error(model: Ridge, X, Y, w, groups, score_groups=None) -> float:
     """Median error (screen points) predicting held-out targets from the rest.
-    Leave-one-target-out up to MAX_FOLDS targets, grouped K-fold beyond that."""
+    Leave-one-target-out up to MAX_FOLDS targets, grouped K-fold beyond that.
+    `score_groups` (default: `groups`) sets how finely held-out samples are averaged
+    before scoring, e.g. per half-second of a head-motion sweep that shares one target."""
+    score_groups = groups if score_groups is None else score_groups
     unique = np.unique(groups)
     if len(unique) < 2:
         return float("inf")
@@ -80,24 +97,25 @@ def group_cv_error(model: Ridge, X, Y, w, groups) -> float:
     errors = []
     for f in np.unique(folds):
         test = folds == f
-        m = Ridge(model.kind, model.alpha).fit(X[~test], Y[~test], w[~test])
+        m = replace(model, mean=None, scale=None, coef=None).fit(X[~test], Y[~test], w[~test])
         pred = m.predict(X[test])
-        for g in np.unique(groups[test]):
-            sel = groups[test] == g
+        for g in np.unique(score_groups[test]):
+            sel = score_groups[test] == g
             errors.append(float(np.hypot(*(pred[sel].mean(axis=0) - Y[test][sel][0]))))  # one estimate per target
     return float(np.median(errors))
 
 
-def fit_best(X: np.ndarray, Y: np.ndarray, w: np.ndarray, groups: np.ndarray) -> tuple[Ridge, FitReport]:
+def fit_best(X: np.ndarray, Y: np.ndarray, w: np.ndarray, groups: np.ndarray, pose_dim: int = 0,
+             score_groups: np.ndarray | None = None, use_pose: bool = False) -> tuple[Ridge, FitReport]:
     """Fit every candidate on all data; return the one with the lowest group-CV error."""
     report = FitReport(chosen="", n_samples=len(X), n_groups=len(np.unique(groups)))
     best, best_err = None, float("inf")
-    for cand in candidates():
-        err = group_cv_error(cand, X, Y, w, groups) if report.n_groups >= 4 else float("inf")
+    for cand in candidates(pose_dim, use_pose):
+        err = group_cv_error(cand, X, Y, w, groups, score_groups) if report.n_groups >= 4 else float("inf")
         report.cv_error_pt[cand.name] = err
         if err < best_err:
             best, best_err = cand, err
     if best is None:  # too few targets to cross-validate: the simplest model is safest
-        best = candidates()[0]
+        best = candidates(pose_dim)[0]
     report.chosen = best.name
     return best.fit(X, Y, w), report

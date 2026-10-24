@@ -50,7 +50,7 @@ def test_rich_signal_chooses_full_model():
     targets = [tuple(p) for p in rng.uniform([0, 0], SCREEN, size=(80, 2))]
     X, Y, w, g = synth(targets, per_target=5, signal="hidden", noise=0.05)
     model, report = fit_best(X, Y, w, g)
-    assert report.chosen.startswith("full")
+    assert report.chosen.startswith("model")
     assert report.cv_error_pt[report.chosen] < report.cv_error_pt["raw"]
 
 
