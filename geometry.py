@@ -21,6 +21,7 @@ import numpy as np
 # MediaPipe face mesh indices
 R_EYE_CORNERS = (33, 133)   # subject's right eye: outer, inner
 L_EYE_CORNERS = (362, 263)  # subject's left eye: inner, outer
+NOSE_TIP = 1
 R_IRIS_CENTER = 468
 L_IRIS_CENTER = 473
 
@@ -114,6 +115,11 @@ class GazeFrame:
     hit_px: np.ndarray | None = None   # (2,)
     eye_hits: dict[str, np.ndarray] = field(default_factory=dict)
     eye_hits_px: dict[str, np.ndarray] = field(default_factory=dict)
+    # where the face points: ray from the nose tip along the head's forward axis
+    head_origin: np.ndarray | None = None
+    head_dir: np.ndarray | None = None
+    head_hit: np.ndarray | None = None
+    head_hit_px: np.ndarray | None = None
 
 
 def normalize(v: np.ndarray) -> np.ndarray:
@@ -245,6 +251,10 @@ def compute(lms: np.ndarray, pose: np.ndarray, intr: Intrinsics, screen: Screen,
     gf = GazeFrame(points=pts, head_R=R, head_t=t, head_quat_xyzw=rot_to_quat_xyzw(R), head_ypr_deg=head_ypr_deg(R))
     B = head_basis(R)
     eyes = eye if isinstance(eye, dict) else {"right": eye, "left": eye}
+    gf.head_origin, gf.head_dir = pts[NOSE_TIP], B[:, 2]
+    gf.head_hit = ray_plane_z0(gf.head_origin, gf.head_dir)
+    if gf.head_hit is not None:
+        gf.head_hit_px = screen.to_px(gf.head_hit)
 
     for name, corners_idx, iris_idx in (("right", R_EYE_CORNERS, R_IRIS_CENTER), ("left", L_EYE_CORNERS, L_IRIS_CENTER)):
         corners = pts[list(corners_idx)]
