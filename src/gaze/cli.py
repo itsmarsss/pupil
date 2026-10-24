@@ -123,7 +123,7 @@ def main(argv: list[str] | None = None) -> int:
         p.add_argument("--source", help="replay a video/image instead of the camera")
         p.add_argument("--model", help="path to the gaze model")
         p.add_argument("--profile", default="default", help="calibration profile name")
-        p.add_argument("--targets", type=int, default=9, choices=[5, 9, 13, 16], help="calibration dots")
+        p.add_argument("--targets", type=int, default=16, choices=[5, 9, 13, 16], help="calibration dots (default 16)")
         p.add_argument("--recalibrate", action="store_true", help="ignore the saved calibration")
         p.add_argument("--no-clicks", action="store_true", help="don't learn from clicks")
         p.add_argument("--results", help="CSV to append accuracy checks to")

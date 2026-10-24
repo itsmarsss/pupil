@@ -6,6 +6,7 @@ from that thread.
 """
 from __future__ import annotations
 
+import json
 import logging
 import signal
 import threading
@@ -71,7 +72,7 @@ class GazeApp:
         self,
         tracker: Tracker,
         profile_name: str = "default",
-        n_targets: int = 9,
+        n_targets: int = 16,
         recalibrate: bool = False,
         results_csv: Path | None = None,
         learn_from_clicks: bool = True,
@@ -136,6 +137,7 @@ class GazeApp:
                 "mode": getattr(getattr(self.tracker.source, "mode", None), "name", ""),
                 "model": self.tracker.model.model_id,
                 "camera": self.tracker.source.source_id,
+                "n_targets": self.n_targets,
                 "lid_deg": self._lid_now,
             })
             self.session.context["lid"] = self._lid_now
@@ -165,6 +167,12 @@ class GazeApp:
         self.tracker.stop()
         self._stop_recording()
         if self.session is not None:
+            delivered = getattr(self.tracker.source, "delivered", None)
+            if delivered:
+                meta_path = self.session.root / "meta.json"
+                meta = json.loads(meta_path.read_text())
+                meta["delivered"] = list(delivered)
+                meta_path.write_text(json.dumps(meta, indent=2))
             self.session.close()
             log.info("session: %d frames in %s", self.session.frames, self.session.root)
         if self.tracker.profile is not None and self.tracker.profile.calibrated:
@@ -198,6 +206,9 @@ class GazeApp:
                 d = np.median([f.distance_mm for f in faces if f.distance_mm]) / 10
                 hint = "  ·  a bit close" if d < 40 else "  ·  a bit far" if d > 85 else ""
                 status = f"Face found  ·  {d:.0f} cm from the camera{hint}"
+            if getattr(self.tracker.source, "downgraded", False):
+                w, h = self.tracker.source.delivered
+                status += f"  ·  camera is only giving {w}x{h}: close other apps using it"
             return [
                 "Look at each dot until it shrinks away",
                 f"{self.n_targets} dots, then a few seconds turning your head (about "
@@ -391,6 +402,7 @@ class GazeApp:
         )
 
     def _message(self, lines, keys: dict, auto_continue: float | None = None) -> None:
+        self._label(None)  # no target on screen: stop saving session frames
         state = {"done": False}
 
         def go(fn):
@@ -403,12 +415,14 @@ class GazeApp:
             NSTimer.scheduledTimerWithTimeInterval_repeats_block_(auto_continue, False, lambda _t: go(keys[RETURN]))
 
     def _after_cancel(self) -> None:
+        self._label(None)
         if self.tracker.profile is not None and self.tracker.profile.calibrated:
             self._start_overlay()
         else:
             self._quit()
 
     def _start_overlay(self) -> None:
+        self._label(None)
         if self._pending_measure:
             self._pending_measure = False
             self._measure()
