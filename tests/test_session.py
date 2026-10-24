@@ -66,7 +66,8 @@ def test_replay_runs_all_variants(tmp_path):
     w.close()
 
     rows = replay(tmp_path, MNNFaceEyeModel(), screen)
-    modes = {m for m, _, _ in rows}
-    assert modes == {"hd", "vga"}
-    assert len(rows) == 2 * 6  # auto + 5 candidates per mode
-    assert all(r.data_loss < 0.5 for _, _, r in rows)
+    assert {r[0] for r in rows} == {"hd", "vga"}
+    assert {r[1] for r in rows} == {"dots", "dots+pose"}  # no head-motion phase recorded
+    assert all(r[3].data_loss < 0.5 for r in rows)
+    rows = replay(tmp_path, MNNFaceEyeModel(), screen, modes=("hd",), all_calibrators=True)
+    assert len(rows) == 6 + 12  # dots: auto + raw + 4 model; dots+pose: those + 2 rawpose + 4 full

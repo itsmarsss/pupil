@@ -56,10 +56,13 @@ def cmd_replay(args) -> int:
     from .eval.replay import replay
     from .models.mnn_face_eye import MNNFaceEyeModel
 
-    rows = replay(Path(args.session), MNNFaceEyeModel(args.model), modes=args.modes.split(","))
-    print(f"{'mode':5} {'calibrator':22} {'accuracy':>9} {'p95':>7} {'precision':>9} {'loss':>6}")
-    for mode, cal, r in rows:
-        print(f"{mode:5} {cal:22} {r.accuracy_deg:8.2f}° {r.accuracy_p95_deg:6.2f}° {r.precision_rms_deg:8.2f}° {r.data_loss:6.0%}")
+    rows = replay(Path(args.session), MNNFaceEyeModel(args.model), modes=args.modes.split(","),
+                  all_calibrators=args.all)
+    print(f"{'mode':5} {'config':17} {'calibrator':24} {'accuracy':>9} {'p95':>7} {'precision':>9} {'loss':>5}  head in range")
+    for mode, config, cal, r, inr in rows:
+        in_range = f"{inr.accuracy_deg:.2f}° ({len(inr.targets)} dots)" if inr else "-"
+        print(f"{mode:5} {config:17} {cal:24} {r.accuracy_deg:8.2f}° {r.accuracy_p95_deg:6.2f}° "
+              f"{r.precision_rms_deg:8.2f}° {r.data_loss:5.0%}  {in_range}")
     return 0
 
 
@@ -124,6 +127,7 @@ def main(argv: list[str] | None = None) -> int:
     rp = sub.add_parser("replay", help="score pipeline variants on a saved session")
     rp.add_argument("session")
     rp.add_argument("--modes", default="hd,vga")
+    rp.add_argument("--all", action="store_true", help="also score every calibrator, not just the auto choice")
     rp.add_argument("--model", help="path to the gaze model")
 
     args = parser.parse_args(argv)
