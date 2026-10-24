@@ -24,7 +24,7 @@ def _build_tracker(args):
         from .face.normalize import NormalisedModel
 
         model = NormalisedModel(model, args.normalise)
-    return Tracker(source, FaceTracker(), model, main_screen())
+    return Tracker(source, FaceTracker(), model, main_screen(), smoothing=args.smoothing)
 
 
 def cmd_run(args) -> int:
@@ -132,6 +132,8 @@ def main(argv: list[str] | None = None) -> int:
         p.add_argument("--save-session", nargs="?", const="auto", metavar="DIR",
                        help="save calibration/validation frames for `gaze replay`")
         p.add_argument("--measure", action="store_true", help="run the head-still + head-moving accuracy measurement")
+        p.add_argument("--smoothing", choices=["off", "light", "medium", "strong"], default="medium",
+                       help="ring smoothing; medium holds steady during fixations (default)")
         p.add_argument("--normalise", choices=["roll", "frontal", "none"], default="roll",
                        help="straighten the face before the gaze model (default: level the eyes)")
     sub.add_parser("cameras", help="list cameras")

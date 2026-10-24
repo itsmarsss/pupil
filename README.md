@@ -38,6 +38,7 @@ Useful options:
 | `--targets 5\|9\|13\|16\|25` | calibration dots (default 16) |
 | `--normalise roll\|frontal\|none` | straighten the face before the model (default roll) |
 | `--measure` | run the head-still + head-moving measurement after launch |
+| `--smoothing off\|light\|medium\|strong` | ring smoothing (default medium: holds steady during fixations) |
 | `--recalibrate` | ignore the saved calibration |
 | `--no-clicks` | don't learn from clicks |
 | `--profile NAME` | separate calibration per person/setup |

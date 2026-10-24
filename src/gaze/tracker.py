@@ -20,7 +20,7 @@ from .core.screen import Screen
 from .core.types import FaceObservation, Frame, GazePoint, Sample, TrackingState
 from .face.tracker import FaceTracker
 from .filter.fixation import FixationDetector
-from .filter.one_euro import OneEuroFilter
+from .filter.smoother import PRESETS, GazeSmoother
 from .models.base import GazeModel
 
 log = logging.getLogger(__name__)
@@ -40,15 +40,15 @@ class Tracker:
         model: GazeModel,
         screen: Screen,
         profile: Profile | None = None,
-        min_cutoff: float = 0.6,
-        beta: float = 0.015,
+        smoothing: str = "medium",
     ):
         self.source = source
         self.face_tracker = face_tracker
         self.model = model
         self.screen = screen
         self.profile = profile
-        self._filter = OneEuroFilter(min_cutoff=min_cutoff, beta=beta)
+        self.smoothing = smoothing
+        self._filter = GazeSmoother(PRESETS[smoothing])
         self._fixations = FixationDetector()
         self._history: collections.deque[Sample] = collections.deque()
         self._lock = threading.Lock()
@@ -100,6 +100,10 @@ class Tracker:
                     return True
             time.sleep(0.01)
         return False
+
+    def set_smoothing(self, name: str) -> None:
+        self.smoothing = name
+        self._filter = GazeSmoother(PRESETS[name])
 
     @property
     def pt_per_deg(self) -> float:
@@ -167,7 +171,7 @@ class Tracker:
         # Outside the calibrated head-pose range the fit extrapolates; keep it on screen.
         raw_x, raw_y = self.screen.clamp(*prediction)
         confidence = profile.confidence(calib)
-        x, y = self._filter(np.array([raw_x, raw_y]), t_ns)
+        x, y = self._filter(raw_x, raw_y, t_ns, self.pt_per_deg)
         fixation = self._fixations.update(float(x), float(y), t_ns, self.pt_per_deg)
         return GazePoint(t_ns, TrackingState.TRACKING, float(x), float(y), raw_x, raw_y, fixation,
                          self.distance_mm, confidence)

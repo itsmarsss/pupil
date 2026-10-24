@@ -519,7 +519,7 @@ class GazeApp:
     # ---- menu ------------------------------------------------------------------------
     def _build_menu(self) -> None:
         actions = [self._calibrate, lambda: self._validate(9), self._measure, self._toggle_overlay,
-                   self._toggle_clicks, self._toggle_snap, self._toggle_recording, self._quit]
+                   self._cycle_smoothing, self._toggle_clicks, self._toggle_snap, self._toggle_recording, self._quit]
         self._menu_target = _MenuTarget.alloc().initWithActions_(actions)
         menu = NSMenu.alloc().init()
         self._status_line = menu.addItemWithTitle_action_keyEquivalent_("Starting…", None, "")
@@ -527,7 +527,7 @@ class GazeApp:
         menu.addItem_(NSMenuItem.separatorItem())
         for tag, (key, title) in enumerate(
             [("calibrate", "Recalibrate"), ("validate", "Check accuracy"), ("measure", "Measure (head still + moving)"),
-             ("overlay", "Show gaze ring"),
+             ("overlay", "Show gaze ring"), ("smoothing", f"Smoothing: {self.tracker.smoothing}"),
              ("clicks", "Learn from clicks"), ("snap", "Snap to buttons"), ("record", "Record gaze"), ("quit", "Quit")]
         ):
             if key == "quit":
@@ -570,6 +570,12 @@ class GazeApp:
     def _toggle_overlay(self) -> None:
         self.overlay_on = not self.overlay_on
         self._menu_items["overlay"].setState_(1 if self.overlay_on else 0)
+
+    def _cycle_smoothing(self) -> None:
+        order = ["off", "light", "medium", "strong"]
+        name = order[(order.index(self.tracker.smoothing) + 1) % len(order)]
+        self.tracker.set_smoothing(name)
+        self._menu_items["smoothing"].setTitle_(f"Smoothing: {name}")
 
     def _toggle_clicks(self) -> None:
         self.learn_from_clicks = not self.learn_from_clicks
