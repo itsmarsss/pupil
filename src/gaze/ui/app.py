@@ -1,0 +1,370 @@
+"""Menu-bar app: launch flow, calibration, validation, overlay and click learning.
+
+Everything here runs on the AppKit main thread. The tracker runs inference on its own
+thread; we read its latest point from a 60 Hz timer instead of calling into AppKit
+from that thread.
+"""
+from __future__ import annotations
+
+import logging
+import threading
+import time
+from pathlib import Path
+
+import numpy as np
+import objc
+from AppKit import (
+    NSApplication,
+    NSApplicationActivationPolicyAccessory,
+    NSEvent,
+    NSEventMaskLeftMouseDown,
+    NSMenu,
+    NSMenuItem,
+    NSObject,
+    NSStatusBar,
+    NSTimer,
+    NSVariableStatusItemLength,
+)
+from PyObjCTools import AppHelper
+
+from ..calibration.implicit import evaluate_click, window
+from ..calibration.profile import CLICK, EXPLICIT, Profile, ProfileMeta
+from ..calibration.targets import TargetTiming, grid, shuffled
+from ..core.paths import APP_SUPPORT
+from ..core.types import TrackingState
+from ..eval.metrics import ValidationResult, append_result, score
+from ..tracker import Tracker
+from .overlay import GazeRing
+from .target_screen import ESC, RETURN, SPACE, TargetScreen, TargetSequence
+
+log = logging.getLogger(__name__)
+
+LAUNCH_CHECK_MAX_DEG = 4.0  # saved calibration is reused if the quick check beats this
+REFIT_EVERY_CLICKS = 8
+MIN_SAMPLES_PER_TARGET = 8
+
+
+class _MenuTarget(NSObject):
+    """Bridges menu actions (Objective-C selectors) to Python callables."""
+
+    def initWithActions_(self, actions):
+        self = objc.super(_MenuTarget, self).init()
+        if self is not None:
+            self.actions = actions
+        return self
+
+    def run_(self, sender):
+        self.actions[sender.tag()]()
+
+
+class GazeApp:
+    def __init__(
+        self,
+        tracker: Tracker,
+        profile_name: str = "default",
+        n_targets: int = 9,
+        recalibrate: bool = False,
+        results_csv: Path | None = None,
+        learn_from_clicks: bool = True,
+    ):
+        self.tracker = tracker
+        self.screen = tracker.screen
+        self.profile_name = profile_name
+        self.n_targets = n_targets
+        self.force_recalibrate = recalibrate
+        self.results_csv = results_csv or APP_SUPPORT / "validation.csv"
+        self.learn_from_clicks = learn_from_clicks
+        self.overlay_on = True
+
+        self.ring: GazeRing | None = None
+        self.targets: TargetScreen | None = None
+        self.timing = TargetTiming()
+        self._busy = False  # calibration/validation on screen
+        self._last_valid_ns = 0
+        self._click_stats = {"ok": 0, "seen": 0}
+        self._clicks_since_fit = 0
+        self._fitting = False
+        self._status_item = None
+        self._status_line = None
+        self._menu_items: dict[str, NSMenuItem] = {}
+        self._timers = []
+        self._last_result: ValidationResult | None = None
+
+    # ---- startup -------------------------------------------------------------------
+    def run(self) -> None:
+        app = NSApplication.sharedApplication()
+        app.setActivationPolicy_(NSApplicationActivationPolicyAccessory)
+        self.ring = GazeRing(self.screen)
+        self.targets = TargetScreen(self.screen)
+        self._build_menu()
+        self.tracker.start()
+        self._timers.append(NSTimer.scheduledTimerWithTimeInterval_repeats_block_(1 / 60, True, self._tick))
+        self._timers.append(NSTimer.scheduledTimerWithTimeInterval_repeats_block_(1.0, True, self._update_status))
+        NSEvent.addGlobalMonitorForEventsMatchingMask_handler_(NSEventMaskLeftMouseDown, self._on_click)
+        # start the launch flow once the run loop is going
+        NSTimer.scheduledTimerWithTimeInterval_repeats_block_(0.1, False, lambda _t: self._launch())
+        try:
+            AppHelper.runEventLoop(installInterrupt=True)
+        finally:
+            self._shutdown()
+
+    def _shutdown(self) -> None:
+        self.tracker.stop()
+        if self.tracker.profile is not None and self.tracker.profile.calibrated:
+            self.tracker.profile.save()
+
+    def _launch(self) -> None:
+        model_id = self.tracker.model.model_id
+        camera = self.tracker.source.source_id
+        screen_pt = (self.screen.width_pt, self.screen.height_pt)
+        profile = None if self.force_recalibrate else Profile.load(self.profile_name)
+        if profile is not None and profile.meta.matches(model_id, camera, screen_pt) and profile.calibrated:
+            log.info("loaded profile %r (%d targets, %d from clicks)", self.profile_name, profile.n_groups, profile.count(CLICK))
+            self.tracker.profile = profile
+            self._validate(n=3, launch_check=True)
+            return
+        if profile is not None and profile.meta.matches(model_id, camera, screen_pt):
+            self.tracker.profile = profile  # keep its click samples
+        self._intro()
+
+    # ---- screens -------------------------------------------------------------------
+    def _intro(self) -> None:
+        self._busy = True
+        self.ring.hide()
+
+        def lines():
+            last = self.tracker.samples_between(time.monotonic_ns() - 500_000_000, time.monotonic_ns())
+            faces = [s.face for s in last if s.face is not None]
+            if not faces:
+                status = "Looking for your face…  make sure it's lit and in view of the camera"
+            else:
+                d = np.median([f.distance_mm for f in faces if f.distance_mm]) / 10
+                hint = "  ·  a bit close" if d < 40 else "  ·  a bit far" if d > 85 else ""
+                status = f"Face found  ·  {d:.0f} cm from the camera{hint}"
+            return [
+                "Look at each dot until it shrinks away",
+                f"{self.n_targets} dots, about {self.n_targets * self.timing.dwell_s:.0f} seconds. Sit the way you normally do.",
+                status,
+                "Press Space to start  ·  Esc to quit",
+            ]
+
+        def on_key(c):
+            if c == SPACE:
+                timer.invalidate()
+                self._calibrate()
+            elif c == ESC:
+                timer.invalidate()
+                self._quit()
+
+        self.targets.show(lines(), on_key=on_key)
+        timer = NSTimer.scheduledTimerWithTimeInterval_repeats_block_(0.25, True, lambda _t: self.targets.set_lines(lines()))
+
+    def _profile_for(self, dim: int) -> Profile:
+        """The current profile, or a new one if there is none or its features differ."""
+        p = self.tracker.profile
+        if p is None or p.X.shape[1] != dim:
+            meta = ProfileMeta(
+                self.profile_name,
+                self.tracker.model.model_id,
+                self.tracker.source.source_id,
+                (self.screen.width_pt, self.screen.height_pt),
+            )
+            p = Profile(meta, dim)
+        return p
+
+    def _calibrate(self) -> None:
+        self._busy = True
+        self.ring.hide()
+        collected: dict[tuple, np.ndarray] = {}
+        points = shuffled(grid(self.n_targets, self.screen.width_pt, self.screen.height_pt))
+
+        def on_target(target, onset_ns, end_ns):
+            feats = self._features_for(onset_ns)
+            if len(feats) >= MIN_SAMPLES_PER_TARGET:
+                collected[target] = feats
+
+        def on_done(cancelled):
+            if cancelled:
+                self._after_cancel()
+                return
+            missing = [t for t in points if t not in collected]
+            if len(missing) > len(points) // 3:
+                self._message(
+                    ["Couldn't see your eyes clearly", f"Got {len(collected)} of {len(points)} dots. Check lighting and that your face is in view.", "Press Space to try again  ·  Esc to quit"],
+                    {SPACE: self._calibrate, ESC: self._quit},
+                )
+                return
+            profile = self._profile_for(next(iter(collected.values())).shape[1])
+            profile.clear(EXPLICIT)  # click samples are kept
+            for target, feats in collected.items():
+                profile.add(feats, target, EXPLICIT)
+            report = profile.fit()
+            if report is None:
+                self._message(["Calibration failed", "Press Space to try again"], {SPACE: self._calibrate, ESC: self._quit})
+                return
+            profile.save()
+            self.tracker.profile = profile
+            self._validate(n=3, launch_check=False)
+
+        TargetSequence(self.targets, points, self.timing, on_target, on_done).start()
+
+    def _features_for(self, onset_ns: int) -> np.ndarray:
+        start = onset_ns + int(self.timing.settle_s * 1e9)
+        end = onset_ns + int((self.timing.dwell_s - self.timing.tail_s) * 1e9)
+        self.tracker.wait_until(end, timeout=0.2)
+        samples = self.tracker.samples_between(start, end)
+        feats = [s.features.vector for s in samples if s.features is not None and s.face is not None and not s.face.is_blinking]
+        return np.stack(feats) if feats else np.zeros((0, 0), np.float32)
+
+    def _validate(self, n: int = 9, launch_check: bool = False) -> None:
+        self._busy = True
+        self.ring.hide()
+        points = shuffled(grid(n, self.screen.width_pt, self.screen.height_pt))
+        per_target: dict[tuple, list] = {}
+        totals = {"frames": 0}
+        distances = []
+
+        def on_target(target, onset_ns, end_ns):
+            start = onset_ns + int(self.timing.settle_s * 1e9)
+            end = onset_ns + int((self.timing.dwell_s - self.timing.tail_s) * 1e9)
+            self.tracker.wait_until(end, timeout=0.2)
+            samples = self.tracker.samples_between(start, end)
+            totals["frames"] += len(samples)
+            per_target[target] = [(s.point.raw_x, s.point.raw_y) for s in samples if s.point.state is TrackingState.TRACKING]
+            distances.extend(s.point.distance_mm for s in samples if s.point.distance_mm)
+
+        def on_done(cancelled):
+            if cancelled:
+                self._after_cancel()
+                return
+            dist = float(np.median(distances)) if distances else self.tracker.distance_mm
+            result = score(per_target, self.screen, dist, totals["frames"])
+            self._last_result = result
+            log.info("validation (%d targets): %s", n, result.summary())
+            try:
+                append_result(self.results_csv, result, targets=n, kind="launch" if launch_check else "manual",
+                              mode=getattr(getattr(self.tracker.source, "mode", None), "name", ""),
+                              model=self.tracker.model.model_id,
+                              fit=self.tracker.profile.report.chosen if self.tracker.profile and self.tracker.profile.report else "")
+            except OSError:
+                log.exception("could not write results")
+            if launch_check and not (result.accuracy_deg <= LAUNCH_CHECK_MAX_DEG):
+                log.info("saved calibration is off (%.1f°); recalibrating", result.accuracy_deg)
+                self._intro()
+                return
+            acc = "no data" if np.isnan(result.accuracy_deg) else f"{result.accuracy_deg:.1f}°  (about {result.accuracy_pt:.0f} pt)"
+            lines = [f"Accuracy {acc}", result.summary(), "Return to start  ·  Space to recalibrate"]
+            self._message(lines, {RETURN: self._start_overlay, SPACE: self._calibrate, ESC: self._start_overlay},
+                          auto_continue=None if n > 3 else 2.5)
+
+        TargetSequence(self.targets, points, self.timing, on_target, on_done).start()
+
+    def _message(self, lines, keys: dict, auto_continue: float | None = None) -> None:
+        state = {"done": False}
+
+        def go(fn):
+            if not state["done"]:
+                state["done"] = True
+                fn()
+
+        self.targets.show(lines, on_key=lambda c: c in keys and go(keys[c]))
+        if auto_continue:
+            NSTimer.scheduledTimerWithTimeInterval_repeats_block_(auto_continue, False, lambda _t: go(keys[RETURN]))
+
+    def _after_cancel(self) -> None:
+        if self.tracker.profile is not None and self.tracker.profile.calibrated:
+            self._start_overlay()
+        else:
+            self._quit()
+
+    def _start_overlay(self) -> None:
+        self.targets.hide()
+        self._busy = False
+
+    # ---- per-frame ----------------------------------------------------------------
+    def _tick(self, _timer) -> None:
+        if self._busy or not self.overlay_on:
+            self.ring.hide()
+            return
+        p = self.tracker._last_point
+        now = time.monotonic_ns()
+        if p is not None and p.valid:
+            self._last_valid_ns = now
+            self.ring.show_at(p.x, p.y, fixating=p.fixation_id is not None)
+        elif now - self._last_valid_ns > 400_000_000:  # brief dropouts (blinks) keep the ring
+            self.ring.hide()
+
+    # ---- click learning --------------------------------------------------------------
+    def _on_click(self, event) -> None:
+        profile = self.tracker.profile
+        if not self.learn_from_clicks or self._busy or profile is None or not profile.calibrated:
+            return
+        loc = NSEvent.mouseLocation()
+        click = (float(loc.x), self.screen.to_cocoa_y(float(loc.y)))
+        t = time.monotonic_ns()
+        start, end = window(t)
+        decision = evaluate_click(self.tracker.samples_between(start, end), click, self.tracker.pt_per_deg)
+        self._click_stats["seen"] += 1
+        if not decision.accepted:
+            log.debug("click ignored: %s", decision.reason)
+            return
+        self._click_stats["ok"] += 1
+        profile.add(decision.features, click, CLICK)
+        self._clicks_since_fit += 1
+        if self._clicks_since_fit >= REFIT_EVERY_CLICKS and not self._fitting:
+            self._clicks_since_fit = 0
+            self._fitting = True
+            threading.Thread(target=self._refit, args=(profile,), daemon=True).start()
+
+    def _refit(self, profile: Profile) -> None:
+        try:
+            profile.fit()
+            profile.save()
+        finally:
+            self._fitting = False
+
+    # ---- menu ------------------------------------------------------------------------
+    def _build_menu(self) -> None:
+        actions = [self._calibrate, lambda: self._validate(9), self._toggle_overlay, self._toggle_clicks, self._quit]
+        self._menu_target = _MenuTarget.alloc().initWithActions_(actions)
+        menu = NSMenu.alloc().init()
+        self._status_line = menu.addItemWithTitle_action_keyEquivalent_("Starting…", None, "")
+        self._status_line.setEnabled_(False)
+        menu.addItem_(NSMenuItem.separatorItem())
+        for tag, (key, title) in enumerate(
+            [("calibrate", "Recalibrate"), ("validate", "Check accuracy"), ("overlay", "Show gaze ring"),
+             ("clicks", "Learn from clicks"), ("quit", "Quit")]
+        ):
+            if key == "quit":
+                menu.addItem_(NSMenuItem.separatorItem())
+            item = menu.addItemWithTitle_action_keyEquivalent_(title, "run:", "")
+            item.setTarget_(self._menu_target)
+            item.setTag_(tag)
+            self._menu_items[key] = item
+        self._menu_items["overlay"].setState_(1)
+        self._menu_items["clicks"].setState_(1 if self.learn_from_clicks else 0)
+        self._status_item = NSStatusBar.systemStatusBar().statusItemWithLength_(NSVariableStatusItemLength)
+        self._status_item.button().setTitle_("◉")
+        self._status_item.setMenu_(menu)
+
+    def _update_status(self, _timer) -> None:
+        p = self.tracker._last_point
+        state = p.state.value.replace("_", " ") if p is not None else "starting"
+        parts = [state.capitalize(), f"{self.tracker.fps:.0f} fps", f"{self.tracker.distance_mm / 10:.0f} cm"]
+        prof = self.tracker.profile
+        if prof is not None and prof.calibrated:
+            parts.append(f"{prof.count(CLICK)} clicks learned")
+        if self._last_result is not None and not np.isnan(self._last_result.accuracy_deg):
+            parts.append(f"last check {self._last_result.accuracy_deg:.1f}°")
+        self._status_line.setTitle_("  ·  ".join(parts))
+
+    def _toggle_overlay(self) -> None:
+        self.overlay_on = not self.overlay_on
+        self._menu_items["overlay"].setState_(1 if self.overlay_on else 0)
+
+    def _toggle_clicks(self) -> None:
+        self.learn_from_clicks = not self.learn_from_clicks
+        self._menu_items["clicks"].setState_(1 if self.learn_from_clicks else 0)
+
+    def _quit(self) -> None:
+        AppHelper.stopEventLoop()
