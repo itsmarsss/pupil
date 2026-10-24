@@ -85,8 +85,7 @@ listens to the mic:
 
 ```sh
 uv sync --extra control
-echo "TYPESAFE_API_KEY=..." >> .env      # fast tier (Jev); optional
-echo "ANTHROPIC_API_KEY=..." >> .env     # Claude agent; optional
+cp .env.example .env                     # add TYPESAFE_API_KEY (fast tier) and/or ANTHROPIC_API_KEY (Claude agent)
 uv run gaze control                      # add --typed to type commands, --gaze mouse to skip the camera
 ```
 
@@ -101,8 +100,8 @@ Needs Microphone, Accessibility and Screen Recording for your terminal as well a
 "This" means where you looked *while speaking*, snapped to the nearest Accessibility
 element (`snapping.py`). Say "calibrate" to rerun the tracker's dots, "stop" to cancel
 the agent. Options: `--calibrate`, `--no-tracker` (use a `gaze --publish` you started
-yourself), `--tracker-args ...` (passed to the tracker). Env vars in
-`src/gaze/control/config.py` (`GAZE_MODEL`, `GAZE_WAKE_WORD`, `GAZE_WHISPER`, ...).
+yourself), `--tracker-args ...` (passed to the tracker). All settings are listed in
+`.env.example` (model, wake word, microphone, speech model, ...).
 This drives your real Mac: use a test browser profile.
 
 ## How it works
