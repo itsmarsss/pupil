@@ -18,14 +18,15 @@ uv run gaze doctor      # check camera access, models, screen
 uv run gaze             # calibrate (first run), then show the gaze ring
 ```
 
-First run: a short intro checks that your face is visible, then 9 dots (~12 s), then a
-3-dot accuracy check. After that a ring follows your gaze over every app. Clicks are
+First run: a short intro checks that your face is visible, then 16 dots (~21 s), then
+~6 s looking at one dot while turning your head, then a 3-dot accuracy check. After that a ring follows your gaze over every app. Clicks are
 used as extra calibration samples while you work.
 
 Later runs reuse the saved calibration after a 3-dot check, and only ask you to
 recalibrate if it has drifted.
 
-The ◉ menu-bar item has Recalibrate, Check accuracy (9 dots), and toggles for the
+The ◉ menu-bar item has Recalibrate, Check accuracy (9 dots), Measure (9 dots head
+still + 9 moving), and toggles for the
 ring, click learning, snapping to buttons and recording. Esc leaves any fullscreen
 screen; Ctrl+C in the terminal quits and saves.
 
@@ -34,7 +35,9 @@ Useful options:
 | Option | |
 |---|---|
 | `--mode vga` | 640x480 input instead of 1440x1080 |
-| `--targets 5\|9\|13` | calibration dots |
+| `--targets 5\|9\|13\|16` | calibration dots (default 16) |
+| `--normalise roll\|frontal\|none` | straighten the face before the model (default roll) |
+| `--measure` | run the head-still + head-moving measurement after launch |
 | `--recalibrate` | ignore the saved calibration |
 | `--no-clicks` | don't learn from clicks |
 | `--profile NAME` | separate calibration per person/setup |
