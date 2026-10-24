@@ -8,6 +8,7 @@ from gaze.calibration.profile import EXPLICIT, MOTION, Profile, ProfileMeta
 from gaze.calibration.regression import fit_best
 from gaze.calibration.targets import grid
 from gaze.core.types import FaceObservation, HeadPose
+from gaze.geometry.eyeball import GEO_DIM
 
 SCREEN = (1512.0, 982.0)
 MODEL_DIM = 30
@@ -20,8 +21,9 @@ def face_with(yaw_deg=0.0):
 
 
 def test_calibration_vector_layout():
-    v = calibration_vector(np.arange(MODEL_DIM, dtype=np.float32), face_with(10))
-    assert v.shape == (MODEL_DIM + POSE_DIM,)
+    v = calibration_vector(np.arange(MODEL_DIM, dtype=np.float32), face_with(10), np.full(GEO_DIM, 7.0))
+    assert v.shape == (MODEL_DIM + GEO_DIM + POSE_DIM,)
+    assert np.all(v[MODEL_DIM : MODEL_DIM + GEO_DIM] == 7.0)  # geometric block sits between model and pose
     pose = pose_of(v)[0]
     assert pose[YAW] == pytest.approx(10, abs=0.5)
     assert pose[3] == pytest.approx((600 + 120) / 1440 - 0.5)  # face centre x

@@ -145,3 +145,25 @@ def hits(m: EyeMeasure, gain: np.ndarray, kappa: np.ndarray) -> np.ndarray | Non
         return None  # a ray points away from the screen
     s = -m.centres[:, 2] / dirs[:, 2]
     return (m.centres + dirs * s[:, None])[:, :2].mean(axis=0)
+
+
+MEASURE_DIM = 25  # flattened EyeMeasure: centres 6, angles 4, basis 9, head_ypr 3, nose 3
+GEO_DIM = 11  # geo_block: EyeMeasure.features() 9 + uncalibrated hit 2
+
+
+def to_array(m: EyeMeasure) -> np.ndarray:
+    return np.concatenate([m.centres.ravel(), m.angles.ravel(), m.basis.ravel(), m.head_ypr, m.nose]).astype(np.float32)
+
+
+def from_array(a: np.ndarray) -> EyeMeasure:
+    a = np.asarray(a, np.float64)
+    return EyeMeasure(a[0:6].reshape(2, 3), a[6:10].reshape(2, 2), a[10:19].reshape(3, 3), a[19:22], a[22:25])
+
+
+def geo_block(m: EyeMeasure, plane: ScreenPlane) -> np.ndarray | None:
+    """Geometric features for the learned calibrator: eye and head angles, nose position, and where the
+    uncalibrated eye model says the gaze lands (screen points)."""
+    h = hits(m, np.ones(2), np.zeros(2))
+    if h is None:
+        return None
+    return np.concatenate([m.features(), plane.to_pt(h)]).astype(np.float32)

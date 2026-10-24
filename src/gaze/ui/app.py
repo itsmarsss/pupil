@@ -193,7 +193,7 @@ class GazeApp:
         model_id = self.tracker.model.model_id
         camera = self.tracker.source.source_id
         screen_pt = (self.screen.width_pt, self.screen.height_pt)
-        profile = None if self.force_recalibrate else Profile.load(self.profile_name)
+        profile = None if self.force_recalibrate else Profile.load(self.profile_name, plane=self.tracker.plane)
         if profile is not None and profile.meta.matches(model_id, camera, screen_pt) and profile.calibrated:
             log.info("loaded profile %r (%d targets, %d from clicks)", self.profile_name, profile.n_groups, profile.count(CLICK))
             self.tracker.profile = profile
@@ -250,19 +250,20 @@ class GazeApp:
                 (self.screen.width_pt, self.screen.height_pt),
             )
             p = Profile(meta, dim)
+        p.plane = self.tracker.plane
         return p
 
     def _calibrate(self) -> None:
         self._busy = True
         self.ring.hide()
-        collected: dict[tuple, np.ndarray] = {}
+        collected: dict[tuple, tuple[np.ndarray, np.ndarray]] = {}  # target -> (features, eyeball measurements)
         points = shuffled(grid(self.n_targets, self.screen.width_pt, self.screen.height_pt))
 
         def on_target(target, onset_ns, end_ns):
             self._label(None)
-            feats = self._features_for(onset_ns, self.timing)
+            feats, geos = self._features_for(onset_ns, self.timing)
             if len(feats) >= MIN_SAMPLES_PER_TARGET:
-                collected[target] = feats
+                collected[target] = (feats, geos)
 
         def on_done(cancelled):
             if cancelled:
@@ -279,17 +280,17 @@ class GazeApp:
         TargetSequence(self.targets, points, self.timing, on_target, on_done,
                        on_start=lambda t, onset: self._label("calib", t, onset)).start()
 
-    def _head_motion(self, dots: dict[tuple, np.ndarray]) -> None:
+    def _head_motion(self, dots: dict[tuple, tuple[np.ndarray, np.ndarray]]) -> None:
         """Hold gaze on one dot while turning the head, so the fit learns to separate
         head movement from eye movement."""
         centre = (self.screen.width_pt / 2, self.screen.height_pt / 2)
-        sweep: list[np.ndarray] = []
+        sweep: list[tuple[np.ndarray, np.ndarray]] = []
 
         def on_target(target, onset_ns, end_ns):
             self._label(None)
-            feats = self._features_for(onset_ns, MOTION_TIMING)
+            feats, geos = self._features_for(onset_ns, MOTION_TIMING)
             if len(feats):
-                sweep.append(feats)
+                sweep.append((feats, geos))
 
         def on_done(cancelled):
             if cancelled:
@@ -301,14 +302,15 @@ class GazeApp:
         TargetSequence(self.targets, [centre], MOTION_TIMING, on_target, on_done,
                        on_start=lambda t, onset: self._label("motion", t, onset), lines=lines).start()
 
-    def _finish_calibration(self, dots: dict[tuple, np.ndarray], centre, sweep: np.ndarray | None) -> None:
-        profile = self._profile_for(next(iter(dots.values())).shape[1])
+    def _finish_calibration(self, dots: dict[tuple, tuple[np.ndarray, np.ndarray]], centre,
+                            sweep: tuple[np.ndarray, np.ndarray] | None) -> None:
+        profile = self._profile_for(next(iter(dots.values()))[0].shape[1])
         profile.clear(EXPLICIT, MOTION)  # click samples are kept
         profile.meta.lid_deg = self.lid.angle()
-        for target, feats in dots.items():
-            profile.add(feats, target, EXPLICIT)
-        if sweep is not None and len(sweep) >= MIN_SAMPLES_PER_TARGET:
-            profile.add(sweep, centre, MOTION, chunk=MOTION_CHUNK)
+        for target, (feats, geos) in dots.items():
+            profile.add(feats, target, EXPLICIT, measures=geos)
+        if sweep is not None and len(sweep[0]) >= MIN_SAMPLES_PER_TARGET:
+            profile.add(sweep[0], centre, MOTION, chunk=MOTION_CHUNK, measures=sweep[1])
         report = profile.fit()
         if report is None:
             self._message(["Calibration failed", "Press Space to try again"], {SPACE: self._calibrate, ESC: self._quit})
@@ -321,13 +323,16 @@ class GazeApp:
         if self.session is not None:
             self.session.label(phase, target, onset_ns)
 
-    def _features_for(self, onset_ns: int, timing: TargetTiming) -> np.ndarray:
+    def _features_for(self, onset_ns: int, timing: TargetTiming) -> tuple[np.ndarray, np.ndarray]:
+        """Calibration features and eyeball measurements of the usable frames in a target's window."""
         start = onset_ns + int(timing.settle_s * 1e9)
         end = onset_ns + int((timing.dwell_s - timing.tail_s) * 1e9)
         self.tracker.wait_until(end, timeout=0.2)
-        samples = self.tracker.samples_between(start, end)
-        feats = [s.calib for s in samples if s.calib is not None and not s.face.is_blinking]
-        return np.stack(feats) if feats else np.zeros((0, 0), np.float32)
+        samples = [s for s in self.tracker.samples_between(start, end)
+                   if s.calib is not None and s.geo is not None and not s.face.is_blinking]
+        if not samples:
+            return np.zeros((0, 0), np.float32), np.zeros((0, 0), np.float32)
+        return np.stack([s.calib for s in samples]), np.stack([s.geo for s in samples])
 
     def _validate(self, n: int = 9, launch_check: bool = False, phase: str = "valid", then=None,
                   lines: list[str] | None = None) -> None:
@@ -518,7 +523,7 @@ class GazeApp:
             log.debug("click ignored: %s", decision.reason)
             return
         self._click_stats["ok"] += 1
-        profile.add(decision.features, click, CLICK)
+        profile.add(decision.features, click, CLICK, measures=decision.measures)
         self._clicks_since_fit += 1
         if self._clicks_since_fit >= REFIT_EVERY_CLICKS and not self._fitting:
             self._clicks_since_fit = 0

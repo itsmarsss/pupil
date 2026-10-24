@@ -30,6 +30,7 @@ class ClickDecision:
     reason: str
     features: np.ndarray | None = None
     error_deg: float | None = None
+    measures: np.ndarray | None = None  # eyeball-model measurements of the same frames
 
 
 def window(t_click_ns: int) -> tuple[int, int]:
@@ -61,4 +62,5 @@ def evaluate_click(samples: list[Sample], click_xy, pt_per_deg: float, gate: Cli
         return ClickDecision(False, "too_far", error_deg=error_deg)
 
     features = np.stack([s.calib for s in in_fix])
-    return ClickDecision(True, "ok", features, error_deg)
+    measures = np.stack([s.geo for s in in_fix]) if all(s.geo is not None for s in in_fix) else None
+    return ClickDecision(True, "ok", features, error_deg, measures)

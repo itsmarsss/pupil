@@ -14,6 +14,8 @@ from typing import Callable
 import numpy as np
 
 from .calibration.features import calibration_vector
+from .core.device import load_device
+from .geometry.eyeball import ScreenPlane, geo_block, measure, to_array
 from .calibration.profile import Profile
 from .capture.camera import FrameSource
 from .core.screen import Screen
@@ -49,6 +51,8 @@ class Tracker:
         self.profile = profile
         self.smoothing = smoothing
         self._filter = GazeSmoother(PRESETS[smoothing])
+        device = load_device()
+        self.plane = ScreenPlane(screen, device.camera_below_top_cm, device.camera_x_offset_cm)
         self._fixations = FixationDetector()
         self._history: collections.deque[Sample] = collections.deque()
         self._lock = threading.Lock()
@@ -140,9 +144,14 @@ class Tracker:
     def process(self, frame) -> Sample:
         face = self.face_tracker.process(frame)
         features = self.model.infer(frame, face) if face is not None else None
-        calib = calibration_vector(features.vector, face) if features is not None else None
-        point = self._point(frame.t_ns, face, calib)
-        sample = Sample(frame.t_ns, features, face, point, calib)
+        calib, geo = None, None
+        if features is not None:
+            m = measure(face)  # eyeball model, from the unwarped face
+            block = geo_block(m, self.plane) if m is not None else None
+            if block is not None:
+                calib, geo = calibration_vector(features.vector, face, block), to_array(m)
+        point = self._point(frame.t_ns, face, calib, geo)
+        sample = Sample(frame.t_ns, features, face, point, calib, geo)
         with self._lock:
             self._history.append(sample)
             cutoff = frame.t_ns - int(HISTORY_S * 1e9)
@@ -151,7 +160,8 @@ class Tracker:
         self._last_point = point
         return sample
 
-    def _point(self, t_ns: int, face: FaceObservation | None, calib: np.ndarray | None) -> GazePoint:
+    def _point(self, t_ns: int, face: FaceObservation | None, calib: np.ndarray | None,
+               geo: np.ndarray | None = None) -> GazePoint:
         if face is None or calib is None:
             self._filter.reset()
             self._fixations.reset()
@@ -165,7 +175,7 @@ class Tracker:
                                  self.distance_mm, last.confidence)
             return GazePoint(t_ns, TrackingState.BLINK, distance_mm=self.distance_mm)
         profile = self.profile
-        prediction = profile.predict(calib) if profile is not None else None
+        prediction = profile.predict(calib, geo) if profile is not None else None
         if prediction is None:
             return GazePoint(t_ns, TrackingState.UNCALIBRATED, distance_mm=self.distance_mm)
         # Outside the calibrated head-pose range the fit extrapolates; keep it on screen.

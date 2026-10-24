@@ -11,6 +11,9 @@ from pathlib import Path
 import numpy as np
 
 from ..core.paths import profiles_dir
+from ..geometry.calibrate import GeoCalibration
+from ..geometry.calibrate import fit as fit_geometry
+from ..geometry.eyeball import MEASURE_DIM, ScreenPlane, from_array
 from .features import FEATURE_SET, POSE_DIM, PoseRange
 from .regression import FitReport, Ridge, fit_best
 
@@ -20,6 +23,9 @@ EXPLICIT, MOTION, CLICK = "explicit", "motion", "click"
 # Per-sample weights. A head-motion sweep has ~6x the samples of one dot, so 0.5 makes
 # it count like a few dots: enough to learn head compensation without dominating.
 WEIGHTS = {EXPLICIT: 1.0, MOTION: 0.5, CLICK: 0.5}
+# Final point = (1 - GEO_WEIGHT) x learned calibrator + GEO_WEIGHT x eyeball model. On 138 replayed validation
+# dots this beat the learned calibrator alone on two thirds of them (mean 2.52° → 2.22°).
+GEO_WEIGHT = 0.25
 
 
 @dataclass
@@ -56,6 +62,7 @@ class Profile:
     def __init__(self, meta: ProfileMeta, dim: int):
         self.meta = meta
         self.X = np.zeros((0, dim), np.float32)
+        self.M = np.zeros((0, MEASURE_DIM), np.float32)  # eyeball-model measurements of the same frames (NaN = none)
         self.Y = np.zeros((0, 2), np.float32)
         self.groups = np.zeros(0, np.int64)
         self.subs = np.zeros(0, np.int64)
@@ -64,6 +71,8 @@ class Profile:
         self.model: Ridge | None = None
         self.report: FitReport | None = None
         self.pose_range: PoseRange | None = None
+        self.geometry: GeoCalibration | None = None
+        self.plane: ScreenPlane | None = None  # set by the app; needed to fit the eyeball model
         self._next_group = 0
         self._lock = threading.RLock()  # samples are added on the UI thread, fits run in the background
 
@@ -79,15 +88,19 @@ class Profile:
             return g
 
     def add(self, X: np.ndarray, target: tuple[float, float], source: str, group: int | None = None,
-            chunk: int = 1) -> int:
+            chunk: int = 1, measures: np.ndarray | None = None) -> int:
         """Add samples for one target. `chunk` > 1 splits them into runs of that many
-        samples for scoring (used for the head-motion sweep)."""
+        samples for scoring (used for the head-motion sweep). `measures`: flattened eyeball-model
+        measurements of the same frames."""
         X = np.atleast_2d(np.asarray(X, np.float32))
+        M = (np.full((len(X), MEASURE_DIM), np.nan, np.float32) if measures is None
+             else np.atleast_2d(np.asarray(measures, np.float32)))
         with self._lock:
             group = self.new_group() if group is None else group
             n = len(X)
             subs = group * 100_000 + (np.arange(n) // chunk if chunk > 1 else np.zeros(n, np.int64))
             self.X = np.vstack([self.X, X])
+            self.M = np.vstack([self.M, M])
             self.Y = np.vstack([self.Y, np.tile(np.asarray(target, np.float32), (n, 1))])
             self.groups = np.concatenate([self.groups, np.full(n, group)])
             self.subs = np.concatenate([self.subs, subs])
@@ -104,7 +117,7 @@ class Profile:
             self._keep(keep)
 
     def _keep(self, keep: np.ndarray) -> None:
-        self.X, self.Y, self.groups, self.subs = self.X[keep], self.Y[keep], self.groups[keep], self.subs[keep]
+        self.X, self.M, self.Y, self.groups, self.subs = self.X[keep], self.M[keep], self.Y[keep], self.groups[keep], self.subs[keep]
         self.sources, self.t = self.sources[keep], self.t[keep]
 
     def _evict_clicks(self) -> None:
@@ -125,7 +138,7 @@ class Profile:
         with self._lock:
             if self.count(EXPLICIT) < 3:
                 return None
-            X, Y, groups, subs, sources = self.X, self.Y, self.groups, self.subs, self.sources
+            X, M, Y, groups, subs, sources = self.X, self.M, self.Y, self.groups, self.subs, self.sources
         w = np.array([WEIGHTS[s] for s in sources])
         # Pose terms only help once the head has moved while gaze stayed put.
         use_pose = bool(self.pose_dim) and bool(np.any(sources == MOTION))
@@ -133,21 +146,49 @@ class Profile:
         if self.pose_dim:
             self.pose_range = PoseRange(X[sources != CLICK])
         self.model, self.report = model, report
+        self.geometry = self._fit_geometry(M, Y, groups, sources)
         self.meta.fit = asdict(report)
         self.meta.updated = time.time()
         log.info("calibration fit: %s (%d targets) cv=%s", report.chosen, report.n_groups,
                  {k: round(v, 1) for k, v in report.cv_error_pt.items()})
         return report
 
+    def _fit_geometry(self, M, Y, groups, sources) -> GeoCalibration | None:
+        if self.plane is None or not np.isfinite(M).any():
+            return None
+
+        def by_target(source):
+            out = []
+            for g in np.unique(groups[sources == source]):
+                sel = (groups == g) & np.isfinite(M).all(axis=1)
+                if sel.any():
+                    out.append(([from_array(a) for a in M[sel]], tuple(map(float, Y[sel][0]))))
+            return out
+
+        dots = by_target(EXPLICIT)
+        if len(dots) < 5:
+            return None
+        try:
+            return fit_geometry(dots, self.plane, by_target(MOTION) or None)
+        except np.linalg.LinAlgError:
+            log.warning("eyeball model fit failed")
+            return None
+
     @property
     def calibrated(self) -> bool:
         return self.model is not None
 
-    def predict(self, features: np.ndarray) -> tuple[float, float] | None:
+    def predict(self, features: np.ndarray, measure: np.ndarray | None = None) -> tuple[float, float] | None:
+        """Learned calibrator, blended with the eyeball model when it has a point for this frame."""
         model = self.model
         if model is None:
             return None
         x, y = model.predict(np.asarray(features, np.float64))[0]
+        geometry = self.geometry
+        if geometry is not None and measure is not None and np.isfinite(measure).all():
+            g = geometry.predict(from_array(measure))
+            if g is not None:
+                x, y = (1 - GEO_WEIGHT) * x + GEO_WEIGHT * g[0], (1 - GEO_WEIGHT) * y + GEO_WEIGHT * g[1]
         return float(x), float(y)
 
     def confidence(self, features: np.ndarray) -> float:
@@ -164,13 +205,13 @@ class Profile:
         d = self.path_for(self.meta.name, root)
         d.mkdir(parents=True, exist_ok=True)
         with self._lock:
-            arrays = dict(X=self.X, Y=self.Y, groups=self.groups, subs=self.subs, sources=self.sources, t=self.t)
+            arrays = dict(X=self.X, M=self.M, Y=self.Y, groups=self.groups, subs=self.subs, sources=self.sources, t=self.t)
         np.savez_compressed(d / "samples.npz", **arrays)
         (d / "meta.json").write_text(json.dumps(asdict(self.meta), indent=2))
         return d
 
     @classmethod
-    def load(cls, name: str, root: Path | None = None) -> "Profile | None":
+    def load(cls, name: str, root: Path | None = None, plane: ScreenPlane | None = None) -> "Profile | None":
         d = cls.path_for(name, root)
         try:
             raw = json.loads((d / "meta.json").read_text())
@@ -183,6 +224,8 @@ class Profile:
         p = cls(meta, data["X"].shape[1])
         p.X, p.Y, p.groups, p.sources, p.t = data["X"], data["Y"], data["groups"], data["sources"], data["t"]
         p.subs = data["subs"] if "subs" in data else p.groups.copy()
+        p.M = data["M"] if "M" in data else np.full((len(p.X), MEASURE_DIM), np.nan, np.float32)
+        p.plane = plane
         p._next_group = int(p.groups.max()) + 1 if len(p.groups) else 0
         if meta.features == FEATURE_SET:
             p.fit()

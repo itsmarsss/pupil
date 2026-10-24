@@ -102,5 +102,6 @@ class Sample:
     features: GazeFeatures | None
     face: FaceObservation | None
     point: GazePoint
-    calib: np.ndarray | None = None  # model features + head pose: what calibration fits on
+    calib: np.ndarray | None = None  # model features + geometric block + head pose: what calibration fits on
+    geo: np.ndarray | None = None  # flattened eyeball-model measurement (geometry.eyeball.to_array)
     extra: dict = field(default_factory=dict)
