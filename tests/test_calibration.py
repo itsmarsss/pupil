@@ -99,7 +99,10 @@ def test_click_eviction_keeps_explicit():
 
 def test_grid_and_timing():
     pts = grid(9, *SCREEN)
-    assert len(pts) == 9 and pts[4] == pytest.approx((756, 491))
+    assert len(pts) == 9 and pts[0] == pytest.approx((756, 491))  # centre first, to orient
+    g16 = grid(16, *SCREEN)
+    assert len(g16) == 16 and len(set(g16)) == 16
+    assert min(x for x, _ in g16) == pytest.approx(151.2) and max(y for _, y in g16) == pytest.approx(883.8)
     s = shuffled(grid(5, *SCREEN), seed=0)
     assert s[0] == grid(5, *SCREEN)[0] and sorted(s) == sorted(grid(5, *SCREEN))
     t = TargetTiming(dwell_s=1.0, settle_s=0.4, tail_s=0.1)

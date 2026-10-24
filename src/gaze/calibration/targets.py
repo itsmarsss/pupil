@@ -7,7 +7,8 @@ import numpy as np
 
 
 def grid(n: int, width: float, height: float, margin: float = 0.1) -> list[tuple[float, float]]:
-    """5 (centre + corners), 9 (3x3) or 13 (3x3 + inner diagonals) targets in screen points."""
+    """5 (centre + corners), 9 (3x3), 13 (3x3 + inner diagonals) or 16 (4x4) targets in
+    screen points. The first point is always the centre (or nearest to it), to orient."""
     xs = [margin, 0.5, 1 - margin]
     ys = [margin, 0.5, 1 - margin]
     if n == 5:
@@ -17,10 +18,15 @@ def grid(n: int, width: float, height: float, margin: float = 0.1) -> list[tuple
     elif n == 13:
         q = [0.3, 0.7]
         pts = [(x, y) for y in ys for x in xs] + [(x, y) for y in q for x in q]
+    elif n == 16:
+        g = np.linspace(margin, 1 - margin, 4)
+        pts = [(float(x), float(y)) for y in g for x in g]
     elif n == 3:  # quick launch check
         pts = [(0.5, 0.5), (0.2, 0.25), (0.8, 0.75)]
     else:
         raise ValueError(f"unsupported target count {n}")
+    first = min(range(len(pts)), key=lambda i: (pts[i][0] - 0.5) ** 2 + (pts[i][1] - 0.5) ** 2)
+    pts = [pts[first]] + pts[:first] + pts[first + 1 :]
     return [(x * width, y * height) for x, y in pts]
 
 
