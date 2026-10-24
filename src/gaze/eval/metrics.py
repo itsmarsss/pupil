@@ -54,9 +54,11 @@ def score_target(target, points: np.ndarray, screen: Screen, distance_mm: float)
     return TargetResult(tuple(target), len(points), offset, to_deg(offset), to_deg(rms), to_deg(spread))
 
 
-def score(per_target: dict, screen: Screen, distance_mm: float, frames_total: int) -> ValidationResult:
-    """`per_target` maps target (x, y) → n x 2 array of gaze points."""
-    results = [score_target(t, np.asarray(p, float).reshape(-1, 2), screen, distance_mm) for t, p in per_target.items()]
+def score(per_target, screen: Screen, distance_mm: float, frames_total: int) -> ValidationResult:
+    """`per_target` maps target (x, y) → n x 2 gaze points, or is a list of (target, points)
+    pairs when the same target was shown more than once."""
+    pairs = per_target.items() if isinstance(per_target, dict) else per_target
+    results = [score_target(t, np.asarray(p, float).reshape(-1, 2), screen, distance_mm) for t, p in pairs]
     valid = [r for r in results if r.n > 0]
     offsets = np.array([r.offset_deg for r in valid]) if valid else np.array([math.nan])
     n_valid = sum(r.n for r in results)

@@ -76,7 +76,8 @@ def evaluate(data: list[Extracted], screen: Screen, calibrator: str = "auto") ->
     else:
         model = next(c for c in candidates() if c.name == calibrator).fit(X, Y, w)
         name = calibrator
-    per_target = {d.target: model.predict(d.features) if len(d.features) else np.zeros((0, 2)) for d in valid}
+    # a list, not a dict: repeated checks show the same targets
+    per_target = [(d.target, model.predict(d.features) if len(d.features) else np.zeros((0, 2))) for d in valid]
     dist = float(np.nanmedian([d.distance_mm for d in data])) if data else 550.0
     return name, score(per_target, screen, dist, sum(d.frames for d in valid))
 
