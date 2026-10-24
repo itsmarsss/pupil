@@ -38,7 +38,7 @@ BLINK_RATIO = 0.6   # eye openness below this fraction of the user's median = bl
 class GazeConfig:
     # Defaults = what won on real runs (5 test sessions, Oct 2026): the quadratic residual correction alone.
     # The other fixes help on synthetic eyelid/blink data but slightly hurt on real data.
-    iris_mode: str = "center"    # "center" (MediaPipe's centre landmark) or "equator"
+    iris_mode: str = "center"    # "center" (MediaPipe's centre landmark), "equator", or "refined" (full-resolution limbus fit, iris.py)
     per_eye: bool = False
     rigid_pose: bool = False
     residual: str = "quad"       # "none", "affine" or "quad"
@@ -46,7 +46,7 @@ class GazeConfig:
     head_comp: bool = True
 
     def label(self) -> str:
-        on = [n for n, v in (("equator", self.iris_mode == "equator"), ("per-eye", self.per_eye), ("rigid", self.rigid_pose),
+        on = [n for n, v in (("equator", self.iris_mode == "equator"), ("refined", self.iris_mode == "refined"), ("per-eye", self.per_eye), ("rigid", self.rigid_pose),
                              (self.residual, self.residual != "none"), ("blink", self.blink_reject),
                              ("headcomp", self.head_comp)) if v]
         return "+".join(on) or "baseline"
@@ -71,6 +71,8 @@ ABLATION = [
     GazeConfig("center", False, False, "quad", False, False),
     GazeConfig("equator", True, True, "quad", True, False),
     GazeConfig("center", False, False, "quad", False, True),
+    GazeConfig("refined", False, False, "quad", False, False),
+    GazeConfig("refined", False, False, "quad", False, True),
 ]
 SWEEP_GROUP0 = 1000      # calibration groups >= this are head-sweep frames
 HEAD_COMP_RIDGE = 0.5    # x number of frames, on standardised features
@@ -133,6 +135,8 @@ class UserCalib:
 def iris_points(lms: np.ndarray, mode: str) -> dict[str, np.ndarray] | None:
     if mode == "center":
         return None
+    if mode == "refined":  # rows appended by the tracker; older recordings don't have them
+        return {"right": lms[478, :2], "left": lms[479, :2]} if len(lms) >= 480 else None
     return {"right": F.iris_center_equator(lms, F.R_IRIS_RING), "left": F.iris_center_equator(lms, F.L_IRIS_RING)}
 
 
