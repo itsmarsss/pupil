@@ -104,6 +104,10 @@ def cmd_doctor(args) -> int:
     print(("✓ " if lm.exists() else "• ") + ("face landmarker present" if lm.exists() else "face landmarker downloads on first run"))
     s = main_screen()
     print(f"• screen {s.width_pt:.0f}x{s.height_pt:.0f} pt, {s.width_mm:.0f}x{s.height_mm:.0f} mm")
+    from .core.lid import LidSensor
+
+    lid = LidSensor().angle()
+    print(f"• lid angle {lid:.0f}°" if lid is not None else "• no lid angle sensor (external display or older Mac)")
     return 0 if ok else 1
 
 
@@ -119,7 +123,7 @@ def main(argv: list[str] | None = None) -> int:
         p.add_argument("--source", help="replay a video/image instead of the camera")
         p.add_argument("--model", help="path to the gaze model")
         p.add_argument("--profile", default="default", help="calibration profile name")
-        p.add_argument("--targets", type=int, default=9, choices=[5, 9, 13], help="calibration dots")
+        p.add_argument("--targets", type=int, default=9, choices=[5, 9, 13, 16], help="calibration dots")
         p.add_argument("--recalibrate", action="store_true", help="ignore the saved calibration")
         p.add_argument("--no-clicks", action="store_true", help="don't learn from clicks")
         p.add_argument("--results", help="CSV to append accuracy checks to")

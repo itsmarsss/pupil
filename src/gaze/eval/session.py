@@ -41,6 +41,7 @@ class SessionWriter:
         self._lock = threading.Lock()
         self._label: tuple[str, tuple[float, float], int] | None = None
         self.frames = 0
+        self.context: dict = {}  # extra per-frame fields set by the app, e.g. lid angle
 
     def label(self, phase: str | None, target=None, onset_ns: int = 0) -> None:
         with self._lock:
@@ -60,7 +61,7 @@ class SessionWriter:
             cv2.imwrite(str(self.root / "frames" / name), bgr, [cv2.IMWRITE_JPEG_QUALITY, 93])
         phase, target, onset = label
         row = {"t_ns": frame.t_ns, "frame": [frame.width, frame.height], "roi": roi, "image": name,
-               "phase": phase, "target": target, "onset_ns": onset}
+               "phase": phase, "target": target, "onset_ns": onset, **self.context}
         with self._lock:
             if not self._rows.closed:
                 self._rows.write(json.dumps(row) + "\n")

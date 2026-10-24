@@ -29,6 +29,7 @@ class ProfileMeta:
     camera: str
     screen_pt: tuple[float, float]
     features: str = FEATURE_SET
+    lid_deg: float | None = None  # hinge angle at calibration, if the Mac has the sensor
     created: float = field(default_factory=time.time)
     updated: float = field(default_factory=time.time)
     fit: dict = field(default_factory=dict)

@@ -31,6 +31,7 @@ from PyObjCTools import AppHelper
 from ..calibration.implicit import evaluate_click, window
 from ..calibration.profile import CLICK, EXPLICIT, MOTION, Profile, ProfileMeta
 from ..calibration.targets import TargetTiming, grid, shuffled
+from ..core.lid import LidSensor
 from ..core.paths import APP_SUPPORT, recordings_dir
 from ..core.types import TrackingState
 from ..eval.metrics import ValidationResult, append_result, score
@@ -47,6 +48,7 @@ LAUNCH_CHECK_MAX_DEG = 4.0  # saved calibration is reused if the quick check bea
 REFIT_EVERY_CLICKS = 8
 MIN_SAMPLES_PER_TARGET = 8
 SNAP_RADIUS_DEG = 2.5
+LID_MOVED_DEG = 4.0  # hinge change since calibration that flags the fit as suspect
 MOTION_TIMING = TargetTiming(dwell_s=6.5, settle_s=0.8, tail_s=0.1)
 MOTION_CHUNK = 15  # score the head-motion sweep in half-second pieces
 
@@ -94,6 +96,8 @@ class GazeApp:
         self._record_path = record_path
         self._session_dir = session_dir
         self._pending_measure = measure  # run the measurement once the launch flow finishes
+        self.lid = LidSensor()
+        self._lid_now: float | None = self.lid.angle()
         self.session: SessionWriter | None = None
 
         self.ring: GazeRing | None = None
@@ -132,7 +136,9 @@ class GazeApp:
                 "mode": getattr(getattr(self.tracker.source, "mode", None), "name", ""),
                 "model": self.tracker.model.model_id,
                 "camera": self.tracker.source.source_id,
+                "lid_deg": self._lid_now,
             })
+            self.session.context["lid"] = self._lid_now
             self.tracker.add_frame_listener(self.session.on_frame)
             log.info("saving calibration/validation frames to %s", self._session_dir)
         self.tracker.start()
@@ -276,6 +282,7 @@ class GazeApp:
     def _finish_calibration(self, dots: dict[tuple, np.ndarray], centre, sweep: np.ndarray | None) -> None:
         profile = self._profile_for(next(iter(dots.values())).shape[1])
         profile.clear(EXPLICIT, MOTION)  # click samples are kept
+        profile.meta.lid_deg = self.lid.angle()
         for target, feats in dots.items():
             profile.add(feats, target, EXPLICIT)
         if sweep is not None and len(sweep) >= MIN_SAMPLES_PER_TARGET:
@@ -419,10 +426,11 @@ class GazeApp:
         if p is not None and p.valid:
             self._last_valid_ns = now
             target = self._snapped(p)
+            confidence = min(p.confidence, 0.3) if self.lid_moved else p.confidence
             if target is not None:
-                self.ring.show_at(*target.centre, fixating=True)
+                self.ring.show_at(*target.centre, fixating=True, confidence=confidence)
             else:
-                self.ring.show_at(p.x, p.y, fixating=p.fixation_id is not None, confidence=p.confidence)
+                self.ring.show_at(p.x, p.y, fixating=p.fixation_id is not None, confidence=confidence)
         elif now - self._last_valid_ns > 400_000_000:  # brief dropouts (blinks) keep the ring
             self.ring.hide()
 
@@ -520,7 +528,19 @@ class GazeApp:
         self._status_item.button().setTitle_("◉")
         self._status_item.setMenu_(menu)
 
+    @property
+    def lid_moved(self) -> float | None:
+        """Degrees the lid has moved since calibration, if beyond LID_MOVED_DEG."""
+        prof = self.tracker.profile
+        if prof is None or prof.meta.lid_deg is None or self._lid_now is None:
+            return None
+        delta = self._lid_now - prof.meta.lid_deg
+        return delta if abs(delta) > LID_MOVED_DEG else None
+
     def _update_status(self, _timer) -> None:
+        self._lid_now = self.lid.angle()
+        if self.session is not None:
+            self.session.context["lid"] = self._lid_now
         p = self.tracker._last_point
         state = p.state.value.replace("_", " ") if p is not None else "starting"
         parts = [state.capitalize(), f"{self.tracker.fps:.0f} fps", f"{self.tracker.distance_mm / 10:.0f} cm"]
@@ -529,6 +549,8 @@ class GazeApp:
             parts.append(f"{prof.count(CLICK)} clicks learned")
         if self._last_result is not None and not np.isnan(self._last_result.accuracy_deg):
             parts.append(f"last check {self._last_result.accuracy_deg:.1f}°")
+        if self.lid_moved:
+            parts.append(f"lid moved {self.lid_moved:+.0f}° since calibration: check accuracy")
         self._status_line.setTitle_("  ·  ".join(parts))
 
     def _toggle_overlay(self) -> None:
