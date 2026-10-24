@@ -41,6 +41,10 @@ Useful options:
 | `--results FILE` | append accuracy checks to a CSV |
 | `--record FILE` | write every gaze sample (and clicks) to a CSV |
 | `--snap` | snap the ring to nearby buttons and links (asks for Accessibility access) |
+| `--save-session [DIR]` | save calibration/validation face crops for replay |
+
+`uv run gaze replay SESSION_DIR` re-runs a saved session through each capture mode and
+calibrator and prints the accuracy of each, so changes can be compared on identical data.
 
 Calibration profiles and accuracy logs live in `~/Library/Application Support/Gaze/`.
 
