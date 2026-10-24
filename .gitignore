@@ -1,0 +1,17 @@
+# Planning, dev logs, local datasets
+dev/
+
+# Python
+.venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+
+# Local data
+data/
+*.csv
+
+# macOS
+.DS_Store
