@@ -9,7 +9,7 @@ import cv2
 import numpy as np
 
 from ..calibration.features import POSE_DIM, PoseRange, calibration_vector
-from ..calibration.profile import WEIGHTS
+from ..calibration.profile import EXPLICIT, MOTION, WEIGHTS, Profile, ProfileMeta
 from ..calibration.regression import candidates, fit_best
 from ..calibration.targets import TargetTiming
 from ..core.screen import Screen
@@ -17,16 +17,20 @@ from ..core.types import Frame
 from ..eval.metrics import ValidationResult, score
 from ..eval.session import read_session, session_meta
 from ..face.tracker import FaceTracker
+from ..core.device import load_device
+from ..geometry.eyeball import EyeMeasure, ScreenPlane, geo_block, measure, to_array
 from ..models.base import GazeModel
 
 VGA = (640, 480)
 MOTION_CHUNK = 15
 
-# Calibration variants: which phases to fit on, and whether to use head-pose features.
+# Calibration variants: which phases to fit on, and whether to use head-pose features. "live" runs the app's
+# own Profile (pose + geometric features, blended with the eyeball model), so replay matches the app.
 CONFIGS = {
     "dots": (("calib",), False),
     "dots+pose": (("calib",), True),
     "dots+pose+motion": (("calib", "motion"), True),
+    "live": (("calib", "motion"), True),
 }
 
 
@@ -34,12 +38,13 @@ CONFIGS = {
 class Extracted:
     phase: str
     target: tuple[float, float]
-    features: np.ndarray  # n x (model dim + POSE_DIM) calibration vectors
+    features: np.ndarray  # n x calibration-vector length (model | geometric | pose)
     distance_mm: float
     frames: int  # frames shown in the window (incl. ones without a face)
+    geo: list[EyeMeasure | None] | None = None  # geometric measurement of the same frames
 
 
-def extract(root: Path, model: GazeModel, mode: str, timings: dict[str, TargetTiming]) -> list[Extracted]:
+def extract(root: Path, model: GazeModel, mode: str, timings: dict[str, TargetTiming], screen: Screen) -> list[Extracted]:
     """Calibration vectors per shown target, inside each phase's accepted window.
     `mode` is "hd" or "vga", optionally with a normalisation: "hd+frontal", "vga+roll"."""
     mode, _, norm = mode.partition("+")
@@ -48,7 +53,10 @@ def extract(root: Path, model: GazeModel, mode: str, timings: dict[str, TargetTi
 
         model = NormalisedModel(model, norm)
     tracker = FaceTracker()
+    device = load_device()
+    plane = ScreenPlane(screen, device.camera_below_top_cm, device.camera_x_offset_cm)
     buckets: dict[tuple, list] = defaultdict(list)
+    geos: dict[tuple, list] = defaultdict(list)
     counts: dict[tuple, int] = defaultdict(int)
     dists: dict[tuple, list] = defaultdict(list)
     for sf in read_session(root):
@@ -67,8 +75,11 @@ def extract(root: Path, model: GazeModel, mode: str, timings: dict[str, TargetTi
         if face is None or face.is_blinking:
             continue
         feats = model.infer(frame, face)
-        if feats is not None:
-            buckets[key].append(calibration_vector(feats.vector, face))
+        m = measure(face) if feats is not None else None  # eyeball model, from the unwarped face
+        block = geo_block(m, plane) if m is not None else None
+        if block is not None:
+            buckets[key].append(calibration_vector(feats.vector, face, block))
+            geos[key].append(m)
             if face.distance_mm:
                 dists[key].append(face.distance_mm)
     tracker.close()
@@ -76,7 +87,7 @@ def extract(root: Path, model: GazeModel, mode: str, timings: dict[str, TargetTi
     for key, n in sorted(counts.items(), key=lambda kv: kv[0][2]):
         phase, target, _ = key
         f = np.stack(buckets[key]) if buckets[key] else np.zeros((0, 0), np.float32)
-        out.append(Extracted(phase, target, f, float(np.median(dists[key])) if dists[key] else np.nan, n))
+        out.append(Extracted(phase, target, f, float(np.median(dists[key])) if dists[key] else np.nan, n, geos[key]))
     return out
 
 
@@ -87,6 +98,8 @@ def evaluate(data: list[Extracted], screen: Screen, config: str = "dots+pose+mot
     phases, use_pose = CONFIGS[config]
     fit_on = [d for d in data if d.phase in phases and len(d.features)]
     valid = [d for d in data if d.phase.startswith("valid") and valid_phase in (None, d.phase)]
+    if config == "live":
+        return _evaluate_live(data, fit_on, valid, screen)
 
     X = np.vstack([d.features for d in fit_on])
     Y = np.vstack([np.tile(d.target, (len(d.features), 1)) for d in fit_on])
@@ -119,6 +132,33 @@ def evaluate(data: list[Extracted], screen: Screen, config: str = "dots+pose+mot
     return name, overall, in_range
 
 
+def _live_profile(fit_on: list[Extracted], screen: Screen) -> Profile:
+    device = load_device()
+    profile = Profile(ProfileMeta("replay", "", "", (screen.width_pt, screen.height_pt)), fit_on[0].features.shape[1])
+    profile.plane = ScreenPlane(screen, device.camera_below_top_cm, device.camera_x_offset_cm)
+    for d in fit_on:
+        measures = np.stack([to_array(m) for m in d.geo])
+        if d.phase == "motion":
+            profile.add(d.features, d.target, MOTION, chunk=MOTION_CHUNK, measures=measures)
+        else:
+            profile.add(d.features, d.target, EXPLICIT, measures=measures)
+    profile.fit()
+    return profile
+
+
+def _evaluate_live(data, fit_on, valid, screen: Screen):
+    profile = _live_profile(fit_on, screen)
+
+    def points(d):
+        pts = [profile.predict(f, to_array(m)) for f, m in zip(d.features, d.geo)]
+        return np.array([screen.clamp(*p) for p in pts if p is not None]).reshape(-1, 2)
+
+    dist = float(np.nanmedian([d.distance_mm for d in data])) if data else 550.0
+    pairs = [(d.target, points(d)) for d in valid]
+    name = f"app→{profile.report.chosen}" + ("+geometry" if profile.geometry is not None else "")
+    return name, score(pairs, screen, dist, sum(d.frames for d in valid)), None
+
+
 def load(root: Path, screen: Screen | None = None):
     meta = session_meta(root)
     if screen is None:
@@ -139,14 +179,14 @@ def replay(root: Path, model: GazeModel, screen: Screen | None = None, modes=("h
     screen, timings = load(root, screen)
     rows = []
     for mode in modes:
-        data = extract(root, model, mode, timings)
+        data = extract(root, model, mode, timings, screen)
         has_motion = any(d.phase == "motion" for d in data)
         valid_phases = sorted({d.phase for d in data if d.phase.startswith("valid")})
         phases = [None] + (valid_phases if len(valid_phases) > 1 else [])
         for config, (_, use_pose) in CONFIGS.items():
             if "motion" in config and not has_motion:
                 continue
-            cals = ["auto"] + ([c.name for c in candidates(POSE_DIM, use_pose)] if all_calibrators else [])
+            cals = ["auto"] + ([c.name for c in candidates(POSE_DIM, use_pose)] if all_calibrators and config != "live" else [])
             for cal in cals:
                 for vp in phases:
                     name, overall, in_range = evaluate(data, screen, config, cal, vp)
