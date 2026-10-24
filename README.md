@@ -24,7 +24,9 @@ doesn't work: it can't be separated from the per-user gains, even if you lean in
 
 `calibrate_gaze.py` (or C in `live.py`) fits, per user and in the head frame, gaze angle = gain × measured angle +
 kappa for yaw and pitch. On top of that physical model, each fix below can be switched on or off (`calib.GazeConfig`);
-every accuracy test fits and scores all of them on the same frames and prints the comparison:
+every accuracy test fits and scores all of them on the same frames and prints the comparison. Across 5 real
+test sessions only the quadratic residual correction helped (dots calibration: ~1.1 cm / ~1°), so it is the
+only one on by default:
 
 | Fix | What it addresses |
 |---|---|

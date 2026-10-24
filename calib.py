@@ -33,11 +33,13 @@ BLINK_RATIO = 0.6   # eye openness below this fraction of the user's median = bl
 
 @dataclass(frozen=True)
 class GazeConfig:
-    iris_mode: str = "equator"   # "center" (MediaPipe's centre landmark) or "equator"
-    per_eye: bool = True
-    rigid_pose: bool = True
-    residual: str = "quad"       # "none", "affine" or "quad" (quad won on both real runs, Oct 2026)
-    blink_reject: bool = True
+    # Defaults = what won on real runs (5 test sessions, Oct 2026): the quadratic residual correction alone.
+    # The other fixes help on synthetic eyelid/blink data but slightly hurt on real data.
+    iris_mode: str = "center"    # "center" (MediaPipe's centre landmark) or "equator"
+    per_eye: bool = False
+    rigid_pose: bool = False
+    residual: str = "quad"       # "none", "affine" or "quad"
+    blink_reject: bool = False
 
     def label(self) -> str:
         on = [n for n, v in (("equator", self.iris_mode == "equator"), ("per-eye", self.per_eye), ("rigid", self.rigid_pose),
