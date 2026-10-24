@@ -138,6 +138,7 @@ class CameraSource(_LatestFrameSource):
         names = list_cameras()
         self.source_id = names[self.index] if self.index < len(names) else f"camera{self.index}"
         self._cap: cv2.VideoCapture | None = None
+        self.delivered: tuple[int, int] | None = None  # what the camera actually sends
 
     def _open(self) -> None:
         cap = cv2.VideoCapture(self.index, cv2.CAP_AVFOUNDATION)
@@ -159,10 +160,22 @@ class CameraSource(_LatestFrameSource):
             self.mode.name,
         )
 
+    @property
+    def downgraded(self) -> bool:
+        """True when the camera sends fewer pixels than requested, e.g. because another
+        app opened it first at a lower resolution."""
+        return self.delivered is not None and self.delivered[1] < self.mode.request[1]
+
     def _read(self) -> np.ndarray | None:
         ok, bgr = self._cap.read()
         if not ok or bgr is None:
             return None
+        size = (bgr.shape[1], bgr.shape[0])
+        if size != self.delivered:
+            self.delivered = size
+            if self.downgraded:
+                log.warning("camera is delivering %dx%d, not %dx%d; another app may be using it",
+                            *size, *self.mode.request)
         rgb = cv2.cvtColor(crop_to_aspect(bgr, self.mode.aspect), cv2.COLOR_BGR2RGB)
         if self.mode.output and (rgb.shape[1], rgb.shape[0]) != self.mode.output:
             rgb = cv2.resize(rgb, self.mode.output, interpolation=cv2.INTER_AREA)
