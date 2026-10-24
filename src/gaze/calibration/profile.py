@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import logging
+import threading
 import time
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
@@ -55,29 +56,33 @@ class Profile:
         self.model: Ridge | None = None
         self.report: FitReport | None = None
         self._next_group = 0
+        self._lock = threading.RLock()  # samples are added on the UI thread, fits run in the background
 
     # ---- samples -------------------------------------------------------------------
     def new_group(self) -> int:
-        g = self._next_group
-        self._next_group += 1
-        return g
+        with self._lock:
+            g = self._next_group
+            self._next_group += 1
+            return g
 
     def add(self, X: np.ndarray, target: tuple[float, float], source: str, group: int | None = None) -> int:
         X = np.atleast_2d(np.asarray(X, np.float32))
-        group = self.new_group() if group is None else group
-        n = len(X)
-        self.X = np.vstack([self.X, X])
-        self.Y = np.vstack([self.Y, np.tile(np.asarray(target, np.float32), (n, 1))])
-        self.groups = np.concatenate([self.groups, np.full(n, group)])
-        self.sources = np.concatenate([self.sources, np.full(n, source)])
-        self.t = np.concatenate([self.t, np.full(n, time.time())])
-        if source == CLICK:
-            self._evict_clicks()
+        with self._lock:
+            group = self.new_group() if group is None else group
+            n = len(X)
+            self.X = np.vstack([self.X, X])
+            self.Y = np.vstack([self.Y, np.tile(np.asarray(target, np.float32), (n, 1))])
+            self.groups = np.concatenate([self.groups, np.full(n, group)])
+            self.sources = np.concatenate([self.sources, np.full(n, source)])
+            self.t = np.concatenate([self.t, np.full(n, time.time())])
+            if source == CLICK:
+                self._evict_clicks()
         return group
 
     def clear(self, source: str | None = None) -> None:
-        keep = np.zeros(len(self.X), bool) if source is None else self.sources != source
-        self._keep(keep)
+        with self._lock:
+            keep = np.zeros(len(self.X), bool) if source is None else self.sources != source
+            self._keep(keep)
 
     def _keep(self, keep: np.ndarray) -> None:
         self.X, self.Y, self.groups = self.X[keep], self.Y[keep], self.groups[keep]
@@ -98,10 +103,12 @@ class Profile:
 
     # ---- fitting -------------------------------------------------------------------
     def fit(self) -> FitReport | None:
-        if self.count(EXPLICIT) < 3:
-            return None
-        w = np.array([WEIGHTS[s] for s in self.sources])
-        self.model, self.report = fit_best(self.X, self.Y, w, self.groups)
+        with self._lock:
+            if self.count(EXPLICIT) < 3:
+                return None
+            X, Y, groups, sources = self.X, self.Y, self.groups, self.sources
+        w = np.array([WEIGHTS[s] for s in sources])
+        self.model, self.report = fit_best(X, Y, w, groups)
         self.meta.fit = asdict(self.report)
         self.meta.updated = time.time()
         log.info("calibration fit: %s (%d targets) cv=%s", self.report.chosen, self.report.n_groups,
@@ -126,7 +133,9 @@ class Profile:
     def save(self, root: Path | None = None) -> Path:
         d = self.path_for(self.meta.name, root)
         d.mkdir(parents=True, exist_ok=True)
-        np.savez_compressed(d / "samples.npz", X=self.X, Y=self.Y, groups=self.groups, sources=self.sources, t=self.t)
+        with self._lock:
+            arrays = dict(X=self.X, Y=self.Y, groups=self.groups, sources=self.sources, t=self.t)
+        np.savez_compressed(d / "samples.npz", **arrays)
         (d / "meta.json").write_text(json.dumps(asdict(self.meta), indent=2))
         return d
 
