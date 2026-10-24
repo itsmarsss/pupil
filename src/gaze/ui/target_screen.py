@@ -125,9 +125,9 @@ class TargetSequence:
 
     R_START, R_END = 22.0, 7.0
 
-    def __init__(self, ui: TargetScreen, targets, timing: TargetTiming, on_target, on_done):
+    def __init__(self, ui: TargetScreen, targets, timing: TargetTiming, on_target, on_done, on_start=None):
         self.ui, self.targets, self.timing = ui, list(targets), timing
-        self.on_target, self.on_done = on_target, on_done
+        self.on_target, self.on_done, self.on_start = on_target, on_done, on_start
         self._i = -1
         self._onset_ns = 0
         self._timer = None
@@ -146,6 +146,8 @@ class TargetSequence:
         x, y = self.targets[self._i]
         self.ui.set_dot(x, y, self.R_START)
         self._onset_ns = time.monotonic_ns()
+        if self.on_start is not None:
+            self.on_start(self.targets[self._i], self._onset_ns)
 
     def _tick(self, _timer) -> None:
         if self._finished:

@@ -16,7 +16,7 @@ import numpy as np
 from .calibration.profile import Profile
 from .capture.camera import FrameSource
 from .core.screen import Screen
-from .core.types import FaceObservation, GazeFeatures, GazePoint, Sample, TrackingState
+from .core.types import FaceObservation, Frame, GazeFeatures, GazePoint, Sample, TrackingState
 from .face.tracker import FaceTracker
 from .filter.fixation import FixationDetector
 from .filter.one_euro import OneEuroFilter
@@ -28,6 +28,7 @@ DEFAULT_DISTANCE_MM = 550.0
 HISTORY_S = 6.0
 
 Listener = Callable[[Sample], None]
+FrameListener = Callable[[Frame, Sample], None]
 
 
 class Tracker:
@@ -51,6 +52,7 @@ class Tracker:
         self._history: collections.deque[Sample] = collections.deque()
         self._lock = threading.Lock()
         self._listeners: list[Listener] = []
+        self._frame_listeners: list[FrameListener] = []  # get the image too; frames aren't kept
         self._thread: threading.Thread | None = None
         self._running = False
         self._last_point: GazePoint | None = None
@@ -79,6 +81,9 @@ class Tracker:
     def remove_listener(self, fn: Listener) -> None:
         if fn in self._listeners:
             self._listeners.remove(fn)
+
+    def add_frame_listener(self, fn: FrameListener) -> None:
+        self._frame_listeners.append(fn)
 
     # ---- queries -------------------------------------------------------------------
     def samples_between(self, start_ns: int, end_ns: int) -> list[Sample]:
@@ -121,6 +126,11 @@ class Tracker:
                     fn(sample)
                 except Exception:
                     log.exception("listener failed")
+            for fn in list(self._frame_listeners):
+                try:
+                    fn(frame, sample)
+                except Exception:
+                    log.exception("frame listener failed")
 
     def process(self, frame) -> Sample:
         face = self.face_tracker.process(frame)
