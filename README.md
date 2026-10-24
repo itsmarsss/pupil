@@ -55,6 +55,7 @@ buttons and recording. Esc leaves any fullscreen screen; Ctrl+C in the terminal 
 | `--recalibrate` | ignore the saved calibration |
 | `--profile NAME` | separate calibration per person or setup |
 | `--smoothing off\|light\|medium\|strong` | ring smoothing (default medium) |
+| `--appearance network\|patches` | eye features from the pretrained network (default) or from small eye patches fitted per person: no pretrained weights, ~45 % more error |
 | `--normalise roll\|frontal\|none` | straighten the face before the model (default roll: level the eyes) |
 | `--mode hd\|vga` | 1440x1080 (default) or 640x480 input, same field of view |
 | `--camera NAME_OR_INDEX` | which camera (default: the built-in FaceTime camera); see `gaze cameras` |

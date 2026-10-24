@@ -19,7 +19,12 @@ def _build_tracker(args):
     else:
         camera = int(args.camera) if args.camera.isdigit() else args.camera
         source = CameraSource(mode=args.mode, camera=camera)
-    model = MNNFaceEyeModel(args.model)
+    if args.appearance == "patches":
+        from .models.eye_patch import EyePatchModel
+
+        model = EyePatchModel()
+    else:
+        model = MNNFaceEyeModel(args.model)
     if args.normalise != "none":
         from .face.normalize import NormalisedModel
 
@@ -215,6 +220,9 @@ def main(argv: list[str] | None = None) -> int:
                        help="save calibration/validation frames for `gaze replay`")
         p.add_argument("--measure", action="store_true", help="run the head-still + head-moving accuracy measurement")
         p.add_argument("--publish", action="store_true", help="stream gaze over local UDP for `gaze control`")
+        p.add_argument("--appearance", choices=["network", "patches"], default="network",
+                       help="eye appearance features: the pretrained network (default) or eye patches "
+                            "fitted per person (no pretrained weights; less accurate)")
         p.add_argument("--smoothing", choices=["off", "light", "medium", "strong"], default="medium",
                        help="ring smoothing; medium holds steady during fixations (default)")
         p.add_argument("--normalise", choices=["roll", "frontal", "none"], default="roll",
