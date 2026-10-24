@@ -364,7 +364,7 @@ class GazeApp:
             self._last_result = result
             log.info("validation (%d targets): %s", n, result.summary())
             try:
-                kind = "launch" if launch_check else phase if phase != "valid" else "manual"
+                kind = "launch" if launch_check else phase if phase != "valid" else "quick" if n <= 3 else "manual"
                 append_result(self.results_csv, result, targets=n, kind=kind,
                               mode=getattr(getattr(self.tracker.source, "mode", None), "name", ""),
                               model=self.tracker.model.model_id,
@@ -379,7 +379,9 @@ class GazeApp:
                 then(result)
                 return
             acc = "no data" if np.isnan(result.accuracy_deg) else f"{result.accuracy_deg:.1f}°  (about {result.accuracy_pt:.0f} pt)"
-            lines = [f"Accuracy {acc}", result.summary(), "Return to start  ·  Space to recalibrate"]
+            title = f"Quick check ({n} dots): {acc}" if n <= 3 else f"Accuracy ({n} dots): {acc}"
+            hint = "  ·  Measure from the ◉ menu for a full check" if n <= 3 else ""
+            lines = [title, result.summary() + hint, "Return to start  ·  Space to recalibrate"]
             self._message(lines, {RETURN: self._start_overlay, SPACE: self._calibrate, ESC: self._start_overlay},
                           auto_continue=None if n > 3 else 2.5)
 
