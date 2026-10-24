@@ -40,7 +40,13 @@ class Extracted:
 
 
 def extract(root: Path, model: GazeModel, mode: str, timings: dict[str, TargetTiming]) -> list[Extracted]:
-    """Calibration vectors per shown target, inside each phase's accepted window."""
+    """Calibration vectors per shown target, inside each phase's accepted window.
+    `mode` is "hd" or "vga", optionally with a normalisation: "hd+frontal", "vga+roll"."""
+    mode, _, norm = mode.partition("+")
+    if norm:
+        from ..face.normalize import NormalisedModel
+
+        model = NormalisedModel(model, norm)
     tracker = FaceTracker()
     buckets: dict[tuple, list] = defaultdict(list)
     counts: dict[tuple, int] = defaultdict(int)

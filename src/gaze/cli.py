@@ -19,7 +19,12 @@ def _build_tracker(args):
     else:
         camera = int(args.camera) if args.camera.isdigit() else args.camera
         source = CameraSource(mode=args.mode, camera=camera)
-    return Tracker(source, FaceTracker(), MNNFaceEyeModel(args.model), main_screen())
+    model = MNNFaceEyeModel(args.model)
+    if args.normalise != "none":
+        from .face.normalize import NormalisedModel
+
+        model = NormalisedModel(model, args.normalise)
+    return Tracker(source, FaceTracker(), model, main_screen())
 
 
 def cmd_run(args) -> int:
@@ -123,12 +128,14 @@ def main(argv: list[str] | None = None) -> int:
         p.add_argument("--save-session", nargs="?", const="auto", metavar="DIR",
                        help="save calibration/validation frames for `gaze replay`")
         p.add_argument("--measure", action="store_true", help="run the head-still + head-moving accuracy measurement")
+        p.add_argument("--normalise", choices=["roll", "frontal", "none"], default="roll",
+                       help="straighten the face before the gaze model (default: level the eyes)")
     sub.add_parser("cameras", help="list cameras")
     doctor = sub.add_parser("doctor", help="check camera access, models and screen")
     doctor.add_argument("--camera", default="FaceTime")
     rp = sub.add_parser("replay", help="score pipeline variants on a saved session")
     rp.add_argument("session")
-    rp.add_argument("--modes", default="hd,vga")
+    rp.add_argument("--modes", default="hd+roll,hd", help="e.g. hd, vga, hd+roll, hd+frontal")
     rp.add_argument("--all", action="store_true", help="also score every calibrator, not just the auto choice")
     rp.add_argument("--model", help="path to the gaze model")
 
