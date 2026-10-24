@@ -245,12 +245,12 @@ class Live:
             self.filter.reset()
 
     def calibrate(self, scr: cg.Screen):
-        cfg = self.uc.cfg if self.uc else calib.GazeConfig()
+        cfg = calib.GazeConfig()  # the default config; V switches afterwards
         self.uc, self.calib_data = cg.run_calibration(scr, self.trk, self.intr, cfg, self.base, self.on_target(scr))
         self.last_event = f"calibrated, rms {self.uc.rms_cm:.2f} cm"
 
     def calibrate_mouse(self, scr: cg.Screen):
-        cfg = self.uc.cfg if self.uc else calib.GazeConfig()
+        cfg = calib.GazeConfig()
         self.uc, self.calib_data = cg.run_mouse_calibration(scr, self.trk, self.intr, cfg, self.base, self.on_target(scr))
         self.last_event = f"mouse-calibrated, rms {self.uc.rms_cm:.2f} cm"
 
