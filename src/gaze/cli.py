@@ -33,6 +33,8 @@ def cmd_run(args) -> int:
         recalibrate=args.recalibrate,
         results_csv=Path(args.results) if args.results else None,
         learn_from_clicks=not args.no_clicks,
+        snap=args.snap,
+        record_path=Path(args.record) if args.record else None,
     ).run()
     return 0
 
@@ -88,6 +90,8 @@ def main(argv: list[str] | None = None) -> int:
         p.add_argument("--recalibrate", action="store_true", help="ignore the saved calibration")
         p.add_argument("--no-clicks", action="store_true", help="don't learn from clicks")
         p.add_argument("--results", help="CSV to append accuracy checks to")
+        p.add_argument("--snap", action="store_true", help="snap the ring to nearby buttons (needs Accessibility access)")
+        p.add_argument("--record", help="write every gaze sample to this CSV")
     sub.add_parser("cameras", help="list cameras")
     doctor = sub.add_parser("doctor", help="check camera access, models and screen")
     doctor.add_argument("--camera", default="FaceTime")

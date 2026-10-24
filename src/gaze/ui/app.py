@@ -7,6 +7,7 @@ from that thread.
 from __future__ import annotations
 
 import logging
+import signal
 import threading
 import time
 from pathlib import Path
@@ -30,9 +31,11 @@ from PyObjCTools import AppHelper
 from ..calibration.implicit import evaluate_click, window
 from ..calibration.profile import CLICK, EXPLICIT, Profile, ProfileMeta
 from ..calibration.targets import TargetTiming, grid, shuffled
-from ..core.paths import APP_SUPPORT
+from ..core.paths import APP_SUPPORT, recordings_dir
 from ..core.types import TrackingState
 from ..eval.metrics import ValidationResult, append_result, score
+from ..sinks.recorder import GazeRecorder
+from ..sinks.snapper import Element, Snapper
 from ..tracker import Tracker
 from .overlay import GazeRing
 from .target_screen import ESC, RETURN, SPACE, TargetScreen, TargetSequence
@@ -42,6 +45,7 @@ log = logging.getLogger(__name__)
 LAUNCH_CHECK_MAX_DEG = 4.0  # saved calibration is reused if the quick check beats this
 REFIT_EVERY_CLICKS = 8
 MIN_SAMPLES_PER_TARGET = 8
+SNAP_RADIUS_DEG = 2.5
 
 
 class _MenuTarget(NSObject):
@@ -66,6 +70,8 @@ class GazeApp:
         recalibrate: bool = False,
         results_csv: Path | None = None,
         learn_from_clicks: bool = True,
+        snap: bool = False,
+        record_path: Path | None = None,
     ):
         self.tracker = tracker
         self.screen = tracker.screen
@@ -75,6 +81,12 @@ class GazeApp:
         self.results_csv = results_csv or APP_SUPPORT / "validation.csv"
         self.learn_from_clicks = learn_from_clicks
         self.overlay_on = True
+        self.snap_on = snap
+        self._snapper: Snapper | None = None
+        self._snap: tuple[int, Element | None] | None = None  # (fixation id, element)
+        self._snap_pending: int | None = None
+        self.recorder: GazeRecorder | None = None
+        self._record_path = record_path
 
         self.ring: GazeRing | None = None
         self.targets: TargetScreen | None = None
@@ -89,6 +101,7 @@ class GazeApp:
         self._menu_items: dict[str, NSMenuItem] = {}
         self._timers = []
         self._last_result: ValidationResult | None = None
+        self._shut_down = False
 
     # ---- startup -------------------------------------------------------------------
     def run(self) -> None:
@@ -97,19 +110,34 @@ class GazeApp:
         self.ring = GazeRing(self.screen)
         self.targets = TargetScreen(self.screen)
         self._build_menu()
+        if self.snap_on:
+            self.snap_on = False
+            self._toggle_snap()
+        if self._record_path is not None:
+            self._start_recording(self._record_path)
         self.tracker.start()
         self._timers.append(NSTimer.scheduledTimerWithTimeInterval_repeats_block_(1 / 60, True, self._tick))
         self._timers.append(NSTimer.scheduledTimerWithTimeInterval_repeats_block_(1.0, True, self._update_status))
         NSEvent.addGlobalMonitorForEventsMatchingMask_handler_(NSEventMaskLeftMouseDown, self._on_click)
         # start the launch flow once the run loop is going
         NSTimer.scheduledTimerWithTimeInterval_repeats_block_(0.1, False, lambda _t: self._launch())
+        # Python only runs signal handlers while the main thread executes Python code;
+        # the 1 s status timer guarantees that, so Ctrl+C and kill quit cleanly.
+        for sig in (signal.SIGINT, signal.SIGTERM):
+            signal.signal(sig, lambda *_: self._quit())
         try:
-            AppHelper.runEventLoop(installInterrupt=True)
+            AppHelper.runEventLoop()
         finally:
             self._shutdown()
 
     def _shutdown(self) -> None:
+        """Idempotent: stopping the AppKit loop may exit the process without unwinding,
+        so every quit path calls this first."""
+        if self._shut_down:
+            return
+        self._shut_down = True
         self.tracker.stop()
+        self._stop_recording()
         if self.tracker.profile is not None and self.tracker.profile.calibrated:
             self.tracker.profile.save()
 
@@ -290,12 +318,55 @@ class GazeApp:
         now = time.monotonic_ns()
         if p is not None and p.valid:
             self._last_valid_ns = now
-            self.ring.show_at(p.x, p.y, fixating=p.fixation_id is not None)
+            target = self._snapped(p)
+            if target is not None:
+                self.ring.show_at(*target.centre, fixating=True)
+            else:
+                self.ring.show_at(p.x, p.y, fixating=p.fixation_id is not None)
         elif now - self._last_valid_ns > 400_000_000:  # brief dropouts (blinks) keep the ring
             self.ring.hide()
 
+    # ---- snapping -------------------------------------------------------------------
+    def _snapped(self, p) -> Element | None:
+        """Element for the current fixation; looked up once per fixation off the main thread."""
+        if not self.snap_on or self._snapper is None or p.fixation_id is None:
+            return None
+        if self._snap is not None and self._snap[0] == p.fixation_id:
+            return self._snap[1]
+        if self._snap_pending is None:
+            self._snap_pending = p.fixation_id
+            radius = self.screen.deg_to_pt(SNAP_RADIUS_DEG, self.tracker.distance_mm)
+            threading.Thread(target=self._lookup, args=(p.fixation_id, (p.x, p.y), radius), daemon=True).start()
+        return None
+
+    def _lookup(self, fixation_id: int, gaze, radius: float) -> None:
+        try:
+            self._snap = (fixation_id, self._snapper.snap(gaze, radius))
+        except Exception:
+            log.exception("snap lookup failed")
+            self._snap = (fixation_id, None)
+        finally:
+            self._snap_pending = None
+
+    # ---- recording ------------------------------------------------------------------
+    def _start_recording(self, path: Path | None = None) -> None:
+        path = path or recordings_dir() / time.strftime("gaze-%Y%m%d-%H%M%S.csv")
+        self.recorder = GazeRecorder(path)
+        self.tracker.add_listener(self.recorder.on_sample)
+        log.info("recording gaze to %s", path)
+
+    def _stop_recording(self) -> None:
+        if self.recorder is not None:
+            self.tracker.remove_listener(self.recorder.on_sample)
+            self.recorder.close()
+            log.info("saved %d rows to %s", self.recorder.rows, self.recorder.path)
+            self.recorder = None
+
     # ---- click learning --------------------------------------------------------------
     def _on_click(self, event) -> None:
+        if self.recorder is not None:
+            loc = NSEvent.mouseLocation()
+            self.recorder.event("click", float(loc.x), self.screen.to_cocoa_y(float(loc.y)))
         profile = self.tracker.profile
         if not self.learn_from_clicks or self._busy or profile is None or not profile.calibrated:
             return
@@ -325,7 +396,8 @@ class GazeApp:
 
     # ---- menu ------------------------------------------------------------------------
     def _build_menu(self) -> None:
-        actions = [self._calibrate, lambda: self._validate(9), self._toggle_overlay, self._toggle_clicks, self._quit]
+        actions = [self._calibrate, lambda: self._validate(9), self._toggle_overlay, self._toggle_clicks,
+                   self._toggle_snap, self._toggle_recording, self._quit]
         self._menu_target = _MenuTarget.alloc().initWithActions_(actions)
         menu = NSMenu.alloc().init()
         self._status_line = menu.addItemWithTitle_action_keyEquivalent_("Starting…", None, "")
@@ -333,7 +405,7 @@ class GazeApp:
         menu.addItem_(NSMenuItem.separatorItem())
         for tag, (key, title) in enumerate(
             [("calibrate", "Recalibrate"), ("validate", "Check accuracy"), ("overlay", "Show gaze ring"),
-             ("clicks", "Learn from clicks"), ("quit", "Quit")]
+             ("clicks", "Learn from clicks"), ("snap", "Snap to buttons"), ("record", "Record gaze"), ("quit", "Quit")]
         ):
             if key == "quit":
                 menu.addItem_(NSMenuItem.separatorItem())
@@ -366,5 +438,24 @@ class GazeApp:
         self.learn_from_clicks = not self.learn_from_clicks
         self._menu_items["clicks"].setState_(1 if self.learn_from_clicks else 0)
 
+    def _toggle_snap(self) -> None:
+        if not self.snap_on:
+            if self._snapper is None:
+                self._snapper = Snapper()
+            if not self._snapper.available:
+                self._snapper.request_permission()
+                log.info("snapping needs Accessibility access for this terminal; it starts once granted")
+        self.snap_on = not self.snap_on
+        self._snap = None
+        self._menu_items["snap"].setState_(1 if self.snap_on else 0)
+
+    def _toggle_recording(self) -> None:
+        if self.recorder is None:
+            self._start_recording()
+        else:
+            self._stop_recording()
+        self._menu_items["record"].setState_(1 if self.recorder is not None else 0)
+
     def _quit(self) -> None:
+        self._shutdown()
         AppHelper.stopEventLoop()
