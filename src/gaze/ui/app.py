@@ -76,6 +76,7 @@ class GazeApp:
         snap: bool = False,
         record_path: Path | None = None,
         session_dir: Path | None = None,
+        measure: bool = False,
     ):
         self.tracker = tracker
         self.screen = tracker.screen
@@ -92,6 +93,7 @@ class GazeApp:
         self.recorder: GazeRecorder | None = None
         self._record_path = record_path
         self._session_dir = session_dir
+        self._pending_measure = measure  # run the measurement once the launch flow finishes
         self.session: SessionWriter | None = None
 
         self.ring: GazeRing | None = None
@@ -298,7 +300,10 @@ class GazeApp:
         feats = [s.calib for s in samples if s.calib is not None and not s.face.is_blinking]
         return np.stack(feats) if feats else np.zeros((0, 0), np.float32)
 
-    def _validate(self, n: int = 9, launch_check: bool = False) -> None:
+    def _validate(self, n: int = 9, launch_check: bool = False, phase: str = "valid", then=None,
+                  lines: list[str] | None = None) -> None:
+        """Show `n` dots and score gaze against them. `then(result)` replaces the results
+        screen, for chaining checks; `phase` labels the frames in a saved session."""
         self._busy = True
         self.ring.hide()
         points = shuffled(grid(n, self.screen.width_pt, self.screen.height_pt))
@@ -325,7 +330,8 @@ class GazeApp:
             self._last_result = result
             log.info("validation (%d targets): %s", n, result.summary())
             try:
-                append_result(self.results_csv, result, targets=n, kind="launch" if launch_check else "manual",
+                kind = "launch" if launch_check else phase if phase != "valid" else "manual"
+                append_result(self.results_csv, result, targets=n, kind=kind,
                               mode=getattr(getattr(self.tracker.source, "mode", None), "name", ""),
                               model=self.tracker.model.model_id,
                               fit=self.tracker.profile.report.chosen if self.tracker.profile and self.tracker.profile.report else "")
@@ -335,13 +341,47 @@ class GazeApp:
                 log.info("saved calibration is off (%.1f°); recalibrating", result.accuracy_deg)
                 self._intro()
                 return
+            if then is not None:
+                then(result)
+                return
             acc = "no data" if np.isnan(result.accuracy_deg) else f"{result.accuracy_deg:.1f}°  (about {result.accuracy_pt:.0f} pt)"
             lines = [f"Accuracy {acc}", result.summary(), "Return to start  ·  Space to recalibrate"]
             self._message(lines, {RETURN: self._start_overlay, SPACE: self._calibrate, ESC: self._start_overlay},
                           auto_continue=None if n > 3 else 2.5)
 
         TargetSequence(self.targets, points, self.timing, on_target, on_done,
-                       on_start=lambda t, onset: self._label("valid", t, onset)).start()
+                       on_start=lambda t, onset: self._label(phase, t, onset), lines=lines).start()
+
+    def _measure(self) -> None:
+        """Two 9-dot checks: head still, then head moving naturally."""
+        if self.tracker.profile is None or not self.tracker.profile.calibrated:
+            return
+        self._busy = True
+        self.ring.hide()
+        results = {}
+
+        def show_results(moving):
+            results["moving"] = moving
+            fmt = lambda r: "no data" if np.isnan(r.accuracy_deg) else f"{r.accuracy_deg:.1f}° (p95 {r.accuracy_p95_deg:.1f}°, jitter {r.precision_rms_deg:.2f}°)"  # noqa: E731
+            self._message(
+                ["Measurement done", f"Head still:  {fmt(results['still'])}", f"Head moving:  {fmt(moving)}",
+                 f"Distance {results['still'].distance_mm / 10:.0f} cm  ·  Return to continue"],
+                {RETURN: self._start_overlay, ESC: self._start_overlay},
+            )
+
+        def moving_intro(still):
+            results["still"] = still
+            self._message(
+                ["Now move your head naturally", "Follow the dots with your eyes while turning and tilting your head a little.",
+                 "Press Space to start"],
+                {SPACE: lambda: self._validate(9, phase="valid_moving", then=show_results), ESC: self._start_overlay},
+            )
+
+        self._message(
+            ["Accuracy measurement", "First 9 dots: keep your head as still as you can. Then 9 more while moving it.",
+             "Press Space to start  ·  Esc to cancel"],
+            {SPACE: lambda: self._validate(9, phase="valid_still", then=moving_intro), ESC: self._start_overlay},
+        )
 
     def _message(self, lines, keys: dict, auto_continue: float | None = None) -> None:
         state = {"done": False}
@@ -362,6 +402,10 @@ class GazeApp:
             self._quit()
 
     def _start_overlay(self) -> None:
+        if self._pending_measure:
+            self._pending_measure = False
+            self._measure()
+            return
         self.targets.hide()
         self._busy = False
 
@@ -452,15 +496,16 @@ class GazeApp:
 
     # ---- menu ------------------------------------------------------------------------
     def _build_menu(self) -> None:
-        actions = [self._calibrate, lambda: self._validate(9), self._toggle_overlay, self._toggle_clicks,
-                   self._toggle_snap, self._toggle_recording, self._quit]
+        actions = [self._calibrate, lambda: self._validate(9), self._measure, self._toggle_overlay,
+                   self._toggle_clicks, self._toggle_snap, self._toggle_recording, self._quit]
         self._menu_target = _MenuTarget.alloc().initWithActions_(actions)
         menu = NSMenu.alloc().init()
         self._status_line = menu.addItemWithTitle_action_keyEquivalent_("Starting…", None, "")
         self._status_line.setEnabled_(False)
         menu.addItem_(NSMenuItem.separatorItem())
         for tag, (key, title) in enumerate(
-            [("calibrate", "Recalibrate"), ("validate", "Check accuracy"), ("overlay", "Show gaze ring"),
+            [("calibrate", "Recalibrate"), ("validate", "Check accuracy"), ("measure", "Measure (head still + moving)"),
+             ("overlay", "Show gaze ring"),
              ("clicks", "Learn from clicks"), ("snap", "Snap to buttons"), ("record", "Record gaze"), ("quit", "Quit")]
         ):
             if key == "quit":

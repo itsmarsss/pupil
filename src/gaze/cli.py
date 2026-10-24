@@ -36,6 +36,7 @@ def cmd_run(args) -> int:
         snap=args.snap,
         record_path=Path(args.record) if args.record else None,
         session_dir=_session_dir(args.save_session),
+        measure=args.measure,
     ).run()
     return 0
 
@@ -58,11 +59,11 @@ def cmd_replay(args) -> int:
 
     rows = replay(Path(args.session), MNNFaceEyeModel(args.model), modes=args.modes.split(","),
                   all_calibrators=args.all)
-    print(f"{'mode':5} {'config':17} {'calibrator':24} {'accuracy':>9} {'p95':>7} {'precision':>9} {'loss':>5}  head in range")
-    for mode, config, cal, r, inr in rows:
+    print(f"{'mode':8} {'config':17} {'calibrator':22} {'checks':13} {'accuracy':>9} {'p95':>7} {'jitter':>7} {'loss':>5}  head in range")
+    for mode, config, cal, phase, r, inr in rows:
         in_range = f"{inr.accuracy_deg:.2f}° ({len(inr.targets)} dots)" if inr else "-"
-        print(f"{mode:5} {config:17} {cal:24} {r.accuracy_deg:8.2f}° {r.accuracy_p95_deg:6.2f}° "
-              f"{r.precision_rms_deg:8.2f}° {r.data_loss:5.0%}  {in_range}")
+        print(f"{mode:8} {config:17} {cal:22} {phase:13} {r.accuracy_deg:8.2f}° {r.accuracy_p95_deg:6.2f}° "
+              f"{r.precision_rms_deg:6.2f}° {r.data_loss:5.0%}  {in_range}")
     return 0
 
 
@@ -121,6 +122,7 @@ def main(argv: list[str] | None = None) -> int:
         p.add_argument("--record", help="write every gaze sample to this CSV")
         p.add_argument("--save-session", nargs="?", const="auto", metavar="DIR",
                        help="save calibration/validation frames for `gaze replay`")
+        p.add_argument("--measure", action="store_true", help="run the head-still + head-moving accuracy measurement")
     sub.add_parser("cameras", help="list cameras")
     doctor = sub.add_parser("doctor", help="check camera access, models and screen")
     doctor.add_argument("--camera", default="FaceTime")
