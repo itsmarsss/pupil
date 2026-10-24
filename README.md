@@ -35,11 +35,17 @@ only one on by default:
 | per-eye | separate kappa/gains per eye, then the two screen hits are averaged |
 | rigid head pose | head rotation from nose/forehead/cheekbone landmarks against a per-user reference, so eyelid motion can't leak into head pitch |
 | residual correction | screen-space correction after the physical fit: `affine`, or `quad` (default; quadratic in x, y), which fixed the curved leftover error in real runs (2.02 → 1.48 cm on a 13-dot run) |
+| head compensation | on by default when the calibration has head-sweep frames: corrects how the error changes when your head moves away from the calibration pose (dot calibration alone can't learn it; the head is still) |
 
 Mouse-follow calibration: move the mouse slowly and keep your eyes on the dot under it; the background is an
 8×5 grid of tiles that turn green as they collect enough frames. Frames are only used while the mouse moves slowly
 (fast moves = eyes jumping), and are matched to where the mouse was 0.1 s earlier (eyes trail a moving target).
 Tiles are the averaging groups for the fit.
+
+Face pointing: a ray from the nose tip along the head's forward axis; where it meets the screen is drawn as a
+yellow/orange marker (3D view, free look with H, on-screen overlay with H in `live.py`). It also guides the head
+sweep that ends each dot calibration: eyes stay on a dot while you steer the face-pointing ring around a circle
+(3 dots, ~7 s each; `--no-sweep` skips it).
 
 The fit also drops glances/saccades per dot, averages each dot's frames before fitting (fitting single noisy
 frames biases the gains low), and down-weights outlier dots. Display output (overlay, free look) uses a One Euro
@@ -47,7 +53,7 @@ filter. Raw frames of every calibration and test are saved in `runs/`; `uv run p
 re-runs the comparison offline.
 
 `live.py` keys (control window): **C** calibrate (25 dots) · **K** quick calibration (13 dots) · **M** mouse-follow calibration · **T** test + comparison · **F** free look · **D** drift
-correction (one centre dot) · **V** cycle config · **O** on-screen overlay · **S** smoothing · **Q** quit.
+correction (one centre dot) · **V** cycle config · **O** gaze overlay · **H** face-pointing overlay · **S** smoothing · **Q** quit.
 
 ## Frame and conventions
 

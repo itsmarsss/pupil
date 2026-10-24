@@ -49,7 +49,9 @@ TEST_REGIONS = [r for _, r in TEST_SET]
 SETTLE_S, HOLD_S = 0.8, 1.2
 RUNS = Path(__file__).with_name("runs")
 
-CYAN, MAGENTA, WHITE, GREY = (220, 220, 0), (255, 0, 255), (255, 255, 255), (110, 110, 110)
+CYAN, MAGENTA, WHITE, GREY, YELLOW = (220, 220, 0), (255, 0, 255), (255, 255, 255), (110, 110, 110), (0, 210, 255)
+SWEEP_POINTS = [(0.5, 0.5), (0.25, 0.5), (0.75, 0.5)]
+SWEEP_S = 7.0
 
 
 class Tracker:
@@ -323,7 +325,7 @@ def results_screen(scr: Screen, raw: list[dict], cal: list[dict], s_raw: dict, s
 
 
 def free_look(scr: Screen, trk: Tracker, intr, uc: calib.UserCalib | None, smooth: bool = True):
-    show_raw = True
+    show_raw, show_head = True, True
     filt = F.OneEuro()
     while True:
         img = scr.canvas()
@@ -344,17 +346,23 @@ def free_look(scr: Screen, trk: Tracker, intr, uc: calib.UserCalib | None, smoot
                     p = filt(gf.hit_px, time.monotonic()) if smooth else gf.hit_px
                     cv2.circle(img, tuple(int(v) for v in p), 14, CYAN, -1, cv2.LINE_AA)
                 status = f"eye distance {abs(gf.origin[2]):.0f} cm"
-            if show_raw:
-                raw = calib.predict(lms, pose, intr, scr.geo, None)
-                if raw.hit_px is not None:
-                    cv2.circle(img, tuple(int(v) for v in raw.hit_px), 10, MAGENTA, 2, cv2.LINE_AA)
-        text(img, f"cyan = calibrated{', magenta = uncalibrated' if show_raw else ''}   {status}   R raw  ESC back",
-             scr.H - 20, GREY, 0.55)
+            raw = calib.predict(lms, pose, intr, scr.geo, None)
+            if show_raw and raw.hit_px is not None:
+                cv2.circle(img, tuple(int(v) for v in raw.hit_px), 10, MAGENTA, 2, cv2.LINE_AA)
+            if show_head and raw.head_hit_px is not None:
+                hp = tuple(int(v) for v in raw.head_hit_px)
+                cv2.circle(img, hp, 16, YELLOW, 2, cv2.LINE_AA)
+                cv2.line(img, (hp[0] - 6, hp[1]), (hp[0] + 6, hp[1]), YELLOW, 1)
+                cv2.line(img, (hp[0], hp[1] - 6), (hp[0], hp[1] + 6), YELLOW, 1)
+        text(img, f"cyan = calibrated{', magenta = uncalibrated' if show_raw else ''}{', yellow = face pointing' if show_head else ''}"
+                  f"   {status}   R raw  H face  ESC back", scr.H - 20, GREY, 0.55)
         k = scr.show(img)
         if k == 27:
             return
-        if k in (ord("r"), ord("R")):
+        if k == ord("r"):
             show_raw = not show_raw
+        if k == ord("h"):
+            show_head = not show_head
 
 
 @dataclass
@@ -406,23 +414,69 @@ def latest_calibration() -> CalibData | None:
     return CalibData(frames, points, groups)
 
 
+def head_sweep(scr: Screen, trk: Tracker, intr: g.Intrinsics, points=SWEEP_POINTS, seconds: float = SWEEP_S,
+               on_target=None) -> list[list[tuple]]:
+    """Eyes stay on a dot while the head moves: the yellow ring (where the face points, relative to where it
+    pointed when the dot appeared) should travel around the circle. Teaches head compensation."""
+    out = []
+    radius = int(0.12 * scr.H)
+    for f in points:
+        if on_target:
+            on_target(f)
+        frames, start, origin = [], time.monotonic(), None
+        dot = scr.px(f)
+        while (el := time.monotonic() - start) < seconds + SETTLE_S:
+            r = trk.read()
+            img = scr.canvas()
+            cv2.circle(img, dot, radius, GREY, 1, cv2.LINE_AA)
+            # a marker that walks around the circle, so there's always a "next" place to point at
+            a = 2 * np.pi * max(el - SETTLE_S, 0) / (seconds / 1.5)
+            cv2.circle(img, (int(dot[0] + radius * np.cos(a)), int(dot[1] + radius * np.sin(a))), 5, GREY, -1, cv2.LINE_AA)
+            if r is not None:
+                gf = g.compute(r[0], r[1], intr, scr.geo)
+                if gf.head_hit_px is not None:
+                    origin = gf.head_hit_px if origin is None else origin
+                    hp = np.array(dot) + (gf.head_hit_px - origin)
+                    cv2.circle(img, tuple(int(v) for v in hp), 12, YELLOW, 2, cv2.LINE_AA)
+                if el >= SETTLE_S:
+                    frames.append(r)
+            cv2.circle(img, dot, 8, WHITE, -1, cv2.LINE_AA)
+            text(img, "eyes on the white dot - move your head so the yellow ring follows the grey marker around the circle",
+                 scr.H - 20, GREY, 0.55)
+            if scr.show(img) == 27:
+                raise SystemExit("aborted")
+        out.append(frames)
+    if on_target:
+        on_target(None)
+    return out
+
+
 def run_calibration(scr: Screen, trk: Tracker, intr: g.Intrinsics, cfg: calib.GazeConfig = calib.GazeConfig(),
-                    base: g.EyeParams = g.EyeParams(), on_target=None, points=DENSE_POINTS):
+                    base: g.EyeParams = g.EyeParams(), on_target=None, points=DENSE_POINTS, sweep: bool = True):
     """Dot calibration in the fullscreen window (25 dots by default, CALIB_POINTS for the quick 13).
     Saves user.json and the raw frames; returns (calibration, CalibData)."""
     wait_key(scr, [f"Calibration ({len(points)} dots): look at each dot until it moves on. Keep your head still.",
                    "SPACE to start   ESC to quit"])
     frames = collect(scr, trk, points, on_target)
+    all_points, groups = list(points), list(range(len(points)))
+    if sweep:
+        wait_key(scr, ["Head sweep: keep your EYES on the white dot while you move your HEAD,",
+                       "steering the yellow ring around the circle. 3 dots, ~8 s each.", "SPACE to start   ESC to quit"])
+        frames += head_sweep(scr, trk, intr, on_target=on_target)
+        all_points += SWEEP_POINTS
+        groups += [calib.SWEEP_GROUP0 + i for i in range(len(SWEEP_POINTS))]
+    data = CalibData(frames, all_points, groups)
     img = scr.canvas()
     text(img, "fitting...")
     scr.show(img)
-    uc = calib.fit(fixations(frames, points, scr), intr, scr.geo, cfg, base)
+    uc = calib.fit(data.fixations(scr), intr, scr.geo, cfg, base)
     print(f"calibration [{cfg.label()}]: kappa {uc.mean('kappa_yaw_deg'):+.2f}° / {uc.mean('kappa_pitch_deg'):+.2f}°, "
           f"gain {uc.mean('gain_yaw'):.2f} / {uc.mean('gain_pitch'):.2f}, rms {uc.rms_cm:.2f} cm")
     uc.save()
     RUNS.mkdir(exist_ok=True)
-    save_frames(RUNS / time.strftime("%Y%m%d-%H%M%S-calib.npz"), frames, points)
-    return uc, CalibData(frames, points, list(range(len(points))))
+    print(f"head compensation: {'fitted' if uc.head_comp else 'not used'}")
+    save_frames(RUNS / time.strftime("%Y%m%d-%H%M%S-calib.npz"), frames, all_points, groups=groups)
+    return uc, data
 
 
 class Coverage:
@@ -585,6 +639,7 @@ def main():
     ap.add_argument("--test-only", action="store_true")
     ap.add_argument("--mouse", action="store_true", help="mouse-follow calibration instead of dots")
     ap.add_argument("--quick", action="store_true", help="13 dots instead of 25")
+    ap.add_argument("--no-sweep", action="store_true", help="skip the head-sweep step")
     args = ap.parse_args()
 
     info = device.load()
@@ -607,7 +662,8 @@ def main():
     elif args.mouse:
         uc, calib_data = run_mouse_calibration(scr, trk, intr)
     else:
-        uc, calib_data = run_calibration(scr, trk, intr, points=CALIB_POINTS if args.quick else DENSE_POINTS)
+        uc, calib_data = run_calibration(scr, trk, intr, points=CALIB_POINTS if args.quick else DENSE_POINTS,
+                                         sweep=not args.no_sweep)
     img = run_test(scr, trk, intr, uc, hfov, calib_data)
     while True:
         k = scr.show(img)

@@ -6,7 +6,7 @@ without leaving the live view.
     uv run python live.py --camera 1       # another camera
 
 Control window keys: C calibrate (25 dots), K quick calibration (13 dots), M mouse-follow calibration, T accuracy test (+ comparison of every config), F free look, D drift correction
-(one centre dot), V cycle config, O on-screen gaze overlay, S smoothing, Q quit.
+(one centre dot), V cycle config, O on-screen gaze overlay, H on-screen face-pointing overlay, S smoothing, Q quit.
 """
 from __future__ import annotations
 
@@ -118,6 +118,15 @@ def log_frame(gf: g.GazeFrame, lms: np.ndarray, rgb: np.ndarray, intr: g.Intrins
         rays.append([e.center, end])
     rr.log("world/eyes/rays", rr.LineStrips3D(rays, radii=0.05, colors=[[255, 220, 0]]))
 
+    # where the face points: ray from the nose tip along the head's forward axis
+    if gf.head_origin is not None:
+        end = gf.head_hit if gf.head_hit is not None else gf.head_origin + gf.head_dir * 60
+        rr.log("world/face/pointing", rr.LineStrips3D([[gf.head_origin, end]], radii=0.08, colors=[[255, 140, 0]]))
+    if gf.head_hit_px is not None:
+        rr.log("screen/face_pointing", rr.Points2D([gf.head_hit_px], radii=8, colors=[[255, 140, 0]]))
+    else:
+        rr.log("screen/face_pointing", rr.Clear(recursive=False))
+
     if gf.hit is not None:
         rr.log("world/screen/hit", rr.Points3D([gf.hit], radii=0.6, colors=[[0, 220, 220]]))
         rr.log("screen/hit", rr.Points2D([gf.hit_px], radii=12, colors=[[0, 220, 220]]))
@@ -186,6 +195,8 @@ class Live:
         self.trk.on_frame = self.on_frame
         self.display = cg.Display("geo live")  # control window; goes fullscreen for calibrate / test / free look
         self.overlay: Overlay | None = None      # O: gaze dot drawn over everything on screen
+        self.head_overlay: Overlay | None = None # H: where the face points, drawn over everything
+        self.head_px = None
         self.smooth = True                       # S: One Euro smoothing for the overlay and free look
         self.filter = F.OneEuro()
         self.hit_px = None                       # latest gaze point (usable screen area, points)
@@ -209,6 +220,10 @@ class Live:
                 log_hinge(self.screen, self.hinge)
         self.frame += 1
         gf = calib.predict(lms, pose, self.intr, self.screen, self.uc, self.base, self.depth_scale) if lms is not None else None
+        if lms is not None:
+            self.head_px = g.compute(lms, pose, self.intr, self.screen, self.base, self.depth_scale).head_hit_px
+        else:
+            self.head_px = None
         if gf is None:  # no face, or a blink
             self.hit_px = None
             rr.log("world/camera/image", rr.Image(rgb).compress(jpeg_quality=70))
@@ -232,8 +247,9 @@ class Live:
     def fullscreen(self, mode: str, fn):
         """Run one fullscreen step (calibrate / test / free look / drift), then return to the control window."""
         self.mode = mode
-        if self.overlay:
-            self.overlay.hide()  # it floats above everything, including the fullscreen dots
+        for ov in (self.overlay, self.head_overlay):
+            if ov:
+                ov.hide()  # they float above everything, including the fullscreen dots
         scr = cg.Screen(self.info, self.display)
         try:
             fn(scr)
@@ -301,7 +317,8 @@ class Live:
         lines = [self.status(),
                  f"hinge {'n/a' if self.hinge is None else f'{self.hinge:.0f} deg'}   fps {self.fps:.0f}   {self.last_event}",
                  "C calibrate (25)  K quick (13)  M mouse  T test  F free  D drift  V config",
-                 f"O overlay {'on' if self.overlay else 'off'}  S smoothing {'on' if self.smooth else 'off'}  Q quit"]
+                 f"O gaze overlay {'on' if self.overlay else 'off'}  H face overlay {'on' if self.head_overlay else 'off'}"
+                 f"  S smoothing {'on' if self.smooth else 'off'}  Q quit"]
         for i, t in enumerate(lines):
             cv2.putText(view, t, (10, 22 + 22 * i), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 0, 0), 3, cv2.LINE_AA)
             cv2.putText(view, t, (10, 22 + 22 * i), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 255, 160), 1, cv2.LINE_AA)
@@ -316,7 +333,16 @@ class Live:
             self.overlay = Overlay(self.info["display"])
             self.filter.reset()
 
+    def toggle_head_overlay(self):
+        if self.head_overlay:
+            self.head_overlay.close()
+            self.head_overlay = None
+        else:
+            self.head_overlay = Overlay(self.info["display"], radius=9, rgba=(1.0, 0.55, 0.0, 0.75))
+
     def update_overlay(self):
+        if self.head_overlay:
+            self.head_overlay.update(self.head_px)
         if not self.overlay:
             return
         if self.hit_px is None:
@@ -347,11 +373,14 @@ class Live:
                 self.cycle_config()
             elif k == ord("o"):
                 self.toggle_overlay()
+            elif k == ord("h"):
+                self.toggle_head_overlay()
             elif k == ord("s"):
                 self.smooth = not self.smooth
                 self.filter.reset()
-        if self.overlay:
-            self.overlay.close()
+        for ov in (self.overlay, self.head_overlay):
+            if ov:
+                ov.close()
         self.display.close()
 
 
