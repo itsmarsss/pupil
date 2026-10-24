@@ -125,16 +125,18 @@ class TargetSequence:
 
     R_START, R_END = 22.0, 7.0
 
-    def __init__(self, ui: TargetScreen, targets, timing: TargetTiming, on_target, on_done, on_start=None):
+    def __init__(self, ui: TargetScreen, targets, timing: TargetTiming, on_target, on_done, on_start=None,
+                 lines: list[str] | None = None):
         self.ui, self.targets, self.timing = ui, list(targets), timing
         self.on_target, self.on_done, self.on_start = on_target, on_done, on_start
+        self.lines = lines or []
         self._i = -1
         self._onset_ns = 0
         self._timer = None
         self._finished = False
 
     def start(self) -> None:
-        self.ui.show([], on_key=self._key)
+        self.ui.show(self.lines, on_key=self._key)
         self._next()
         self._timer = NSTimer.scheduledTimerWithTimeInterval_repeats_block_(1 / 60, True, self._tick)
 
@@ -175,4 +177,5 @@ class TargetSequence:
             self._timer.invalidate()
             self._timer = None
         self.ui.set_dot(None)
+        self.ui.set_lines([])
         self.on_done(cancelled)

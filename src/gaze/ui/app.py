@@ -29,7 +29,7 @@ from AppKit import (
 from PyObjCTools import AppHelper
 
 from ..calibration.implicit import evaluate_click, window
-from ..calibration.profile import CLICK, EXPLICIT, Profile, ProfileMeta
+from ..calibration.profile import CLICK, EXPLICIT, MOTION, Profile, ProfileMeta
 from ..calibration.targets import TargetTiming, grid, shuffled
 from ..core.paths import APP_SUPPORT, recordings_dir
 from ..core.types import TrackingState
@@ -47,6 +47,8 @@ LAUNCH_CHECK_MAX_DEG = 4.0  # saved calibration is reused if the quick check bea
 REFIT_EVERY_CLICKS = 8
 MIN_SAMPLES_PER_TARGET = 8
 SNAP_RADIUS_DEG = 2.5
+MOTION_TIMING = TargetTiming(dwell_s=6.5, settle_s=0.8, tail_s=0.1)
+MOTION_CHUNK = 15  # score the head-motion sweep in half-second pieces
 
 
 class _MenuTarget(NSObject):
@@ -124,6 +126,7 @@ class GazeApp:
                 "screen_pt": [self.screen.width_pt, self.screen.height_pt],
                 "screen_mm": [self.screen.width_mm, self.screen.height_mm],
                 "timing": vars(self.timing),
+                "motion_timing": vars(MOTION_TIMING),
                 "mode": getattr(getattr(self.tracker.source, "mode", None), "name", ""),
                 "model": self.tracker.model.model_id,
                 "camera": self.tracker.source.source_id,
@@ -189,7 +192,8 @@ class GazeApp:
                 status = f"Face found  ·  {d:.0f} cm from the camera{hint}"
             return [
                 "Look at each dot until it shrinks away",
-                f"{self.n_targets} dots, about {self.n_targets * self.timing.dwell_s:.0f} seconds. Sit the way you normally do.",
+                f"{self.n_targets} dots, then a few seconds turning your head (about "
+                f"{self.n_targets * self.timing.dwell_s + MOTION_TIMING.dwell_s:.0f} s). Sit the way you normally do.",
                 status,
                 "Press Space to start  ·  Esc to quit",
             ]
@@ -226,7 +230,7 @@ class GazeApp:
 
         def on_target(target, onset_ns, end_ns):
             self._label(None)
-            feats = self._features_for(onset_ns)
+            feats = self._features_for(onset_ns, self.timing)
             if len(feats) >= MIN_SAMPLES_PER_TARGET:
                 collected[target] = feats
 
@@ -234,38 +238,64 @@ class GazeApp:
             if cancelled:
                 self._after_cancel()
                 return
-            missing = [t for t in points if t not in collected]
-            if len(missing) > len(points) // 3:
+            if len(collected) < len(points) - len(points) // 3:
                 self._message(
                     ["Couldn't see your eyes clearly", f"Got {len(collected)} of {len(points)} dots. Check lighting and that your face is in view.", "Press Space to try again  ·  Esc to quit"],
                     {SPACE: self._calibrate, ESC: self._quit},
                 )
                 return
-            profile = self._profile_for(next(iter(collected.values())).shape[1])
-            profile.clear(EXPLICIT)  # click samples are kept
-            for target, feats in collected.items():
-                profile.add(feats, target, EXPLICIT)
-            report = profile.fit()
-            if report is None:
-                self._message(["Calibration failed", "Press Space to try again"], {SPACE: self._calibrate, ESC: self._quit})
-                return
-            profile.save()
-            self.tracker.profile = profile
-            self._validate(n=3, launch_check=False)
+            self._head_motion(collected)
 
         TargetSequence(self.targets, points, self.timing, on_target, on_done,
                        on_start=lambda t, onset: self._label("calib", t, onset)).start()
+
+    def _head_motion(self, dots: dict[tuple, np.ndarray]) -> None:
+        """Hold gaze on one dot while turning the head, so the fit learns to separate
+        head movement from eye movement."""
+        centre = (self.screen.width_pt / 2, self.screen.height_pt / 2)
+        sweep: list[np.ndarray] = []
+
+        def on_target(target, onset_ns, end_ns):
+            self._label(None)
+            feats = self._features_for(onset_ns, MOTION_TIMING)
+            if len(feats):
+                sweep.append(feats)
+
+        def on_done(cancelled):
+            if cancelled:
+                self._after_cancel()
+                return
+            self._finish_calibration(dots, centre, sweep[0] if sweep else None)
+
+        lines = ["Keep looking at the dot", "and slowly turn your head: left, right, up, down"]
+        TargetSequence(self.targets, [centre], MOTION_TIMING, on_target, on_done,
+                       on_start=lambda t, onset: self._label("motion", t, onset), lines=lines).start()
+
+    def _finish_calibration(self, dots: dict[tuple, np.ndarray], centre, sweep: np.ndarray | None) -> None:
+        profile = self._profile_for(next(iter(dots.values())).shape[1])
+        profile.clear(EXPLICIT, MOTION)  # click samples are kept
+        for target, feats in dots.items():
+            profile.add(feats, target, EXPLICIT)
+        if sweep is not None and len(sweep) >= MIN_SAMPLES_PER_TARGET:
+            profile.add(sweep, centre, MOTION, chunk=MOTION_CHUNK)
+        report = profile.fit()
+        if report is None:
+            self._message(["Calibration failed", "Press Space to try again"], {SPACE: self._calibrate, ESC: self._quit})
+            return
+        profile.save()
+        self.tracker.profile = profile
+        self._validate(n=3, launch_check=False)
 
     def _label(self, phase, target=None, onset_ns: int = 0) -> None:
         if self.session is not None:
             self.session.label(phase, target, onset_ns)
 
-    def _features_for(self, onset_ns: int) -> np.ndarray:
-        start = onset_ns + int(self.timing.settle_s * 1e9)
-        end = onset_ns + int((self.timing.dwell_s - self.timing.tail_s) * 1e9)
+    def _features_for(self, onset_ns: int, timing: TargetTiming) -> np.ndarray:
+        start = onset_ns + int(timing.settle_s * 1e9)
+        end = onset_ns + int((timing.dwell_s - timing.tail_s) * 1e9)
         self.tracker.wait_until(end, timeout=0.2)
         samples = self.tracker.samples_between(start, end)
-        feats = [s.features.vector for s in samples if s.features is not None and s.face is not None and not s.face.is_blinking]
+        feats = [s.calib for s in samples if s.calib is not None and not s.face.is_blinking]
         return np.stack(feats) if feats else np.zeros((0, 0), np.float32)
 
     def _validate(self, n: int = 9, launch_check: bool = False) -> None:
@@ -348,7 +378,7 @@ class GazeApp:
             if target is not None:
                 self.ring.show_at(*target.centre, fixating=True)
             else:
-                self.ring.show_at(p.x, p.y, fixating=p.fixation_id is not None)
+                self.ring.show_at(p.x, p.y, fixating=p.fixation_id is not None, confidence=p.confidence)
         elif now - self._last_valid_ns > 400_000_000:  # brief dropouts (blinks) keep the ring
             self.ring.hide()
 
