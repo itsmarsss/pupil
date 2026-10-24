@@ -370,8 +370,8 @@ def fixations(frames_per_point, points, scr) -> list[calib.Fixation]:
     return CalibData(frames_per_point, points, list(range(len(points)))).fixations(scr)
 
 
-def save_frames(path: Path, frames_per_point, points, regions=None, groups=None):
-    """Raw landmarks + poses per point, for re-analysis offline (evaluate.py)."""
+def save_frames(path: Path, frames_per_point, points, regions=None, groups=None, extra: dict | None = None):
+    """Raw landmarks + poses per point, for re-analysis offline (evaluate.py). `extra`: more arrays to store."""
     lms, pose, idx = [], [], []
     for i, fr in enumerate(frames_per_point):
         for l, p in fr:
@@ -380,7 +380,7 @@ def save_frames(path: Path, frames_per_point, points, regions=None, groups=None)
             idx.append(i)
     np.savez_compressed(path, lms=np.array(lms, np.float32), pose=np.array(pose, np.float32), point=np.array(idx),
                         points=np.array(points), regions=np.array(regions or [""] * len(points)),
-                        groups=np.array(groups if groups is not None else range(len(points))))
+                        groups=np.array(groups if groups is not None else range(len(points))), **(extra or {}))
 
 
 def load_frames(path: Path):
@@ -464,6 +464,8 @@ def run_mouse_calibration(scr: Screen, trk: Tracker, intr: g.Intrinsics, cfg: ca
     cov = Coverage()
     hist: deque = deque()  # (time, fx, fy)
     frames, points, groups = [], [], []
+    # full record for exact offline re-tuning of lag / speed limit: every face frame (accepted or not) + mouse path
+    rec_lms, rec_pose, rec_t, rec_speed, path = [], [], [], [], []
     scr.display.hide_cursor(True)
     try:
         while True:
@@ -471,6 +473,7 @@ def run_mouse_calibration(scr: Screen, trk: Tracker, intr: g.Intrinsics, cfg: ca
             mx, my = scr.display.pointer()
             f = (min(max(mx / scr.W, 0.0), 1.0), min(max(my / scr.H, 0.0), 1.0))
             hist.append((now, *f))
+            path.append((now, *f))
             while hist and now - hist[0][0] > 1.0:
                 hist.popleft()
             r = trk.read()
@@ -482,6 +485,11 @@ def run_mouse_calibration(scr: Screen, trk: Tracker, intr: g.Intrinsics, cfg: ca
                 dx = (near[-1][1] - near[0][1]) * scr.W
                 dy = (near[-1][2] - near[0][2]) * scr.H
                 speed = float(np.hypot(dx, dy) / (near[-1][0] - near[0][0]))
+            if r is not None:
+                rec_lms.append(r[0])
+                rec_pose.append(r[1])
+                rec_t.append(now)
+                rec_speed.append(speed)
             ok = r is not None and speed <= max_speed
             if ok:
                 tf = (past[1], past[2])
@@ -521,7 +529,11 @@ def run_mouse_calibration(scr: Screen, trk: Tracker, intr: g.Intrinsics, cfg: ca
           f"gain {uc.mean('gain_yaw'):.2f} / {uc.mean('gain_pitch'):.2f}, rms {uc.rms_cm:.2f} cm")
     uc.save()
     RUNS.mkdir(exist_ok=True)
-    save_frames(RUNS / time.strftime("%Y%m%d-%H%M%S-calib.npz"), frames, points, groups=groups)
+    save_frames(RUNS / time.strftime("%Y%m%d-%H%M%S-calib.npz"), frames, points, groups=groups, extra={
+        "rec_lms": np.array(rec_lms, np.float32), "rec_pose": np.array(rec_pose, np.float32),
+        "rec_t": np.array(rec_t), "rec_speed": np.array(rec_speed),
+        "mouse_path": np.array(path),  # (time, fx, fy) every UI frame
+        "lag_s": np.array(lag_s), "max_speed": np.array(max_speed)})
     return uc, data
 
 
