@@ -88,7 +88,7 @@ def score(uc, test, intr):
 def main():
     # 1) clean data, physical model only: parameters recovered, held-out error small
     fix, test = data(np.random.default_rng(0), clean_test=True)
-    uc = calib.fit(fix, INTR, SCREEN, calib.GazeConfig("center", True, False, False, False))
+    uc = calib.fit(fix, INTR, SCREEN, calib.GazeConfig("center", True, False, "none", False))
     for e in ("right", "left"):
         got, tr = uc.eyes[e], TRUE[e]
         print(f"{e:5s} kappa {got['kappa_yaw_deg']:+.2f}/{got['kappa_pitch_deg']:+.2f} (true {tr.kappa_yaw_deg:+.2f}/{tr.kappa_pitch_deg:+.2f})  "

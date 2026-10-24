@@ -32,7 +32,7 @@ every accuracy test fits and scores all of them on the same frames and prints th
 | equator iris centre | vertical iris position from the iris's left/right edge points; eyelids drag MediaPipe's centre point (raise your lids and the reading moves) |
 | per-eye | separate kappa/gains per eye, then the two screen hits are averaged |
 | rigid head pose | head rotation from nose/forehead/cheekbone landmarks against a per-user reference, so eyelid motion can't leak into head pitch |
-| residual affine | small ridge-regularised screen-space correction after the physical fit |
+| residual correction | screen-space correction after the physical fit: `affine`, or `quad` (default; quadratic in x, y), which fixed the curved leftover error in real runs (2.02 → 1.48 cm on a 13-dot run) |
 
 Mouse-follow calibration: move the mouse slowly and keep your eyes on the dot under it; the background is an
 8×5 grid of tiles that turn green as they collect enough frames. Frames are only used while the mouse moves slowly

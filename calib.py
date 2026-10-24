@@ -7,7 +7,9 @@ eyes or per eye. Optional fixes, each switchable via GazeConfig so a test can co
   per_eye              separate kappa/gains per eye, then average the two screen hits
   rigid_pose           head rotation from rigid landmarks (nose, forehead, cheekbones) via a per-user reference
                        shape, so eyelid motion can't leak into head pitch
-  residual_affine      small ridge-regularised affine correction on screen after the physical fit
+  residual             screen-space correction after the physical fit, fitted on the calibration dots:
+                       "affine" (strongly shrunk toward no change) or "quad" (quadratic in x, y; corrects the
+                       curved leftover error seen in real runs)
   blink_reject         drop frames whose eye openness is well below the user's normal
 
 The camera FOV is NOT fitted: with free gains it can't be separated from them (see test_calib.py); measure it once
@@ -34,24 +36,36 @@ class GazeConfig:
     iris_mode: str = "equator"   # "center" (MediaPipe's centre landmark) or "equator"
     per_eye: bool = True
     rigid_pose: bool = True
-    residual_affine: bool = True
+    residual: str = "quad"       # "none", "affine" or "quad" (quad won on both real runs, Oct 2026)
     blink_reject: bool = True
 
     def label(self) -> str:
         on = [n for n, v in (("equator", self.iris_mode == "equator"), ("per-eye", self.per_eye), ("rigid", self.rigid_pose),
-                             ("affine", self.residual_affine), ("blink", self.blink_reject)) if v]
+                             (self.residual, self.residual != "none"), ("blink", self.blink_reject)) if v]
         return "+".join(on) or "baseline"
 
+    @classmethod
+    def from_dict(cls, d: dict) -> "GazeConfig":
+        d = dict(d)
+        if "residual_affine" in d:  # older saved configs
+            d["residual"] = "affine" if d.pop("residual_affine") else "none"
+        return cls(**{k: v for k, v in d.items() if k in cls.__dataclass_fields__})
 
-# Cumulative ablation: each row adds one fix to the previous one
+
+# Cumulative ablation: each row adds one fix to the previous one, then the quadratic correction on its own and
+# on top of everything
 ABLATION = [
-    GazeConfig("center", False, False, False, False),
-    GazeConfig("center", False, False, False, True),
-    GazeConfig("equator", False, False, False, True),
-    GazeConfig("equator", True, False, False, True),
-    GazeConfig("equator", True, True, False, True),
-    GazeConfig("equator", True, True, True, True),
+    GazeConfig("center", False, False, "none", False),
+    GazeConfig("center", False, False, "none", True),
+    GazeConfig("equator", False, False, "none", True),
+    GazeConfig("equator", True, False, "none", True),
+    GazeConfig("equator", True, True, "none", True),
+    GazeConfig("equator", True, True, "affine", True),
+    GazeConfig("center", False, False, "quad", False),
+    GazeConfig("equator", True, True, "quad", True),
 ]
+RESIDUAL_RIDGE = {"affine": 1.0, "quad": 0.02}  # x number of dots; shrinks the correction toward zero
+RESIDUAL_MIN_GROUPS = {"affine": 4, "quad": 8}
 
 
 @dataclass
@@ -71,14 +85,15 @@ class UserCalib:
     config: dict = field(default_factory=lambda: asdict(GazeConfig()))
     eyes: dict = field(default_factory=lambda: {e: {"kappa_yaw_deg": 0.0, "kappa_pitch_deg": 0.0, "gain_yaw": 1.0, "gain_pitch": 1.0}
                                                 for e in ("right", "left")})
-    affine: list | None = None       # 2x3, screen-plane cm: corrected = A @ [x, y, 1]
+    residual: dict | None = None     # {"kind", "center", "half", "coef"}: hit + features(hit) @ coef (cm)
+    affine: list | None = None       # legacy 2x3 affine from older files
     rigid_ref: list | None = None    # (N, 3) rigid landmarks in the head frame
     ear_ref: float | None = None     # median eye openness during calibration
     rms_cm: float = float("nan")
 
     @property
     def cfg(self) -> GazeConfig:
-        return GazeConfig(**self.config)
+        return GazeConfig.from_dict(self.config)
 
     def eye(self, base: g.EyeParams = g.EyeParams()) -> dict[str, g.EyeParams]:
         return {e: _eye(self.eyes[e], base) for e in ("right", "left")}
@@ -97,7 +112,7 @@ class UserCalib:
         d = json.loads(path.read_text())
         if "eyes" not in d:  # older single-model file
             e = {k: d.get(k, v) for k, v in (("kappa_yaw_deg", 0.0), ("kappa_pitch_deg", 0.0), ("gain_yaw", 1.0), ("gain_pitch", 1.0))}
-            return cls(config=asdict(GazeConfig("center", False, False, False, False)), eyes={"right": dict(e), "left": dict(e)},
+            return cls(config=asdict(GazeConfig("center", False, False, "none", False)), eyes={"right": dict(e), "left": dict(e)},
                        rms_cm=d.get("rms_cm", float("nan")))
         return cls(**{k: v for k, v in d.items() if k in cls.__dataclass_fields__})
 
@@ -130,6 +145,24 @@ def rigid_reference(fix: list[Fixation], intr: g.Intrinsics) -> np.ndarray:
     return np.mean(shapes, axis=0)
 
 
+def residual_features(xy: np.ndarray, center, half, kind: str) -> np.ndarray:
+    """Polynomial features of screen-plane points (cm), normalised to roughly [-1, 1] over the screen."""
+    x = (xy[..., 0] - center[0]) / half[0]
+    y = (xy[..., 1] - center[1]) / half[1]
+    cols = [np.ones_like(x), x, y] + ([x * x, y * y, x * y] if kind == "quad" else [])
+    return np.stack(cols, axis=-1)
+
+
+def apply_residual(uc: UserCalib, hit: np.ndarray) -> np.ndarray:
+    if uc.residual is not None:
+        r = uc.residual
+        delta = residual_features(hit[:2], r["center"], r["half"], r["kind"]) @ np.array(r["coef"])
+        return np.array([hit[0] + delta[0], hit[1] + delta[1], 0.0])
+    if uc.affine is not None:  # legacy
+        return np.array([*(np.array(uc.affine) @ [hit[0], hit[1], 1.0]), 0.0])
+    return hit
+
+
 def predict(lms: np.ndarray, pose: np.ndarray, intr: g.Intrinsics, screen: g.Screen, uc: UserCalib | None,
             base: g.EyeParams = g.EyeParams(), depth_scale: float | None = None, aspect: float | None = None) -> g.GazeFrame | None:
     """Gaze for one frame with the user's calibration and its config. None = blink (when blink rejection is on)."""
@@ -140,9 +173,8 @@ def predict(lms: np.ndarray, pose: np.ndarray, intr: g.Intrinsics, screen: g.Scr
         return None
     head_R = rigid_head_R(lms, pose, intr, np.array(uc.rigid_ref), depth_scale) if cfg.rigid_pose and uc.rigid_ref else None
     gf = g.compute(lms, pose, intr, screen, uc.eye(base), depth_scale, iris_points(lms, cfg.iris_mode), head_R)
-    if cfg.residual_affine and uc.affine is not None and gf.hit is not None:
-        A = np.array(uc.affine)
-        gf.hit = np.array([*(A @ [gf.hit[0], gf.hit[1], 1.0]), 0.0])
+    if cfg.residual != "none" and (uc.residual is not None or uc.affine is not None) and gf.hit is not None:
+        gf.hit = apply_residual(uc, gf.hit)
         gf.hit_px = screen.to_px(gf.hit)
         gf.direction = g.normalize(gf.hit - gf.origin)
     return gf
@@ -262,20 +294,22 @@ def fit(fix: list[Fixation], intr: g.Intrinsics, screen: g.Screen, cfg: GazeConf
 
     combined = _hits(fix, uc, intr, screen, base, per_eye_hits=False)
     ok = [(h[0], f) for h, f in zip(combined, fix) if h[0] is not None]
-    if cfg.residual_affine and len({f.group for _, f in ok}) >= 4:
-        # ridge regression toward identity: corrected = A @ [x, y, 1]
-        X = np.array([[h[0], h[1], 1.0] for h, _ in ok])
+    kind = cfg.residual
+    n_groups = len({f.group for _, f in ok})
+    if kind == "quad" and n_groups < RESIDUAL_MIN_GROUPS["quad"]:
+        kind = "affine"  # too few dots for 6 terms per axis
+    if kind != "none" and n_groups >= RESIDUAL_MIN_GROUPS[kind]:
+        # ridge regression of the leftover error (target - hit) on polynomial features of the hit
+        H = np.array([h[:2] for h, _ in ok])
         Y = np.array([f.target[:2] for _, f in ok])
-        lam = 1.0 * len(ok)  # keeps the slopes within a few % of identity unless the data insist
-        A0 = np.array([[1.0, 0, 0], [0, 1.0, 0]])
-        reg = lam * np.diag([1.0, 1.0, 0.01])
-        uc.affine = np.linalg.solve(X.T @ X + reg, X.T @ Y + reg @ A0.T).T.tolist()
-    final = []
-    for h, f in ok:
-        hit = h
-        if uc.affine is not None:
-            hit = np.array([*(np.array(uc.affine) @ [h[0], h[1], 1.0]), 0.0])
-        final.append(np.linalg.norm(hit[:2] - f.target[:2]))
+        center = [screen.cam_x_offset_cm, -(screen.cam_to_top_cm + screen.height_cm / 2)]
+        half = [screen.width_cm / 2, screen.height_cm / 2]
+        X = residual_features(H, center, half, kind)
+        reg = RESIDUAL_RIDGE[kind] * len(ok) * np.eye(X.shape[1])
+        reg[0, 0] = 1e-6  # don't shrink the constant offset
+        coef = np.linalg.solve(X.T @ X + reg, X.T @ (Y - H))
+        uc.residual = {"kind": kind, "center": center, "half": half, "coef": coef.tolist()}
+    final = [np.linalg.norm(apply_residual(uc, h)[:2] - f.target[:2]) for h, f in ok]
     uc.rms_cm = float(np.sqrt(np.mean(np.square(final)))) if final else float("nan")
     return uc
 
