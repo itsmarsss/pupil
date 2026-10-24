@@ -5,7 +5,7 @@ description = "Webcam gaze tracking for macOS"
 readme = "README.md"
 requires-python = ">=3.11,<3.12"
 dependencies = [
-    "mediapipe==0.10.10",
+    "mediapipe==0.10.21",
     "MNN>=3.0",
     "numpy>=1.26,<2",
     "opencv-contrib-python>=4.9,<5",
