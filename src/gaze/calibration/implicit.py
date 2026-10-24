@@ -39,7 +39,7 @@ def window(t_click_ns: int) -> tuple[int, int]:
 def evaluate_click(samples: list[Sample], click_xy, pt_per_deg: float, gate: ClickGate = ClickGate()) -> ClickDecision:
     usable = [
         s for s in samples
-        if s.features is not None and s.face is not None and not s.face.is_blinking
+        if s.calib is not None and s.face is not None and not s.face.is_blinking
     ]
     if len(usable) < gate.min_samples:
         return ClickDecision(False, "no_face")
@@ -60,5 +60,5 @@ def evaluate_click(samples: list[Sample], click_xy, pt_per_deg: float, gate: Cli
     if error_deg > gate.max_error_deg:
         return ClickDecision(False, "too_far", error_deg=error_deg)
 
-    features = np.stack([s.features.vector for s in in_fix])
+    features = np.stack([s.calib for s in in_fix])
     return ClickDecision(True, "ok", features, error_deg)

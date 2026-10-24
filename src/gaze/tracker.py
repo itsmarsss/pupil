@@ -13,10 +13,11 @@ from typing import Callable
 
 import numpy as np
 
+from .calibration.features import calibration_vector
 from .calibration.profile import Profile
 from .capture.camera import FrameSource
 from .core.screen import Screen
-from .core.types import FaceObservation, Frame, GazeFeatures, GazePoint, Sample, TrackingState
+from .core.types import FaceObservation, Frame, GazePoint, Sample, TrackingState
 from .face.tracker import FaceTracker
 from .filter.fixation import FixationDetector
 from .filter.one_euro import OneEuroFilter
@@ -135,8 +136,9 @@ class Tracker:
     def process(self, frame) -> Sample:
         face = self.face_tracker.process(frame)
         features = self.model.infer(frame, face) if face is not None else None
-        point = self._point(frame.t_ns, face, features)
-        sample = Sample(frame.t_ns, features, face, point)
+        calib = calibration_vector(features.vector, face) if features is not None else None
+        point = self._point(frame.t_ns, face, calib)
+        sample = Sample(frame.t_ns, features, face, point, calib)
         with self._lock:
             self._history.append(sample)
             cutoff = frame.t_ns - int(HISTORY_S * 1e9)
@@ -145,8 +147,8 @@ class Tracker:
         self._last_point = point
         return sample
 
-    def _point(self, t_ns: int, face: FaceObservation | None, features: GazeFeatures | None) -> GazePoint:
-        if face is None or features is None:
+    def _point(self, t_ns: int, face: FaceObservation | None, calib: np.ndarray | None) -> GazePoint:
+        if face is None or calib is None:
             self._filter.reset()
             self._fixations.reset()
             return GazePoint(t_ns, TrackingState.NO_FACE)
@@ -155,12 +157,17 @@ class Tracker:
         if face.is_blinking:
             last = self._last_point
             if last is not None and last.valid:
-                return GazePoint(t_ns, TrackingState.BLINK, last.x, last.y, last.raw_x, last.raw_y, None, self.distance_mm)
+                return GazePoint(t_ns, TrackingState.BLINK, last.x, last.y, last.raw_x, last.raw_y, None,
+                                 self.distance_mm, last.confidence)
             return GazePoint(t_ns, TrackingState.BLINK, distance_mm=self.distance_mm)
-        prediction = self.profile.predict(features.vector) if self.profile is not None else None
+        profile = self.profile
+        prediction = profile.predict(calib) if profile is not None else None
         if prediction is None:
             return GazePoint(t_ns, TrackingState.UNCALIBRATED, distance_mm=self.distance_mm)
-        raw_x, raw_y = prediction
+        # Outside the calibrated head-pose range the fit extrapolates; keep it on screen.
+        raw_x, raw_y = self.screen.clamp(*prediction)
+        confidence = profile.confidence(calib)
         x, y = self._filter(np.array([raw_x, raw_y]), t_ns)
         fixation = self._fixations.update(float(x), float(y), t_ns, self.pt_per_deg)
-        return GazePoint(t_ns, TrackingState.TRACKING, float(x), float(y), raw_x, raw_y, fixation, self.distance_mm)
+        return GazePoint(t_ns, TrackingState.TRACKING, float(x), float(y), raw_x, raw_y, fixation,
+                         self.distance_mm, confidence)

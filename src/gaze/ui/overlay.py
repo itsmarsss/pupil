@@ -39,6 +39,7 @@ class GazeRing:
 
     TRACKING = NSColor.colorWithCalibratedRed_green_blue_alpha_(0.15, 0.85, 0.35, 0.85)
     FIXATING = NSColor.colorWithCalibratedRed_green_blue_alpha_(0.2, 0.6, 1.0, 0.9)
+    UNSURE = NSColor.colorWithCalibratedWhite_alpha_(0.6, 0.45)  # head outside its calibrated range
 
     def __init__(self, screen: Screen):
         self.screen = screen
@@ -60,14 +61,15 @@ class GazeRing:
         view.color = self.TRACKING
         win.setContentView_(view)
         self._win, self._view = win, view
-        self._fixating = False
+        self._style = "tracking"
 
-    def show_at(self, x: float, y: float, fixating: bool = False) -> None:
+    def show_at(self, x: float, y: float, fixating: bool = False, confidence: float = 1.0) -> None:
         x, y = self.screen.clamp(x, y)
         self._win.setFrameOrigin_((x - RING / 2, self.screen.to_cocoa_y(y) - RING / 2))
-        if fixating != self._fixating:
-            self._fixating = fixating
-            self._view.color = self.FIXATING if fixating else self.TRACKING
+        style = "unsure" if confidence < 0.5 else "fixating" if fixating else "tracking"
+        if style != self._style:
+            self._style = style
+            self._view.color = {"unsure": self.UNSURE, "fixating": self.FIXATING, "tracking": self.TRACKING}[style]
             self._view.setNeedsDisplay_(True)
         if not self._win.isVisible():
             self._win.orderFrontRegardless()

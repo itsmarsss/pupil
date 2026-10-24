@@ -13,7 +13,7 @@ def face(open_=0.3):
 
 def sample(t, x, y, fixation=0, state=TrackingState.TRACKING, open_=0.3):
     feats = GazeFeatures(t, np.full(4, t, np.float32), (0, 0), "m")
-    return Sample(t, feats, face(open_), GazePoint(t, state, x, y, x, y, fixation))
+    return Sample(t, feats, face(open_), GazePoint(t, state, x, y, x, y, fixation), calib=np.full(4, t, np.float32))
 
 
 def run(**kw):

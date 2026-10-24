@@ -85,6 +85,7 @@ class GazePoint:
     raw_y: float = float("nan")
     fixation_id: int | None = None
     distance_mm: float | None = None
+    confidence: float = 1.0  # falls toward 0 when the head is outside its calibrated range
 
     @property
     def valid(self) -> bool:
@@ -99,4 +100,5 @@ class Sample:
     features: GazeFeatures | None
     face: FaceObservation | None
     point: GazePoint
+    calib: np.ndarray | None = None  # model features + head pose: what calibration fits on
     extra: dict = field(default_factory=dict)
