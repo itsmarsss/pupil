@@ -1,6 +1,7 @@
 """Fullscreen gaze calibration + accuracy test. No tape measure: the fit finds the depth scale and kappa.
 
-    uv run python calibrate_gaze.py              # calibrate (13 dots), test (12 other dots), then free look
+    uv run python calibrate_gaze.py              # calibrate (25 dots), test (12 other dots), then free look
+    uv run python calibrate_gaze.py --quick      # 13-dot calibration
     uv run python calibrate_gaze.py --test-only  # test with the saved calibration
 
 Measure the camera FOV once first (calibrate_fov.py); without it a 62° prior is used.
@@ -34,6 +35,9 @@ from landmarks import make_landmarker
 M = 0.04
 CALIB_POINTS = [(fx, fy) for fy in (M, 0.5, 1 - M) for fx in (M, 0.5, 1 - M)] + \
                [(0.27, 0.3), (0.73, 0.3), (0.27, 0.7), (0.73, 0.7)]
+# Dense: 5x5 grid, twice the dots in the outer ring. On real runs, edge accuracy was limited by calibration data
+# (fewer dots or frames hurt far points most; more flexible models didn't help), so this is the default.
+DENSE_POINTS = [(fx, fy) for fy in (M, 0.27, 0.5, 0.73, 1 - M) for fx in (M, 0.27, 0.5, 0.73, 1 - M)]
 # Test: none shared with calibration. Near-corner (8% in from both edges), near-edge (6% in), interior.
 TEST_SET = [
     ((0.08, 0.08), "corner"), ((0.92, 0.08), "corner"), ((0.08, 0.92), "corner"), ((0.92, 0.92), "corner"),
@@ -403,20 +407,22 @@ def latest_calibration() -> CalibData | None:
 
 
 def run_calibration(scr: Screen, trk: Tracker, intr: g.Intrinsics, cfg: calib.GazeConfig = calib.GazeConfig(),
-                    base: g.EyeParams = g.EyeParams(), on_target=None):
-    """13-dot calibration in the fullscreen window. Saves user.json and the raw frames; returns (calibration, frames)."""
-    wait_key(scr, ["Calibration: look at each dot until it moves on. Keep your head still.", "SPACE to start   ESC to quit"])
-    frames = collect(scr, trk, CALIB_POINTS, on_target)
+                    base: g.EyeParams = g.EyeParams(), on_target=None, points=DENSE_POINTS):
+    """Dot calibration in the fullscreen window (25 dots by default, CALIB_POINTS for the quick 13).
+    Saves user.json and the raw frames; returns (calibration, CalibData)."""
+    wait_key(scr, [f"Calibration ({len(points)} dots): look at each dot until it moves on. Keep your head still.",
+                   "SPACE to start   ESC to quit"])
+    frames = collect(scr, trk, points, on_target)
     img = scr.canvas()
     text(img, "fitting...")
     scr.show(img)
-    uc = calib.fit(fixations(frames, CALIB_POINTS, scr), intr, scr.geo, cfg, base)
+    uc = calib.fit(fixations(frames, points, scr), intr, scr.geo, cfg, base)
     print(f"calibration [{cfg.label()}]: kappa {uc.mean('kappa_yaw_deg'):+.2f}° / {uc.mean('kappa_pitch_deg'):+.2f}°, "
           f"gain {uc.mean('gain_yaw'):.2f} / {uc.mean('gain_pitch'):.2f}, rms {uc.rms_cm:.2f} cm")
     uc.save()
     RUNS.mkdir(exist_ok=True)
-    save_frames(RUNS / time.strftime("%Y%m%d-%H%M%S-calib.npz"), frames, CALIB_POINTS)
-    return uc, CalibData(frames, CALIB_POINTS, list(range(len(CALIB_POINTS))))
+    save_frames(RUNS / time.strftime("%Y%m%d-%H%M%S-calib.npz"), frames, points)
+    return uc, CalibData(frames, points, list(range(len(points))))
 
 
 class Coverage:
@@ -577,7 +583,8 @@ def main():
     ap.add_argument("--width", type=int, default=1280)
     ap.add_argument("--height", type=int, default=720)
     ap.add_argument("--test-only", action="store_true")
-    ap.add_argument("--mouse", action="store_true", help="mouse-follow calibration instead of 13 dots")
+    ap.add_argument("--mouse", action="store_true", help="mouse-follow calibration instead of dots")
+    ap.add_argument("--quick", action="store_true", help="13 dots instead of 25")
     args = ap.parse_args()
 
     info = device.load()
@@ -600,7 +607,7 @@ def main():
     elif args.mouse:
         uc, calib_data = run_mouse_calibration(scr, trk, intr)
     else:
-        uc, calib_data = run_calibration(scr, trk, intr)
+        uc, calib_data = run_calibration(scr, trk, intr, points=CALIB_POINTS if args.quick else DENSE_POINTS)
     img = run_test(scr, trk, intr, uc, hfov, calib_data)
     while True:
         k = scr.show(img)

@@ -46,7 +46,7 @@ frames biases the gains low), and down-weights outlier dots. Display output (ove
 filter. Raw frames of every calibration and test are saved in `runs/`; `uv run python evaluate.py [run.json]`
 re-runs the comparison offline.
 
-`live.py` keys (control window): **C** calibrate (13 dots) · **M** mouse-follow calibration · **T** test + comparison · **F** free look · **D** drift
+`live.py` keys (control window): **C** calibrate (25 dots) · **K** quick calibration (13 dots) · **M** mouse-follow calibration · **T** test + comparison · **F** free look · **D** drift
 correction (one centre dot) · **V** cycle config · **O** on-screen overlay · **S** smoothing · **Q** quit.
 
 ## Frame and conventions

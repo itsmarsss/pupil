@@ -5,7 +5,7 @@ without leaving the live view.
     uv run python live.py                  # opens the Rerun viewer + control window
     uv run python live.py --camera 1       # another camera
 
-Control window keys: C calibrate (13 dots), M mouse-follow calibration, T accuracy test (+ comparison of every config), F free look, D drift correction
+Control window keys: C calibrate (25 dots), K quick calibration (13 dots), M mouse-follow calibration, T accuracy test (+ comparison of every config), F free look, D drift correction
 (one centre dot), V cycle config, O on-screen gaze overlay, S smoothing, Q quit.
 """
 from __future__ import annotations
@@ -244,10 +244,13 @@ class Live:
             self.mode = "live"
             self.filter.reset()
 
-    def calibrate(self, scr: cg.Screen):
+    def calibrate(self, scr: cg.Screen, points=cg.DENSE_POINTS):
         cfg = calib.GazeConfig()  # the default config; V switches afterwards
-        self.uc, self.calib_data = cg.run_calibration(scr, self.trk, self.intr, cfg, self.base, self.on_target(scr))
-        self.last_event = f"calibrated, rms {self.uc.rms_cm:.2f} cm"
+        self.uc, self.calib_data = cg.run_calibration(scr, self.trk, self.intr, cfg, self.base, self.on_target(scr), points)
+        self.last_event = f"calibrated ({len(points)} dots), rms {self.uc.rms_cm:.2f} cm"
+
+    def calibrate_quick(self, scr: cg.Screen):
+        self.calibrate(scr, cg.CALIB_POINTS)
 
     def calibrate_mouse(self, scr: cg.Screen):
         cfg = calib.GazeConfig()
@@ -297,7 +300,7 @@ class Live:
         view = cv2.resize(view, (w, h))
         lines = [self.status(),
                  f"hinge {'n/a' if self.hinge is None else f'{self.hinge:.0f} deg'}   fps {self.fps:.0f}   {self.last_event}",
-                 "C calibrate  M mouse calibrate  T test  F free look  D drift  V config",
+                 "C calibrate (25)  K quick (13)  M mouse  T test  F free  D drift  V config",
                  f"O overlay {'on' if self.overlay else 'off'}  S smoothing {'on' if self.smooth else 'off'}  Q quit"]
         for i, t in enumerate(lines):
             cv2.putText(view, t, (10, 22 + 22 * i), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 0, 0), 3, cv2.LINE_AA)
@@ -330,6 +333,8 @@ class Live:
                 break
             if k == ord("c"):
                 self.fullscreen("calibrating", self.calibrate)
+            elif k == ord("k"):
+                self.fullscreen("quick calibration", self.calibrate_quick)
             elif k == ord("m"):
                 self.fullscreen("mouse calibration", self.calibrate_mouse)
             elif k == ord("t"):
