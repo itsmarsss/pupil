@@ -12,9 +12,10 @@ uv run python calibrate_fov.py --paper a4       # once per camera: measure its F
 uv run python live.py                           # live 3D view in Rerun + control window: C calibrate, T test, F free look
 uv run python calibrate_gaze.py                 # the same calibration/test without the 3D view
 uv run python calibrate_gaze.py --mouse         # mouse-follow calibration instead of dots
+uv run python calibrate_gaze.py --quick --repeat 2   # 13 dots, each visited twice (averages per-fixation offsets)
 uv run python hinge.py                          # print the live lid angle
 uv run python evaluate.py                       # re-score the latest saved run offline
-uv run python test_geometry.py && uv run python test_calib.py
+uv run python test_geometry.py && uv run python test_calib.py && uv run python test_iris.py
 ```
 
 No tape measure. The FaceTime HD camera on M3 MacBook Pros reports a 0° FOV through AVFoundation and Apple
@@ -32,6 +33,7 @@ only one on by default:
 |---|---|
 | blink rejection | frames with eye openness < 60% of your calibration median are dropped |
 | equator iris centre | vertical iris position from the iris's left/right edge points; eyelids drag MediaPipe's centre point (raise your lids and the reading moves) |
+| refined iris centre | `iris.py`: MediaPipe only seeds the search; rays through the full-resolution (1080p) eye image find the iris/sclera edge, eyelid points are dropped, and a circle is fitted. MediaPipe locates the iris in a downscaled face crop (iris ~12 px across), so its sub-pixel biases are 1-2° of eye rotation that differ per eye position |
 | per-eye | separate kappa/gains per eye, then the two screen hits are averaged |
 | rigid head pose | head rotation from nose/forehead/cheekbone landmarks against a per-user reference, so eyelid motion can't leak into head pitch |
 | residual correction | screen-space correction after the physical fit: `affine`, or `quad` (default; quadratic in x, y), which fixed the curved leftover error in real runs (2.02 → 1.48 cm on a 13-dot run) |
@@ -52,7 +54,7 @@ frames biases the gains low), and down-weights outlier dots. Display output (ove
 filter. Raw frames of every calibration and test are saved in `runs/`; `uv run python evaluate.py [run.json]`
 re-runs the comparison offline.
 
-`live.py` keys (control window): **C** calibrate (25 dots) · **K** quick calibration (13 dots) · **M** mouse-follow calibration · **T** test + comparison · **F** free look · **D** drift
+`live.py` keys (control window): **C** calibrate (25 dots) · **K** 13 dots visited twice · **M** mouse-follow calibration · **T** test + comparison · **F** free look · **D** drift
 correction (one centre dot) · **V** cycle config · **O** gaze overlay · **H** face-pointing overlay · **S** smoothing · **Q** quit.
 
 ## Frame and conventions

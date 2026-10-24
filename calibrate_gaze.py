@@ -28,6 +28,7 @@ import calib
 import device
 import features as F
 import geometry as g
+import iris
 from landmarks import make_landmarker
 
 # Calibration: corners and edge midpoints at a 4% margin (as close as the dot can sit and stay fully on screen),
@@ -81,7 +82,10 @@ class Tracker:
         res = self.lm.detect_for_video(mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb), ms)
         out = None
         if res.face_landmarks:
-            out = np.array([[p.x, p.y, p.z] for p in res.face_landmarks[0]]), np.asarray(res.facial_transformation_matrixes[0])
+            lms = np.array([[p.x, p.y, p.z] for p in res.face_landmarks[0]])
+            # append full-resolution refined iris centres as rows 478/479 (see iris.py)
+            lms = np.vstack([lms, iris.refine(cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY), lms)])
+            out = lms, np.asarray(res.facial_transformation_matrixes[0])
         if self.on_frame:
             self.on_frame(rgb, *(out or (None, None)))
         return out
@@ -452,13 +456,21 @@ def head_sweep(scr: Screen, trk: Tracker, intr: g.Intrinsics, points=SWEEP_POINT
 
 
 def run_calibration(scr: Screen, trk: Tracker, intr: g.Intrinsics, cfg: calib.GazeConfig = calib.GazeConfig(),
-                    base: g.EyeParams = g.EyeParams(), on_target=None, points=DENSE_POINTS, sweep: bool = True):
-    """Dot calibration in the fullscreen window (25 dots by default, CALIB_POINTS for the quick 13).
-    Saves user.json and the raw frames; returns (calibration, CalibData)."""
-    wait_key(scr, [f"Calibration ({len(points)} dots): look at each dot until it moves on. Keep your head still.",
-                   "SPACE to start   ESC to quit"])
-    frames = collect(scr, trk, points, on_target)
-    all_points, groups = list(points), list(range(len(points)))
+                    base: g.EyeParams = g.EyeParams(), on_target=None, points=DENSE_POINTS, sweep: bool = True,
+                    repeats: int = 1):
+    """Dot calibration in the fullscreen window (25 dots by default, CALIB_POINTS for the quick 13). With repeats > 1
+    every dot is visited again in a shuffled order and the visits are averaged together (each fixation has its own
+    offset of ~1 cm; independent visits average it down). Saves user.json and the raw frames; returns
+    (calibration, CalibData)."""
+    order = list(range(len(points)))
+    rng = np.random.default_rng()
+    for _ in range(repeats - 1):
+        order += list(rng.permutation(len(points)))
+    visit_points = [points[i] for i in order]
+    wait_key(scr, [f"Calibration ({len(points)} dots{f' x {repeats}' if repeats > 1 else ''}): look at each dot until it moves on. "
+                   "Keep your head still.", "SPACE to start   ESC to quit"])
+    frames = collect(scr, trk, visit_points, on_target)
+    all_points, groups = list(visit_points), list(order)  # repeated visits share a group (averaged together)
     if sweep:
         wait_key(scr, ["Head sweep: keep your EYES on the white dot while you move your HEAD,",
                        "steering the yellow ring around the circle. 3 dots, ~8 s each.", "SPACE to start   ESC to quit"])
@@ -634,12 +646,13 @@ def run_test(scr: Screen, trk: Tracker, intr: g.Intrinsics, uc: calib.UserCalib,
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--camera", type=int)
-    ap.add_argument("--width", type=int, default=1280)
-    ap.add_argument("--height", type=int, default=720)
+    ap.add_argument("--width", type=int, default=1920)
+    ap.add_argument("--height", type=int, default=1080)
     ap.add_argument("--test-only", action="store_true")
     ap.add_argument("--mouse", action="store_true", help="mouse-follow calibration instead of dots")
     ap.add_argument("--quick", action="store_true", help="13 dots instead of 25")
     ap.add_argument("--no-sweep", action="store_true", help="skip the head-sweep step")
+    ap.add_argument("--repeat", type=int, default=1, help="visit each calibration dot this many times")
     args = ap.parse_args()
 
     info = device.load()
@@ -663,7 +676,7 @@ def main():
         uc, calib_data = run_mouse_calibration(scr, trk, intr)
     else:
         uc, calib_data = run_calibration(scr, trk, intr, points=CALIB_POINTS if args.quick else DENSE_POINTS,
-                                         sweep=not args.no_sweep)
+                                         sweep=not args.no_sweep, repeats=args.repeat)
     img = run_test(scr, trk, intr, uc, hfov, calib_data)
     while True:
         k = scr.show(img)

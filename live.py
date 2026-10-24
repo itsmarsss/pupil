@@ -5,7 +5,7 @@ without leaving the live view.
     uv run python live.py                  # opens the Rerun viewer + control window
     uv run python live.py --camera 1       # another camera
 
-Control window keys: C calibrate (25 dots), K quick calibration (13 dots), M mouse-follow calibration, T accuracy test (+ comparison of every config), F free look, D drift correction
+Control window keys: C calibrate (25 dots), K 13 dots visited twice, M mouse-follow calibration, T accuracy test (+ comparison of every config), F free look, D drift correction
 (one centre dot), V cycle config, O on-screen gaze overlay, H on-screen face-pointing overlay, S smoothing, Q quit.
 """
 from __future__ import annotations
@@ -26,6 +26,9 @@ import geometry as g
 from hinge import LidSensor
 from overlay import Overlay
 
+
+
+LOG_WIDTH = 960  # camera image sent to Rerun is downscaled to this width (capture is 1920x1080)
 
 
 def setup_from_device(width: int, height: int, hfov_override: float | None):
@@ -53,7 +56,8 @@ def log_static(intr: g.Intrinsics, screen: g.Screen):
 
     # Camera: pinhole frustum (RDF camera axes = world rotated 180° about x)
     rr.log("world/camera", rr.Transform3D(rotation=rr.RotationAxisAngle(axis=[1, 0, 0], degrees=180)), static=True)
-    rr.log("world/camera", rr.Pinhole(focal_length=[intr.fx, intr.fy], width=intr.width, height=intr.height,
+    s = LOG_WIDTH / intr.width
+    rr.log("world/camera", rr.Pinhole(focal_length=[intr.fx * s, intr.fy * s], width=LOG_WIDTH, height=round(intr.height * s),
                                       image_plane_distance=6.0), static=True)
 
     # Screen (usable area) in the lid plane
@@ -95,12 +99,22 @@ def log_hinge(screen: g.Screen, hinge_deg: float):
     rr.log("plots/hinge", rr.Scalars(hinge_deg))
 
 
+def log_image(rgb: np.ndarray, intr: g.Intrinsics):
+    h = round(intr.height * LOG_WIDTH / intr.width)
+    small = cv2.resize(rgb, (LOG_WIDTH, h), interpolation=cv2.INTER_AREA) if rgb.shape[1] != LOG_WIDTH else rgb
+    rr.log("world/camera/image", rr.Image(small).compress(jpeg_quality=70))
+
+
 def log_frame(gf: g.GazeFrame, lms: np.ndarray, rgb: np.ndarray, intr: g.Intrinsics, fps: float,
               hinge_deg: float | None = None, status: str = ""):
-    rr.log("world/camera/image", rr.Image(rgb).compress(jpeg_quality=70))
-    rr.log("world/camera/image/landmarks", rr.Points2D(lms[:, :2] * [intr.width, intr.height], radii=1.0, colors=[[0, 255, 160]]))
-    iris_px = lms[[g.R_IRIS_CENTER, g.L_IRIS_CENTER], :2] * [intr.width, intr.height]
-    rr.log("world/camera/image/iris", rr.Points2D(iris_px, radii=3.0, colors=[[255, 60, 200]]))
+    log_image(rgb, intr)
+    s = LOG_WIDTH / intr.width
+    wh = np.array([intr.width, intr.height]) * s
+    rr.log("world/camera/image/landmarks", rr.Points2D(lms[:478, :2] * wh, radii=0.7, colors=[[0, 255, 160]]))
+    rr.log("world/camera/image/iris", rr.Points2D(lms[[g.R_IRIS_CENTER, g.L_IRIS_CENTER], :2] * wh, radii=2.0, colors=[[255, 60, 200]]))
+    if len(lms) >= 480:  # full-resolution refined iris centres (iris.py), yellow where the refinement succeeded
+        rr.log("world/camera/image/iris_refined", rr.Points2D(lms[478:480, :2] * wh, radii=2.0,
+                                                              colors=[[255, 220, 0] if z > 0 else [120, 120, 120] for z in lms[478:480, 2]]))
 
     rr.log("world/face/points", rr.Points3D(gf.points, radii=0.08, colors=[[200, 200, 200]]))
     axes = gf.head_R.T * 6.0
@@ -226,7 +240,7 @@ class Live:
             self.head_px = None
         if gf is None:  # no face, or a blink
             self.hit_px = None
-            rr.log("world/camera/image", rr.Image(rgb).compress(jpeg_quality=70))
+            log_image(rgb, self.intr)
             return
         self.hit_px = gf.hit_px
         log_frame(gf, lms, rgb, self.intr, self.fps, self.hinge, self.status())
@@ -260,13 +274,14 @@ class Live:
             self.mode = "live"
             self.filter.reset()
 
-    def calibrate(self, scr: cg.Screen, points=cg.DENSE_POINTS):
+    def calibrate(self, scr: cg.Screen, points=cg.DENSE_POINTS, repeats: int = 1):
         cfg = calib.GazeConfig()  # the default config; V switches afterwards
-        self.uc, self.calib_data = cg.run_calibration(scr, self.trk, self.intr, cfg, self.base, self.on_target(scr), points)
-        self.last_event = f"calibrated ({len(points)} dots), rms {self.uc.rms_cm:.2f} cm"
+        self.uc, self.calib_data = cg.run_calibration(scr, self.trk, self.intr, cfg, self.base, self.on_target(scr), points,
+                                                      repeats=repeats)
+        self.last_event = f"calibrated ({len(points)} dots x{repeats}), rms {self.uc.rms_cm:.2f} cm"
 
     def calibrate_quick(self, scr: cg.Screen):
-        self.calibrate(scr, cg.CALIB_POINTS)
+        self.calibrate(scr, cg.CALIB_POINTS, repeats=2)
 
     def calibrate_mouse(self, scr: cg.Screen):
         cfg = calib.GazeConfig()
@@ -316,7 +331,7 @@ class Live:
         view = cv2.resize(view, (w, h))
         lines = [self.status(),
                  f"hinge {'n/a' if self.hinge is None else f'{self.hinge:.0f} deg'}   fps {self.fps:.0f}   {self.last_event}",
-                 "C calibrate (25)  K quick (13)  M mouse  T test  F free  D drift  V config",
+                 "C calibrate (25)  K 13 dots x2  M mouse  T test  F free  D drift  V config",
                  f"O gaze overlay {'on' if self.overlay else 'off'}  H face overlay {'on' if self.head_overlay else 'off'}"
                  f"  S smoothing {'on' if self.smooth else 'off'}  Q quit"]
         for i, t in enumerate(lines):
@@ -387,8 +402,8 @@ class Live:
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--camera", type=int, help="OpenCV camera index (default: the FaceTime camera)")
-    ap.add_argument("--width", type=int, default=1280)
-    ap.add_argument("--height", type=int, default=720)
+    ap.add_argument("--width", type=int, default=1920)
+    ap.add_argument("--height", type=int, default=1080)
     ap.add_argument("--hfov", type=float, help="override the camera's horizontal FOV (degrees)")
     ap.add_argument("--eye-radius", type=float, default=1.2)
     ap.add_argument("--eye-depth", type=float, default=0.6, help="eyeball centre behind the eye-corner midpoint (cm)")
