@@ -42,6 +42,7 @@ def cmd_run(args) -> int:
         record_path=Path(args.record) if args.record else None,
         session_dir=_session_dir(args.save_session),
         measure=args.measure,
+        publish=args.publish,
     ).run()
     return 0
 
@@ -112,6 +113,11 @@ def cmd_doctor(args) -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
+    argv = sys.argv[1:] if argv is None else argv
+    if argv[:1] == ["control"]:  # its own options; it starts the tracker itself
+        from .control.__main__ import main as control_main
+
+        return control_main(argv[1:])
     parser = argparse.ArgumentParser(prog="gaze", description="Webcam gaze tracking for macOS")
     parser.add_argument("-v", "--verbose", action="store_true")
     sub = parser.add_subparsers(dest="command")
@@ -132,10 +138,12 @@ def main(argv: list[str] | None = None) -> int:
         p.add_argument("--save-session", nargs="?", const="auto", metavar="DIR",
                        help="save calibration/validation frames for `gaze replay`")
         p.add_argument("--measure", action="store_true", help="run the head-still + head-moving accuracy measurement")
+        p.add_argument("--publish", action="store_true", help="stream gaze over local UDP for `gaze control`")
         p.add_argument("--smoothing", choices=["off", "light", "medium", "strong"], default="medium",
                        help="ring smoothing; medium holds steady during fixations (default)")
         p.add_argument("--normalise", choices=["roll", "frontal", "none"], default="roll",
                        help="straighten the face before the gaze model (default: level the eyes)")
+    sub.add_parser("control", help="look at something and say what to do (see `gaze control -h`)")
     sub.add_parser("cameras", help="list cameras")
     doctor = sub.add_parser("doctor", help="check camera access, models and screen")
     doctor.add_argument("--camera", default="FaceTime")

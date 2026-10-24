@@ -16,6 +16,19 @@ dependencies = [
     "pyobjc-framework-ApplicationServices>=11",
 ]
 
+[project.optional-dependencies]
+# `gaze control`: voice + gaze computer control (Jev fast tier, Claude agent)
+control = [
+    "anthropic>=2.3",
+    "typesafe-sdk>=0.7.5",
+    "PyQt6>=6.7",
+    "mss>=9",
+    "Pillow>=10",
+    "pyautogui>=0.9.54",
+    "sounddevice>=0.5",
+    "faster-whisper>=1.1",
+]
+
 [project.scripts]
 gaze = "gaze.cli:main"
 

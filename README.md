@@ -77,6 +77,34 @@ uv run gaze replay SESSION --modes hd+roll,hd,hd+frontal,vga --all
 same frames, and reports head-still and head-moving checks separately. Profiles,
 recordings and the accuracy log live in `~/Library/Application Support/Gaze/`.
 
+## Voice control (`gaze control`)
+
+Look at something and say what to do. `gaze control` starts the tracker with
+`--publish` (it streams gaze points over local UDP and takes "recalibrate" back), then
+listens to the mic:
+
+```sh
+uv sync --extra control
+echo "TYPESAFE_API_KEY=..." >> .env      # fast tier (Jev); optional
+echo "ANTHROPIC_API_KEY=..." >> .env     # Claude agent; optional
+uv run gaze control                      # add --typed to type commands, --gaze mouse to skip the camera
+```
+
+Needs Microphone, Accessibility and Screen Recording for your terminal as well as Camera.
+
+| Tier | | Examples |
+|---|---|---|
+| 0 · `router.py` | exact phrases, matched by rules | "click", "double click this", "scroll down a lot", "go back", "type hello", "stop", "calibrate" |
+| 1 · `gate.py` | Jev answers small yes/no questions about the command and the elements near your gaze; a truth table picks the action | "open Safari", "search repositories", "close this tab" (asks to confirm risky ones) |
+| 2 · `agent.py` | Claude computer-use loop, told where you were looking while you spoke | "open this in a new tab and summarize it" |
+
+"This" means where you looked *while speaking*, snapped to the nearest Accessibility
+element (`snapping.py`). Say "calibrate" to rerun the tracker's dots, "stop" to cancel
+the agent. Options: `--calibrate`, `--no-tracker` (use a `gaze --publish` you started
+yourself), `--tracker-args ...` (passed to the tracker). Env vars in
+`src/gaze/control/config.py` (`GAZE_MODEL`, `GAZE_WAKE_WORD`, `GAZE_WHISPER`, ...).
+This drives your real Mac: use a test browser profile.
+
 ## How it works
 
 ```

@@ -1,0 +1,233 @@
+"""Fast tier: one Jev request of small judgments; code turns them into a decision.
+
+Jev never decides what to do. It answers yes/no and pick-one questions about the command and the elements near
+the pointer ("does the command ask to open an app?", "is the command about the 'Search for repositories'
+button?"), and `_decide` maps those answers to an action with a truth table. All questions are in one request
+and run in parallel; most are speculative, and code only reads the ones the table needs.
+"""
+
+import json
+import os
+import time
+from dataclasses import dataclass
+
+from . import commands, config
+from .snapping import Element
+
+try:
+    from typesafe_sdk import Choice, Noul, NoulCriteria, RetryPolicy, TypeSafeClient
+except ImportError:  # gate is optional; without it everything unmatched goes to the agent
+    TypeSafeClient = None
+
+YES, NO = 0.7, 0.3  # Noul thresholds: above YES reads as yes, below NO as no, between is unsettled
+MAX_CANDIDATES = 25  # nearest elements, one question each
+
+# --- Question wording (everything Jev reads lives here) ---
+
+IS_COMMAND = Noul(
+    instructions="Is `command` an instruction for the computer?",
+    criteria=NoulCriteria(
+        true="It asks the computer to do something, even in a word or two, like \"search\", \"copy that\" or \"next\"",
+        false="Talking to someone else, thinking aloud, filler, or words that don't make sense as an instruction",
+    ),
+)
+WANTS_ELEMENT = Noul(
+    instructions="Does `command` ask to press, click, open or select a specific control or item on screen?",
+    criteria=NoulCriteria(
+        true="It is about one particular button, link, field, tab or item, named or pointed at (\"close this\", "
+             "\"open racecard\", \"search repositories\")",
+        false="A general command that doesn't depend on any particular control, such as copy, paste, undo, "
+              "scrolling or switching apps",
+    ),
+)
+WANTS_APP = Noul(instructions="Does `command` ask to open, launch or switch to an application?")
+WANTS_SHORTCUT = Noul(instructions="Does `command` ask for a standard editing, tab or window command, such as "
+                                   "copy, paste, undo, save, find, new tab, close tab, zoom or quit?")
+WANTS_SCROLL = Noul(instructions="Does `command` ask to scroll or move up or down the page?")
+NEEDS_AGENT = Noul(
+    instructions="Does `command` need several steps, writing new text, or reading and summarizing the screen?",
+    criteria=NoulCriteria(
+        true="e.g. \"summarize this page\", \"reply saying I'm running late\", \"find a cheap flight to Boston\"",
+        false="One action: clicking or pressing something it names or points at (\"search repositories\" "
+              "means press the search button), scrolling, opening an app, or a keyboard command",
+    ),
+)
+SCROLL_DIRECTION = Choice(instructions="Which way does `command` want to scroll?",
+                          criteria={"down": "down, further, next, more", "up": "up, back, toward the top"})
+ELEMENT_ACTION = Choice(
+    instructions="What does `command` want done to the on-screen element it is about?",
+    criteria={"activate": "click it: open, press, select, go to, search with, play or check it",
+              "double_click": "double-click it",
+              "context_menu": "right-click it or show more options for it"},
+)
+REFERS_TO_ELEMENT = ("Is `command` about this element? Words like this, that, it and here mean the element at or "
+                     "nearest the pointer, unless the command names a different one.")
+RISKY = Noul(instructions="Could doing `command` lose data or do something hard to undo, such as sending a message, "
+                          "submitting a form, paying, or deleting something? Opening, closing, resizing, scrolling "
+                          "or switching windows, tabs and pages is not risky.")
+
+
+def _app_question(apps):
+    return Choice(instructions="Which application does `command` want to open or switch to?",
+                  criteria={name: None for name in apps})
+
+
+def _shortcut_question():
+    return Choice(instructions="Which keyboard command does `command` ask for?",
+                  criteria={k: desc for k, (desc, _) in commands.SHORTCUTS.items()})
+
+
+def _element_questions(gaze, elements):
+    """One yes/no per element, each carrying the element itself (not an index into a shared list)."""
+    questions = {}
+    for i, el in enumerate(elements):
+        d = el.distance(*gaze) if gaze else None
+        questions[f"el_{i}"] = Noul(instructions={
+            "element": {"kind": el.role.removeprefix("AX"), "label": el.label or "(no label)",
+                        "distance_from_pointer": "under the pointer" if d == 0 else
+                        (f"{round(d)} pt away" if d is not None else "unknown")},
+            "question": REFERS_TO_ELEMENT,
+        })
+    return questions
+
+
+# --- Decision ---
+
+@dataclass
+class Decision:
+    route: str  # click | double_click | right_click | scroll_down | scroll_up | open_app | shortcut | agent | ignore
+    why: str  # the judgment(s) that decided it, for the status line and logs
+    ms: float
+    target: Element | None = None
+    app: str | None = None
+    app_path: str | None = None
+    shortcut: str | None = None
+    risky: float = 0.0
+
+    def summary(self):
+        what = {"open_app": self.app, "shortcut": self.shortcut}.get(self.route) or \
+            (self.target.describe() if self.target else "")
+        return f"Jev: {self.route}{' -> ' + what if what else ''} ({self.why}), {self.ms:.0f} ms"
+
+
+def _element_route(element_p, gaze, choices, why):
+    best_p = element_p[0][0]
+    # Several near-equal matches (e.g. two "Search" buttons): take the one nearest the pointer.
+    close = [el for q, el in element_p if q >= best_p - 0.05]
+    target = min(close, key=lambda el: el.distance(*gaze)) if gaze else close[0]
+    route = {"activate": "click", "double_click": "double_click", "context_menu": "right_click"}[
+        choices["element_action"].choice]
+    return route, f"{why + ', ' if why else ''}element {best_p:.2f}", {"target": target}
+
+
+def _decide(a, elements, gaze, apps):
+    """The truth table. `a` = Jev's answers; returns (route, why, extras)."""
+    nouls, choices = a.nouls, a.choices
+    p = lambda k: nouls[k].noul  # noqa: E731
+    element_p = sorted(((p(f"el_{i}"), el) for i, el in enumerate(elements)), key=lambda x: -x[0])
+
+    if p("is_command") < NO:
+        return "ignore", f"not a command {p('is_command'):.2f}", {}
+    if p("needs_agent") >= YES:
+        return "agent", f"needs steps/writing {p('needs_agent'):.2f}", {}
+    # A specific on-screen control wins over apps/shortcuts ("close this" on a window's close button), and since
+    # the command is clearly about some element, the best match only needs to be more likely than not.
+    if p("wants_element") >= YES and element_p and element_p[0][0] >= 0.5:
+        return _element_route(element_p, gaze, choices, f"control {p('wants_element'):.2f}")
+    if p("wants_app") >= YES:
+        app = choices["app"].choice
+        return "open_app", f"open app {p('wants_app'):.2f}", {"app": app, "app_path": apps.get(app)}
+    if p("wants_shortcut") >= YES:
+        return "shortcut", f"shortcut {p('wants_shortcut'):.2f}", {"shortcut": choices["shortcut"].choice}
+    if p("wants_scroll") >= YES:
+        return f"scroll_{choices['scroll_direction'].choice}", f"scroll {p('wants_scroll'):.2f}", {}
+    if element_p and element_p[0][0] >= YES:
+        return _element_route(element_p, gaze, choices, "")
+    if p("is_command") < YES:
+        return "ignore", f"probably not a command {p('is_command'):.2f}", {}  # doing nothing is the safe default
+    return "agent", "a command, but no single direct action matched", {}
+
+
+class Gate:
+    def __init__(self):
+        self.error = None
+        self._client = None
+        if TypeSafeClient is None:
+            self.error = "typesafe-sdk not installed"
+            return
+        if not os.environ.get("TYPESAFE_API_KEY"):
+            self.error = "TYPESAFE_API_KEY not set"
+            return
+        try:
+            self._client = TypeSafeClient(
+                model=config.GATE_MODEL,
+                **({"base_url": config.GATE_BASE_URL} if config.GATE_BASE_URL else {}),
+                retry=RetryPolicy(max_retries=1, timeout=config.GATE_TIMEOUT_S),
+            )
+        except Exception as e:
+            self.error = f"TypeSafe client error: {e}"
+
+    @property
+    def available(self):
+        return self._client is not None
+
+    def _ask(self, kind, state, questions):
+        t0 = time.perf_counter()
+        result = self._client.system_one(state, questions)
+        ms = (time.perf_counter() - t0) * 1000
+        _log({"tier": "gate", "kind": kind, "ms": round(ms), "request_id": getattr(result, "request_id", None)})
+        return result, ms
+
+    @staticmethod
+    def _state(utterance, app_name, gaze, elements):
+        return {
+            "command": utterance,
+            "frontmost_app": app_name,
+            "pointer": "The user is pointing at (looking at) a spot on screen; distances are measured from it.",
+            "elements_near_pointer": [
+                {"kind": el.role.removeprefix("AX"), "label": el.label or "(no label)",
+                 "distance_pt": round(el.distance(*gaze)) if gaze else None} for el in elements],
+        }
+
+    def decide(self, utterance, gaze, candidates, app_name) -> Decision:
+        """All judgments for a free-form command in one request; `_decide` turns them into an action."""
+        elements = candidates[:MAX_CANDIDATES]
+        apps = commands.available_apps()
+        questions = {
+            "is_command": IS_COMMAND, "needs_agent": NEEDS_AGENT, "wants_element": WANTS_ELEMENT, "wants_app": WANTS_APP,
+            "wants_shortcut": WANTS_SHORTCUT, "wants_scroll": WANTS_SCROLL, "risky": RISKY,
+            "app": _app_question(apps), "shortcut": _shortcut_question(),
+            "scroll_direction": SCROLL_DIRECTION, "element_action": ELEMENT_ACTION,
+            **_element_questions(gaze, elements),
+        }
+        result, ms = self._ask("decide", self._state(utterance, app_name, gaze, elements), questions)
+        route, why, extras = _decide(result, elements, gaze, apps)
+        decision = Decision(route, why, ms, risky=result.nouls["risky"].noul, **extras)
+        _log({"tier": "gate", "kind": "decision", "utterance": utterance, "route": route, "why": why,
+              "target": decision.target.describe() if decision.target else None, "app": decision.app,
+              "shortcut": decision.shortcut, "risky": round(decision.risky, 3),
+              "judgments": {k: round(v.noul, 3) for k, v in result.nouls.items() if not k.startswith("el_")},
+              "elements": {el.describe(): round(result.nouls[f"el_{i}"].noul, 3) for i, el in enumerate(elements)}})
+        return decision
+
+    def pick_target(self, utterance, gaze, candidates):
+        """Which of several nearby elements a bare command ("click this") means: (element, probability, ms)."""
+        elements = candidates[:MAX_CANDIDATES]
+        result, ms = self._ask("target", self._state(utterance, "", gaze, elements),
+                               _element_questions(gaze, elements))
+        scored = sorted(((result.nouls[f"el_{i}"].noul, el) for i, el in enumerate(elements)), key=lambda x: -x[0])
+        return (scored[0][1], scored[0][0], ms) if scored else (None, 0.0, ms)
+
+    def risk_of(self, request, planned_actions):
+        """Probability that the agent's next actions do something irreversible the user didn't ask for."""
+        state = {"user_request": request, "planned_actions": planned_actions}
+        result, ms = self._ask("risk", state, {"risky": Noul(
+            instructions="Could `planned_actions` lose data or do something hard to undo (sending, submitting, "
+                         "paying, deleting) that `user_request` did not explicitly ask for?")})
+        return result.nouls["risky"].noul, ms
+
+
+def _log(record):
+    config.LOG_DIR.mkdir(exist_ok=True)
+    with open(config.LOG_DIR / "latency.jsonl", "a") as f:
+        f.write(json.dumps({"t": time.time(), **record}) + "\n")

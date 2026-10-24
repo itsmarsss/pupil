@@ -37,6 +37,7 @@ from ..core.paths import APP_SUPPORT, recordings_dir
 from ..core.types import TrackingState
 from ..eval.metrics import ValidationResult, append_result, score
 from ..eval.session import SessionWriter
+from ..sinks.publisher import GazePublisher
 from ..sinks.recorder import GazeRecorder
 from ..sinks.snapper import Element, Snapper
 from ..tracker import Tracker
@@ -80,6 +81,7 @@ class GazeApp:
         record_path: Path | None = None,
         session_dir: Path | None = None,
         measure: bool = False,
+        publish: bool = False,
     ):
         self.tracker = tracker
         self.screen = tracker.screen
@@ -97,6 +99,7 @@ class GazeApp:
         self._record_path = record_path
         self._session_dir = session_dir
         self._pending_measure = measure  # run the measurement once the launch flow finishes
+        self._publish = publish  # stream gaze to the voice controller (gaze.control)
         self.lid = LidSensor()
         self._lid_now: float | None = self.lid.angle()
         self.session: SessionWriter | None = None
@@ -128,6 +131,14 @@ class GazeApp:
             self._toggle_snap()
         if self._record_path is not None:
             self._start_recording(self._record_path)
+        if self._publish:
+            publisher = GazePublisher(busy=lambda: self._busy)
+            self.tracker.add_listener(publisher.on_sample)
+            publisher.listen({
+                "recalibrate": lambda: AppHelper.callAfter(self._when_idle, self._calibrate),
+                "validate": lambda: AppHelper.callAfter(self._when_idle, lambda: self._validate(9)),
+            })
+            log.info("publishing gaze to the controller over UDP")
         if self._session_dir is not None:
             self.session = SessionWriter(self._session_dir, {
                 "screen_pt": [self.screen.width_pt, self.screen.height_pt],
@@ -420,6 +431,11 @@ class GazeApp:
             self._start_overlay()
         else:
             self._quit()
+
+    def _when_idle(self, fn) -> None:
+        """Remote commands arrive any time; ignore them while a screen is already up."""
+        if not self._busy:
+            fn()
 
     def _start_overlay(self) -> None:
         self._label(None)

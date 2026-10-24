@@ -3,6 +3,7 @@ import csv
 import numpy as np
 
 from gaze.core.types import GazePoint, Sample, TrackingState
+from gaze.sinks.publisher import GazePublisher
 from gaze.sinks.recorder import GazeRecorder
 from gaze.sinks.snapper import Element, choose, probe_points
 
@@ -49,3 +50,10 @@ def test_recorder_writes_samples_and_events(tmp_path):
     assert [r["state"] for r in rows] == ["tracking", "no_face", "event"]
     assert rows[0]["x"] == "10.0" and rows[0]["fixation_id"] == "3"
     assert rows[1]["x"] == "" and rows[2]["event"] == "click"
+
+
+def test_publisher_sends_points_only_when_valid():
+    pub = GazePublisher(busy=lambda: True, port=0)
+    msg = pub.message(Sample(1, None, None, GazePoint(1, TrackingState.TRACKING, 10.0, 20.0, 11.0, 21.0, 3, 550.0, 0.8)))
+    assert (msg["x"], msg["y"], msg["fixation"], msg["busy"]) == (10.0, 20.0, 3, True)
+    assert "x" not in pub.message(Sample(2, None, None, GazePoint(2, TrackingState.BLINK, 10.0, 20.0)))

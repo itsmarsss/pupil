@@ -18,3 +18,7 @@ data/
 
 # Model weights (local only)
 /models/
+
+# gaze control
+.env
+.logs/
