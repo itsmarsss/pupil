@@ -110,7 +110,7 @@ class _A:
 
 
 def _answers(choices=None, **nouls):
-    base = dict(is_command=0.95, enough_context=0.9, is_compound=0.05, needs_agent=0.05, wants_element=0.05,
+    base = dict(is_command=0.95, enough_context=0.9, cut_off=0.05, is_compound=0.05, needs_agent=0.05, wants_element=0.05,
                 wants_app=0.05, wants_shortcut=0.05, wants_scroll=0.05, risky=0.05)
     base.update(nouls)
     ch = {"missing": "who", "app": "Notes", "shortcut": "copy", "scroll_direction": "down",
@@ -141,7 +141,7 @@ def test_truth_table_unsure_commands_and_follow_ups():
     # "knight g2" after "play the best move": a follow-up, so a command
     assert _decide(_answers(is_command=0.5, follows_up=0.9), [], None, {})[0] == "agent"
     assert _decide(_answers(is_command=0.5), [], None, {}, assume_command=True)[0] == "agent"  # "do it"
-    assert _decide(_answers(enough_context=0.05, choices={"missing": "what"}), [], None, {}, command="open the")[0] == "clarify"
+    assert _decide(_answers(enough_context=0.05, cut_off=0.9, choices={"missing": "what"}), [], None, {})[0] == "clarify"
     assert _last_sentence("is now beginning. Click join.") == "Click join."
     assert _last_sentence("Click join.") is None and _last_sentence("stuff. Yeah.") is None
 

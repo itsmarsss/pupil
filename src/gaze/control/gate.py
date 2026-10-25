@@ -90,6 +90,13 @@ MISSING = Choice(
               "content": "what text to write or say", "where": "where to go, or which app or place",
               "cut_off": "the sentence stops before it is finished"},
 )
+CUT_OFF = Noul(
+    instructions="Does `command` stop before the sentence is finished, as if the speaker was cut off?",
+    criteria=NoulCriteria(
+        true="e.g. \"open the\", \"move it to\", \"put this in the\", \"send it to\"",
+        false="A complete sentence, however short: \"open\", \"zoom in\", \"turn it on\", \"click this\"",
+    ),
+)
 FOLLOWS_UP = Noul(
     instructions="Does `command` carry on from `previous_commands`: the next move or step of the same thing, an answer, "
                  "or a correction, rather than talk about something else?",
@@ -233,15 +240,6 @@ def _element_route(element_p, gaze, choices, why, cloud=None):
     return route, why, {"target": target}
 
 
-DANGLING = {"the", "a", "an", "to", "into", "onto", "at", "for", "with", "of", "from", "my", "your",
-            "and", "or", "but"}  # a sentence ending on one of these was cut off (not "in"/"on": "zoom in", "turn it on")
-
-
-def _dangling(command):
-    words = re.findall(r"[a-z']+", command.lower())
-    return bool(words) and words[-1] in DANGLING and not re.search(r"[.?!]\s*$", command)
-
-
 def _decide(a, elements, gaze, apps, allow_clarify=True, allow_compound=True, command="", cloud=None,
             assume_command=False):
     """The truth table. `a` = Jev's answers; returns (route, why, extras).
@@ -257,7 +255,7 @@ def _decide(a, elements, gaze, apps, allow_clarify=True, allow_compound=True, co
     sure = p("is_command") >= YES or follow_up or assume_command
     # Ask only when it's clearly missing something the screen can't supply (a cut-off sentence, a person, text to
     # write): which thing and where, the gaze and the screen settle, so those go on to be guessed or worked out.
-    missing = "cut_off" if _dangling(command) else choices["missing"].choice
+    missing = "cut_off" if "cut_off" in nouls and p("cut_off") >= YES else choices["missing"].choice
     if allow_clarify and sure and p("enough_context") < CLARIFY_BELOW and missing in ASK_ABOUT:
         return "clarify", f"not enough to act on {p('enough_context'):.2f}", {"missing": missing}
     if allow_compound and p("is_compound") >= YES:
@@ -341,7 +339,7 @@ class Gate:
         elements = candidates[:MAX_CANDIDATES]
         apps = commands.available_apps()
         questions = {
-            "is_command": IS_COMMAND, "enough_context": ENOUGH_CONTEXT,
+            "is_command": IS_COMMAND, "enough_context": ENOUGH_CONTEXT, "cut_off": CUT_OFF,
             **({"follows_up": FOLLOWS_UP} if self.recent else {}), "missing": MISSING, "is_compound": IS_COMPOUND,
             "needs_agent": NEEDS_AGENT, "wants_element": WANTS_ELEMENT, "wants_app": WANTS_APP,
             "wants_shortcut": WANTS_SHORTCUT, "wants_scroll": WANTS_SCROLL, "risky": RISKY,
