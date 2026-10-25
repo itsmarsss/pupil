@@ -5,6 +5,7 @@ actionable element nearby, so the fast tier can pick the one the user *named* ("
 different one ("close") is closer. Point-sampling misses small, tightly packed controls; walking the tree doesn't.
 """
 
+import dataclasses
 import math
 import re
 import time
@@ -15,6 +16,7 @@ from ApplicationServices import (
     AXUIElementCopyElementAtPosition,
     AXUIElementCopyMultipleAttributeValues,
     AXUIElementCreateSystemWide,
+    AXUIElementGetPid,
     AXValueGetValue,
     kAXValueCGPointType,
     kAXValueCGSizeType,
@@ -49,6 +51,7 @@ class Element:
     parent: str = ""  # label of the actionable element it sits inside ("Close" inside tab "YouTube")
     parent_role: str = ""  # AX role of its direct parent ("AXTabGroup": it's a tab, in any app and language)
     subrole: str = ""  # e.g. "AXCloseButton": language-independent, unlike kind and label
+    app: str = ""  # the app it belongs to: gaze drifting onto a window behind the front app lands on another app
 
     @property
     def is_tab(self) -> bool:
@@ -202,12 +205,25 @@ def _usable_hit(x, y):
     return None
 
 
+def app_of(element) -> str:
+    """The name of the app an accessibility element belongs to ("" if it can't be told)."""
+    try:
+        from AppKit import NSRunningApplication
+
+        err, pid = AXUIElementGetPid(element, None)
+        app = NSRunningApplication.runningApplicationWithProcessIdentifier_(pid) if err == 0 else None
+        return str(app.localizedName() or "") if app is not None else ""
+    except Exception:
+        return ""
+
+
 def candidates_near(x, y, screen_w, screen_h, radius=SEARCH_RADIUS):
     """Actionable elements within `radius` of the gaze, nearest first."""
     hit = _usable_hit(x, y)
     if hit is None:
         return []
     max_area = config.SNAP_MAX_AREA_FRACTION * screen_w * screen_h
+    app = app_of(hit)
     found = {}
     queue, seen, deadline = [(_container(hit), "", "")], 0, time.perf_counter() + MAX_WALK_S
     while queue and seen < MAX_NODES and time.perf_counter() < deadline:
@@ -222,11 +238,13 @@ def candidates_near(x, y, screen_w, screen_h, radius=SEARCH_RADIUS):
             key = (role, round(frame[0]), round(frame[1]), round(frame[2]), round(frame[3]))
             if key not in found:
                 found[key] = Element(role, _label(node), *frame, kind=_text(node, "AXRoleDescription")[:40],
-                                     parent=parent, parent_role=parent_role, subrole=_text(node, "AXSubrole"))
+                                     parent=parent, parent_role=parent_role, subrole=_text(node, "AXSubrole"),
+                                     app=app)
             parent = found[key].label or parent
         queue.extend((child, parent, role) for child in children)
     direct = element_at(x, y)  # the element right under the gaze, even if the walk ran out of budget
     if direct:
+        direct = dataclasses.replace(direct, app=app)
         found.setdefault((direct.role, round(direct.x), round(direct.y), round(direct.w), round(direct.h)), direct)
     # Nearest edge first; among ties (gaze inside several nested elements) prefer the smaller one.
     return sorted(found.values(), key=lambda e: (e.distance(x, y), e.w * e.h))

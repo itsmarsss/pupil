@@ -74,6 +74,8 @@ def _describe_action(kind, args, where=None):
         return f"{verb} {where}" if where and where != "there" else verb
     if kind == "scroll":
         return f"Scrolled {args.get('direction', '')}".strip()
+    if kind == "type" and args.get("search"):
+        return f"Searched {(where or 'the app').removesuffix(' search')} for “{args.get('text', '')}”"
     if kind == "type":
         text = args.get("text", "")
         return f"Typed “{text[:40]}{'…' if len(text) > 40 else ''}”"
@@ -405,6 +407,9 @@ class VoiceController:
         cmd = router.route(text)
         if cmd is None:
             return
+        if cmd.kind == "cancel" and not self._anything_to_stop():
+            # "cancel" with nothing running is about the screen ("Cancel" on a dialog): Jev reads it like any command
+            cmd = router.Command("unknown", {"request": cmd.text}, cmd.text)
         ep = self.episodes.begin(cmd.text, t0, t1, cmd.kind)
         self.episodes.save_audio(ep, clip)
         self.hud.heard = cmd.text
@@ -450,6 +455,14 @@ class VoiceController:
                 ep["clarified"] = {"from": original, "missing": missing, "answer": ep["text"]}
                 self.gaze.report("pending", "")
         self.commands.put((cmd, t0, t1, ep))
+
+    def _anything_to_stop(self) -> bool:
+        """Something "stop" or "cancel" would stop: the agent, speech, a question or confirmation, dictation, or
+        background research."""
+        research = getattr(self, "research", None)
+        return bool(self.agent.busy or self.agent.paused or self.pending or self.speaker.speaking or self.dictating
+                    or self.choosing is not None or self.clarifying is not None or self.maybe is not None
+                    or (research is not None and research.running))
 
     def _cancel(self):
         """Stop everything: speech, the agent, anything waiting for an answer. Background research only when it's
@@ -710,6 +723,24 @@ class VoiceController:
         if d.route == "quit_app":
             self._quit_app(args.get("app"), args.get("force", False), target)
             return True
+        if d.route == "fill" and d.target is not None:  # "search dog" on a search box: click, type, Return
+            with self._working("thinking", "reading"):
+                words = (extract.search_query(request) if (d.args or {}).get("submit")
+                         else extract.text_to_type(request)) or request
+            self._do("click", {"clicks": 1, "button": "left"}, gaze, d.target)
+            time.sleep(0.15)  # focus lands
+            actions.press("command+a")  # replace what's there
+            actions.type_text(words)
+            if (d.args or {}).get("submit"):
+                actions.press("return")
+            self._acted("type", {"text": words, "search": bool((d.args or {}).get("submit"))}, d.target.describe())
+            self._status(f'Typed "{words}" into {d.target.describe()}')
+            return True
+        if d.route == "app_search":
+            with self._working("thinking", "reading"):
+                query = extract.search_query(request) or request
+            self._search_in_app(query)
+            return True
         if d.route == "navigate":
             with self._working("thinking", "reading"):
                 where = extract.web(request)
@@ -799,6 +830,23 @@ class VoiceController:
         (app.forceTerminate if force else app.terminate)()
         self._acted("open_app", {"quit": name, "force": force})
         self._status(f"{'Force quit' if force else 'Quit'} {name}")
+
+    def _search_in_app(self, query):
+        """Search the front app with its own search box ("search dog" in Photos); without one, its Find command
+        and type. Never the web: that's _navigate."""
+        app = macos.frontmost_app()
+        via = uitree.search_in_app(query)
+        if via is None:
+            command = self._menu_for("find")
+            via = uitree.press_menu_command(command) if command else None
+            if not via:
+                actions.press("command+f")
+            time.sleep(0.25)  # the find bar opens
+            actions.type_text(query)
+            actions.press("return")
+            via = via or "⌘F"
+        self._acted("type", {"text": query, "via": via, "search": True}, f"{app} search")
+        self._status(f'Searched {app} for "{query}"')
 
     def _navigate(self, url=None, query=None):
         """A website or a web search. In a browser: its own "Open Location" (the address bar, in any browser),

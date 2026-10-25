@@ -843,3 +843,31 @@ def test_replies_are_said_once():
     assert _reply([text("Photos is already showing in front.\n\nDone.")]) == "Photos is already showing in front."
     assert _reply([text("Sent."), text("Sent.")]) == "Sent."
     assert _reply([text("Done.")]) == "Done."
+
+
+def test_cancel_with_nothing_running_is_for_jev():
+    from pupil.control import controller as ctl
+
+    c = ctl.VoiceController.__new__(ctl.VoiceController)
+    c.agent = _A(busy=False, paused=False)
+    c.pending = c.choosing = c.clarifying = c.maybe = None
+    c.speaker, c.dictating, c.research = _A(speaking=False), False, _A(running=[])
+    assert not c._anything_to_stop()  # "cancel" now: the dialog's Cancel button (Jev decides)
+    c.agent.busy = True
+    assert c._anything_to_stop()  # "cancel" now: stop the agent, at once
+
+
+def test_closing_with_a_dialogs_own_button_presses_it():
+    from types import SimpleNamespace as NS
+
+    from pupil.control.gate import _fill_in
+    from pupil.control.snapping import Element
+
+    cancel = Element("AXButton", "Cancel", 600, 400, 80, 28, kind="button")
+    assert _fill_in("close", "control 0.88", {"target": cancel}, {})[0] == "click"
+    close_box = Element("AXButton", "Close", 10, 10, 14, 14, subrole="AXCloseButton")
+    assert _fill_in("close", "", {"target": close_box}, {})[0] == "close"  # a real close control: unchanged
+    field = Element("AXTextField", "Search", 0, 0, 200, 30)
+    nouls = {"enters_text": NS(noul=0.95), "searches": NS(noul=0.9)}
+    route, _, extras = _fill_in("click", "", {"target": field}, nouls)
+    assert route == "fill" and extras["args"]["submit"]

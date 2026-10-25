@@ -16,6 +16,7 @@ import logging
 import os
 import shutil
 import sys
+import textwrap
 import time
 
 from ..core.env import env
@@ -35,7 +36,21 @@ def _c(text: str, colour: str) -> str:
 
 
 def _width() -> int:
-    return max(60, min(shutil.get_terminal_size((110, 20)).columns, 140))
+    """The terminal's width, but never narrow: run from some launchers it reports 80 or less while the window is
+    wide, which cut every line to a few words."""
+    return max(100, min(shutil.get_terminal_size((120, 20)).columns, 160))
+
+
+def _wrapped(head: str, text: str, colour: str) -> None:
+    """`head` then `text`, wrapped under it (at most 4 lines): a result is worth reading whole."""
+    width = _width() - len(_INDENT)
+    lines = textwrap.wrap(" ".join(str(text).split()), width - len(head)) or [""]
+    if len(lines) > 4:
+        lines = lines[:4]
+        lines[-1] = lines[-1][: width - len(head) - 1] + "…"
+    _print(f"{_INDENT}{_c(head, colour)}{lines[0]}")
+    for line in lines[1:]:
+        _print(f"{_INDENT}{' ' * len(head)}{line}")
 
 
 def _one_line(text: str, limit: int) -> str:
@@ -99,10 +114,10 @@ def result(ep: dict, **fields) -> None:
     if "agent_result" in fields:
         steps, secs = fields.get("agent_steps"), fields.get("agent_s")
         head = f"✦ agent done in {secs} s, {steps} step{'s' if steps != 1 else ''}: "
-        _print(f"{_INDENT}{_c(head, 'magenta')}{_one_line(fields['agent_result'], _width() - 14 - len(head))}")
+        _wrapped(head, fields["agent_result"], "magenta")
     elif "research_answer" in fields:
         head = f"⌕ research done in {fields.get('research_s')} s, {fields.get('research_sources')} sources: "
-        _print(f"{_INDENT}{_c(head, 'cyan')}{_one_line(fields['research_answer'], _width() - 14 - len(head))}")
+        _wrapped(head, fields["research_answer"], "cyan")
     elif "research_error" in fields:
         _print(f"{_INDENT}{_c('⌕ research ' + str(fields['research_error']), 'red')}")
 

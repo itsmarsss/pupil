@@ -23,6 +23,10 @@ _TOOLS = {
               "The user asked for several actions one after another. Split them into separate commands, in order, "
               "each understandable alone (\"open Safari and make a new tab\" -> [\"open Safari\", \"make a new "
               "tab\"]). Keep one action whole even if it mentions several things (\"search for salt and pepper\")."),
+    "search": ({"query": {"type": "string", "description": "only the words to search for"}},
+               "The user asked to search inside an app. Give only what to search for, without the instruction or the "
+               "app's name (\"search dog\" -> \"dog\", \"find photos of the beach in Photos\" -> \"beach\", \"look "
+               "for the invoice from March\" -> \"invoice March\")."),
     "research": ({"question": {"type": "string", "description": "the research question, complete on its own"},
                   "constraints": {"type": "string", "description": "budget, location, needs or preferences it gave"}},
                  "The user asked for web research by voice. Write the question so it makes sense without the screen or "
@@ -81,6 +85,11 @@ def extract(kind: str, command: str, context: str = "") -> dict | None:
         if block.type == "tool_use":
             return block.input
     return None
+
+
+def search_query(command: str) -> str | None:
+    found = extract("search", command)
+    return (found or {}).get("query") or None
 
 
 def research_question(command: str, context: str = "") -> dict | None:

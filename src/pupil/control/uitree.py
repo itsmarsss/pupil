@@ -50,6 +50,46 @@ def front_context() -> tuple[str, str]:
         return "", ""
 
 
+SEARCH_WALK = 600  # elements looked through for the window's search field
+
+
+def search_field():
+    """The front app's own search field (Photos, Finder, Mail, Settings, a toolbar's search box), or None: found by
+    what macOS says it is (a search field, or a text field with the search subrole), not by its label."""
+    try:
+        app_element, _ = _app()
+    except Exception:
+        return None
+    window = _attr(app_element, "AXFocusedWindow") or (_attr(app_element, "AXWindows") or [None])[0]
+    queue, seen = [window] if window is not None else [], 0
+    while queue and seen < SEARCH_WALK:
+        node = queue.pop(0)  # breadth first: toolbars come before deep content
+        seen += 1
+        role, subrole = _attr(node, "AXRole") or "", _attr(node, "AXSubrole") or ""
+        if role == "AXSearchField" or (role in ("AXTextField", "AXComboBox") and subrole == "AXSearchField"):
+            return node
+        queue.extend(_children(node))
+    return None
+
+
+def search_in_app(query: str) -> str | None:
+    """Type `query` into the front app's search field and run it. Returns what was used, or None if the app has
+    no search field (the caller tries its Find command instead)."""
+    field = search_field()
+    if field is None:
+        return None
+    AXUIElementSetAttributeValue(field, "AXFocused", True)
+    if AXUIElementSetAttributeValue(field, "AXValue", query) != 0:  # some fields only take typing
+        from . import actions
+
+        actions.press("command+a")
+        actions.type_text(query)
+    from . import actions
+
+    actions.press("return")
+    return _text(field, "AXDescription") or _text(field, "AXPlaceholderValue") or "the search field"
+
+
 # ---- menus ---------------------------------------------------------------------------
 
 def _children(element):

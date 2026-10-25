@@ -53,15 +53,24 @@ WANTS_ELEMENT = Noul(
 WANTS_APP = Noul(
     instructions="Does `command` ask to open, launch or switch to an application?",
     criteria=NoulCriteria(
-        true="e.g. \"open Notes\", \"launch Spotify\", \"switch to Finder\"",
+        true="e.g. \"open Notes\", \"launch Spotify\", \"switch to Finder\", \"go back to Photos\", \"back to "
+             "Discord\"",
         false="Opening something inside the current app: a window, tab, mode or page (\"open incognito\", \"open a "
               "new tab\", \"open settings\"), or a website",
     ),
 )
-WANTS_SHORTCUT = Noul(instructions="Does `command` ask for a standard editing, navigation, tab or window command, "
-                                   "or a plain key, such as copy, paste, undo, save, find, go back, go forward, "
-                                   "reload, new tab, close tab, zoom, quit, or a key it names or implies (an arrow key "
-                                   "to move something, \"with space\", \"press enter\", page down)?")
+WANTS_SHORTCUT = Noul(
+    instructions="Does `command` ask for a standard editing, navigation, tab or window command, or a plain key, such "
+                 "as copy, paste, undo, save, find, go back, go forward, reload, new tab, close tab, zoom, quit, or a "
+                 "key it names or implies (an arrow key to move something, \"with space\", \"press enter\", page "
+                 "down)?",
+    criteria=NoulCriteria(
+        true="The standard command itself: \"copy\", \"go back\", \"new tab\", \"press tab\", \"zoom in\"",
+        false="Going to a place, section, view or tab that the app names (\"go to all albums\", \"go into the "
+              "Clean Up tab\", \"open my library\"): that's clicking it, not a shortcut, even when its name has "
+              "\"tab\" or \"all\" in it; or switching to an app by name (\"go back to Photos\")",
+    ),
+)
 WANTS_SCROLL = Noul(instructions="Does `command` ask to scroll the page or view, up, down, left or right (not to "
                                 "move a selected item or game piece with the arrow keys)?")
 NEEDS_AGENT = Noul(
@@ -212,7 +221,8 @@ ABOUT_LAST = Noul(
     criteria=NoulCriteria(
         true="e.g. \"again\", \"do that again\", \"same here\", \"close the one I just clicked\", \"no, the left "
              "one\", \"the next one\", \"not that one\"",
-        false="A new command that doesn't depend on what was just done",
+        false="A new command that doesn't depend on what was just done, including going back (\"go back\", "
+              "\"go back to Photos\": navigating, not the item beside the last one)",
     ),
 )
 LAST_MODE = Choice(
@@ -238,7 +248,30 @@ ELEMENT_ACTION = Choice(
 REFERS_TO_ELEMENT = ("Is `command` about this element, or is this the control that does what the command asks "
                      "(e.g. the close button of the popup or panel it's `inside`, to close or dismiss it)? Words "
                      "like this, that, it and here mean what's at or nearest the pointer, unless the command names "
-                     "a different one.")
+                     "a different one. The pointer is only accurate to a few centimetres and drifts: right after "
+                     "the user opened or switched to an app (`previous_commands`), the command is about that app, "
+                     "so an element in a window behind it fits only if the command names it.")
+ENTERS_TEXT = Noul(
+    instructions="Does `command` give words to put into a field (something to search for, type or fill in), not "
+                 "just ask to click or select it?",
+    criteria=NoulCriteria(true="e.g. \"search dog\", \"type hello\", \"put my email in there\"",
+                          false="e.g. \"click the search bar\", \"select this field\", \"open it\""),
+)
+TEXT_FIELDS = {"AXTextField", "AXSearchField", "AXComboBox", "AXTextArea"}
+SEARCHES = Noul(instructions="Is `command` a search (for something to find), rather than text to write?")
+SEARCH_IN_APP = Noul(
+    instructions="Does `command` ask to search inside the app in front (`frontmost_app`): its own search, for "
+                 "photos, files, mail, messages, notes or settings, rather than the web? `previous_commands` show "
+                 "what the user just opened.",
+    criteria=NoulCriteria(
+        true="e.g. \"search dog\" in Photos, \"find the invoice\" in Finder or Mail, \"search for wifi\" in "
+             "System Settings, \"search dog\" right after \"open Photos\"",
+        false="A web search (\"search the web for\", \"google\", a browser in front with nothing else said), "
+              "pressing a search button that's on screen, opening something (\"open settings\"), or reading, "
+              "moving or acting on items (\"summarize what Jordan said\", \"drag the top results into the dog "
+              "album\", \"archive the newsletters\")",
+    ),
+)
 # One reading of the whole command, for when the yes/no questions above are split (each just short of YES): the
 # most likely of these decides instead of every unsure command going to the agent. is_command is its null case.
 INTENT = Choice(
@@ -247,10 +280,12 @@ INTENT = Choice(
         "click_on_screen": "click, open, select or close one particular thing on screen: a button, link, tab, item "
                            "or popup, named or looked at",
         "key_command": "a standard command that needs no particular control: copy, paste, undo, save, find, new "
-                       "tab, close tab, go back, reload, or a plain key",
+                       "tab, close tab, go back, reload, or a plain key (not going to a place the app names: "
+                       "that's click_on_screen)",
         "scroll": "scroll the page or list",
         "open_app": "open, launch or switch to an application",
         "website_or_search": "open a website or run one web search",
+        "search_in_app": "search inside the app in front (its own search box), e.g. photos, files, mail, settings",
         "type_words": "type words it gives into a text field",
         "quit_app": "quit an application",
         "several_steps": "several steps, writing something new, or reading the screen to answer or decide",
@@ -259,6 +294,7 @@ INTENT = Choice(
 # Each reading's own yes/no: the reading is taken only if that leans yes too (between NO and YES is fine)
 INTENT_NOUL = {"click_on_screen": ("wants_element", "points_at_gaze"), "key_command": ("wants_shortcut",),
                "scroll": ("wants_scroll",), "open_app": ("wants_app",), "website_or_search": ("wants_web",),
+               "search_in_app": ("search_in_app",),
                "type_words": ("wants_type",), "quit_app": ("wants_quit",), "several_steps": ("needs_agent",)}
 LEAN = 0.5  # the intent's top reading, and its own yes/no, at least this
 SURE_COMMAND = 0.9  # acting on that weaker reading needs a surer command: chatter that got past is_command scores
@@ -279,20 +315,23 @@ def _shortcut_question():
                   criteria={k: desc for k, (desc, _) in commands.SHORTCUTS.items()})
 
 
-def _element_info(el, gaze):
-    """What Jev sees of an element: what kind of control, its label, what it sits inside, how far from the gaze."""
+def _element_info(el, gaze, front=""):
+    """What Jev sees of an element: what kind of control, its label, what it sits inside, how far from the gaze, and
+    whether it's in the app in front or a window behind it (gaze drifts; `front` is the frontmost app)."""
     d = el.distance(*gaze) if gaze else None
     info = {"kind": el.kind or el.role.removeprefix("AX"), "label": el.label or "(no label)",
             "distance_from_pointer": "under the pointer" if d == 0 else
             (f"{round(d)} pt away" if d is not None else "unknown")}
     if el.parent:
         info["inside"] = el.parent
+    if el.app and front and el.app != front:
+        info["app"] = f"{el.app}: a window behind the app in front ({front})"
     return info
 
 
-def _element_questions(gaze, elements):
+def _element_questions(gaze, elements, front=""):
     """One yes/no per element, each carrying the element itself (not an index into a shared list)."""
-    return {f"el_{i}": Noul(instructions={"element": _element_info(el, gaze), "question": REFERS_TO_ELEMENT})
+    return {f"el_{i}": Noul(instructions={"element": _element_info(el, gaze, front), "question": REFERS_TO_ELEMENT})
             for i, el in enumerate(elements)}
 
 
@@ -304,7 +343,8 @@ CLARIFY_PROMPTS = {"what": "Which one? Look at it and say what to do.", "who": "
 @dataclass
 class Decision:
     route: str  # choose | click | close | double_click | right_click | scroll | open_app | shortcut | agent | ignore
-    #             | pick_up (carry on with the interrupted agent task)
+    #             | pick_up (carry on with the interrupted agent task) | app_search (the front app's own search)
+    #             | fill (click a text field, type the words, Return for a search)
     #             | maybe | clarify | compound | cancel | type | navigate | quit_app | reference | relative
     why: str  # the judgment(s) that decided it, for the status line and logs
     ms: float
@@ -390,6 +430,10 @@ def _decide(a, elements, gaze, apps, allow_clarify=True, allow_compound=True, co
         if mode == "neighbour":
             return "relative", f"next to the last one {p('about_last'):.2f}", {"args": {"direction": choices["neighbour"].choice}}
         return "reference", f"the last action {p('about_last'):.2f}", {"args": {"mode": {"close_it": "close_last"}.get(mode, mode)}}
+    # "search dog" in Photos (or right after "open Photos"): the app's own search box, typed into, wherever the
+    # gaze drifted; before the agent (instant, not seconds) and on-screen controls, so a search field under the gaze isn't just clicked
+    if p("search_in_app") >= YES and p("search_in_app") >= p("needs_agent") and p("enters_text") >= 0.5:
+        return "app_search", f"search in the app {p('search_in_app'):.2f}", {}
     if p("needs_agent") >= YES:
         return "agent", f"needs steps/writing {p('needs_agent'):.2f}", {}
     if p("needs_research") >= YES and config.APIFY_TOKEN:  # weighing up sources, not one search: the agent researches
@@ -460,6 +504,21 @@ def _decide(a, elements, gaze, apps, allow_clarify=True, allow_compound=True, co
     return "agent", "a command, but no single direct action matched", {}
 
 
+def _fill_in(route, why, extras, nouls):
+    """What a click or close on a control really means: "search dog" on a search box is click, type the words and
+    (for a search) Return; "cancel" on a dialog's Cancel button is pressing it. Anything else stays as it was."""
+    target = extras.get("target")
+    p = lambda k: nouls[k].noul if k in nouls else 0.0  # noqa: E731
+    if route == "close" and target is not None and target.role == "AXButton" and not target.is_close:
+        # "cancel" / "dismiss this" with the gaze on a dialog's Cancel or Not Now button: that button is the way to
+        # close it, so press it (rather than look for a close box, or Cmd+W the window behind)
+        return "click", f"{why}, the button that closes it", extras
+    if route == "click" and target is not None and target.role in TEXT_FIELDS and p("enters_text") >= YES:
+        return "fill", f"{why}, words to enter {p('enters_text'):.2f}", {**extras, "args": {
+            "submit": p("searches") >= 0.5}}
+    return route, why, extras
+
+
 def _intent_route(intent, p, choices, elements, gaze, apps, cloud):
     """The route for the intent's reading, or None if it can't be carried out directly (the agent takes it)."""
     element_p = sorted(((p(f"el_{i}"), el) for i, el in enumerate(elements)), key=lambda x: -x[0])
@@ -485,6 +544,8 @@ def _intent_route(intent, p, choices, elements, gaze, apps, cloud):
         return "open_app", app, {"app": app, "app_path": apps.get(app)}
     if intent == "website_or_search":
         return "navigate", "web", {}
+    if intent == "search_in_app":
+        return "app_search", "in the app", {}
     if intent == "type_words":
         return "type", "type", {}
     if intent == "quit_app":
@@ -541,7 +602,7 @@ class Gate:
             **({"last_action": last} if last else {}),
             "frontmost_app": app_name,
             "pointer": "The user is pointing at (looking at) a spot on screen; distances are measured from it.",
-            "elements_near_pointer": [_element_info(el, gaze) for el in elements],
+            "elements_near_pointer": [_element_info(el, gaze, app_name) for el in elements],
         }
 
     def decide(self, utterance, gaze, candidates, app_name, allow_clarify=True, allow_compound=True,
@@ -564,15 +625,17 @@ class Gate:
             **({"picks_up": PICKS_UP} if getattr(self, "interrupted_task", "") else {}),
             "scroll_direction": SCROLL_DIRECTION, "scroll_amount": SCROLL_AMOUNT, "element_action": ELEMENT_ACTION,
             "wants_cancel": WANTS_CANCEL, "wants_type": WANTS_TYPE, "wants_web": WANTS_WEB,
-            "wants_quit": WANTS_QUIT, "force_quit": FORCE_QUIT, "intent": INTENT,
+            "wants_quit": WANTS_QUIT, "force_quit": FORCE_QUIT, "intent": INTENT, "search_in_app": SEARCH_IN_APP,
+            "enters_text": ENTERS_TEXT, "searches": SEARCHES,
             "quit_which": Choice(instructions="Which application does `command` want to quit?", criteria=quit_options),
             **({"about_last": ABOUT_LAST, "last_mode": LAST_MODE, "neighbour": NEIGHBOUR,
                 "corrects_last": CORRECTS_LAST} if last else {}),
-            **_element_questions(gaze, elements),
+            **_element_questions(gaze, elements, app_name),
         }
         result, ms = self._ask("decide", self._state(utterance, app_name, gaze, elements, last), questions)
         flags = {"allow_clarify": allow_clarify, "allow_compound": allow_compound, "assume_command": assume_command}
         route, why, extras = _decide(result, elements, gaze, apps, command=utterance, cloud=cloud, **flags)
+        route, why, extras = _fill_in(route, why, extras, result.nouls)
         answers = {"route": route, "why": why, "ms": round(ms), "flags": flags,
                    "nouls": {k: round(v.noul, 4) for k, v in result.nouls.items()},
                    "choices": {k: v.choice for k, v in result.choices.items()},
