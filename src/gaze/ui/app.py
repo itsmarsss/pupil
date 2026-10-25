@@ -352,6 +352,9 @@ class GazeApp:
             items.append(Choice("Microphone", lambda: self._mic_options(voice)))
             items.append(Toggle("Voice isolation (default mic)", lambda: voice.isolation,
                                 lambda: voice.set_isolation(not voice.isolation)))
+        speaker = self.controller.speaker if self.controller is not None else None
+        if speaker is not None and speaker.available:
+            items.append(Choice("Agent voice", lambda: self._voice_options(speaker)))
         items += [
             SEPARATOR,
             Header("Learning & data"),
@@ -452,6 +455,13 @@ class GazeApp:
             auto += f" (now {voice.device})"
         return [(auto, follow, lambda: voice.use(None))] + [
             (name, not follow and name == voice.device, lambda name=name: voice.use(name)) for name in names]
+
+    def _voice_options(self, speaker) -> list:
+        voices = speaker.menu_voices()
+        if not voices:
+            return [("Loading voices…", False, lambda: None)]
+        return [(f"{v['name']} · {v['tagline']}" if v["tagline"] else v["name"], v["id"] == speaker.voice,
+                 lambda v=v: speaker.set_voice(v["id"])) for v in voices]
 
     def _toggle_voice(self) -> None:
         if self.controller is None:

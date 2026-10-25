@@ -13,9 +13,25 @@ import time
 from . import config
 
 TTS_URL = "https://api.cartesia.ai/tts/bytes"
+VOICES_URL = "https://api.cartesia.ai/voices?limit=100&language=en"
+MENU_VOICES = 24  # shown in the ◉ menu (Cartesia lists its featured voices first)
+VOICE_FILE = "voice.json"  # the chosen voice, in the app's support folder
 TTS_VERSION = "2026-08-14"
 RATE = 24000
 CHUNK_BYTES = 4800  # 100 ms of 16-bit mono at RATE
+
+
+def _headers():
+    return {"Authorization": f"Bearer {config.CARTESIA_API_KEY}", "X-API-Key": config.CARTESIA_API_KEY,
+            "Cartesia-Version": TTS_VERSION, "Content-Type": "application/json"}
+
+
+def _tls():
+    import ssl
+
+    import certifi
+
+    return ssl.create_default_context(cafile=certifi.where())
 
 
 class Speaker:
@@ -24,6 +40,56 @@ class Speaker:
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
         self.text = ""  # what's being said
+        self.voice = self._saved_voice() or config.TTS_VOICE  # Cartesia voice id
+        self.voices: list[dict] = []  # Cartesia's voices ({"id", "name", "tagline"}), fetched in the background
+        if self.available:
+            threading.Thread(target=self._fetch_voices, name="voices", daemon=True).start()
+
+    # ---- voices ----------------------------------------------------------------------------
+
+    @staticmethod
+    def _voice_path():
+        from ..core.paths import APP_SUPPORT
+
+        return APP_SUPPORT / VOICE_FILE
+
+    def _saved_voice(self):
+        try:
+            return json.loads(self._voice_path().read_text()).get("id")
+        except (OSError, ValueError):
+            return None
+
+    def _fetch_voices(self):
+        import urllib.request
+
+        try:
+            request = urllib.request.Request(VOICES_URL, headers=_headers())
+            data = json.loads(urllib.request.urlopen(request, timeout=10, context=_tls()).read())
+            self.voices = [{"id": v["id"], "name": v["name"], "tagline": v.get("tagline") or ""}
+                           for v in data.get("data", []) if v.get("status", "active") == "active"]
+        except Exception as e:
+            print(f"[speech] couldn't list voices: {e}", flush=True)
+
+    @property
+    def voice_name(self) -> str:
+        return next((v["name"] for v in self.voices if v["id"] == self.voice), "")
+
+    def menu_voices(self) -> list[dict]:
+        """The voices to offer: the first MENU_VOICES, plus the current one if it isn't among them."""
+        shown = self.voices[:MENU_VOICES]
+        current = next((v for v in self.voices if v["id"] == self.voice), None)
+        return shown + ([current] if current is not None and current not in shown else [])
+
+    def set_voice(self, voice_id: str, preview: bool = True) -> None:
+        """Use `voice_id` from now on (remembered across restarts), and say hello in it."""
+        self.voice = voice_id
+        try:
+            self._voice_path().parent.mkdir(parents=True, exist_ok=True)
+            self._voice_path().write_text(json.dumps({"id": voice_id}))
+        except OSError:
+            pass
+        if preview and self.voice_name:
+            self.say(f"Hi, I'm {self.voice_name}.")
 
     @property
     def available(self) -> bool:
@@ -52,20 +118,15 @@ class Speaker:
     def _run(self, text: str, stop: threading.Event) -> None:
         started = False
         try:
-            import ssl
             import urllib.request
 
-            import certifi
             import sounddevice as sd
 
-            body = {"model_id": config.TTS_MODEL, "transcript": text, "voice": {"mode": "id", "id": config.TTS_VOICE},
+            body = {"model_id": config.TTS_MODEL, "transcript": text, "voice": {"mode": "id", "id": self.voice},
                     "language": "en", "output_format": {"container": "raw", "encoding": "pcm_s16le", "sample_rate": RATE}}
-            request = urllib.request.Request(TTS_URL, data=json.dumps(body).encode(), method="POST", headers={
-                "Authorization": f"Bearer {config.CARTESIA_API_KEY}", "X-API-Key": config.CARTESIA_API_KEY,
-                "Cartesia-Version": TTS_VERSION, "Content-Type": "application/json"})
+            request = urllib.request.Request(TTS_URL, data=json.dumps(body).encode(), method="POST", headers=_headers())
             t0 = time.perf_counter()
-            tls = ssl.create_default_context(cafile=certifi.where())
-            with urllib.request.urlopen(request, timeout=10, context=tls) as response, \
+            with urllib.request.urlopen(request, timeout=10, context=_tls()) as response, \
                     sd.RawOutputStream(samplerate=RATE, channels=1, dtype="int16") as out:
                 carry = b""
                 while not stop.is_set():

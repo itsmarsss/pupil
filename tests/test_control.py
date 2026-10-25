@@ -536,3 +536,15 @@ def test_settings_match_options_by_a_unique_part():
     assert settings.change("mic", "automatic")[1] is False  # a setting by part of its name
     assert settings.change("volume", "11")[1] is True
     assert "microphone = 'automatic'" in settings.listing()
+
+
+def test_chosen_voice_is_remembered(monkeypatch, tmp_path):
+    from gaze.control import config, speech
+
+    monkeypatch.setattr(config, "SPEAK", False)  # no network, no audio
+    monkeypatch.setattr(speech.Speaker, "_voice_path", staticmethod(lambda: tmp_path / "voice.json"))
+    s = speech.Speaker()
+    assert s.voice == config.TTS_VOICE
+    s.voices = [{"id": "v1", "name": "Daniel", "tagline": "Modern Assistant"}]
+    s.set_voice("v1", preview=False)
+    assert speech.Speaker().voice == "v1" and s.voice_name == "Daniel"  # a new session starts with it

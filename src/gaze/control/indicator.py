@@ -66,12 +66,12 @@ TEXT = NSColor.colorWithCalibratedWhite_alpha_(0.95, 1.0)
 FONT = NSFont.systemFontOfSize_weight_(12, 0.3)
 CAPTION = NSColor.colorWithCalibratedWhite_alpha_(1.0, 1.0)
 CAPTION_FONT = NSFont.systemFontOfSize_weight_(13, 0.2)
-CAPTION_W = 340  # caption line width, points; longer speech scrolls
+CAPTION_W = 200  # caption line width, points; longer speech scrolls
 CAPTION_H = 18
 CAPTION_GAP = 4
 CAPTION_SPEED = 45  # points per second, once a long caption starts scrolling
 CAPTION_HOLD_S = 0.8  # read the start before it scrolls
-CAPTION_FADE_S = 1.2
+CAPTION_FADE_S = 0.3  # once it's said, it goes
 _SHADOW = NSShadow.alloc().init()
 _SHADOW.setShadowBlurRadius_(3)
 _SHADOW.setShadowOffset_((0, -1))
@@ -149,6 +149,10 @@ class Indicator:
     def say(self, text: str) -> None:
         """Show what's being said, under the pill."""
         self._caption, self._caption_start, self._caption_end = " ".join(text.split()), time.time(), None
+
+    def clear(self) -> None:
+        """Remove the caption now: it's no longer relevant (the user is talking, or something new started)."""
+        self._caption, self._caption_end = None, None
 
     def said(self) -> None:
         """Speech ended (or was cut off): fade the caption."""

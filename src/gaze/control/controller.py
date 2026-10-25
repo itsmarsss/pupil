@@ -141,6 +141,11 @@ class VoiceController:
                               lambda v: voice.use(None if v == "automatic" else v), mics)
             settings.register("voice_isolation", "Apple noise suppression on the default mic", *onoff(
                 lambda: voice.isolation, voice.set_isolation))
+        speaker = self.speaker
+        settings.register("agent_voice", "the voice replies are spoken in (Cartesia)",
+                          lambda: speaker.voice_name or speaker.voice,
+                          lambda name: speaker.set_voice(next(v["id"] for v in speaker.voices if v["name"] == name)),
+                          lambda: [v["name"] for v in speaker.voices])
         settings.register("speak_replies", "read the agent's replies aloud", *onoff(
             lambda: config.SPEAK, lambda on: setattr(config, "SPEAK", on)))
         settings.register("format_dictation", "clean up dictated text (symbols, punctuation)", *onoff(
@@ -234,6 +239,8 @@ class VoiceController:
                 self.hud.heard = f"{payload}…" if payload else ""
             elif kind == "mic":
                 self.hud.mic = payload
+                if payload == "listening":
+                    self.indicator.clear()  # you're talking: what it last said is stale
             elif kind == "mic_device":
                 self.hud.mic_device = payload
             elif kind == "status":
@@ -245,6 +252,7 @@ class VoiceController:
         h.gaze = self.gaze.point()
         self.indicator.update(self._indicator_status(), h.gaze)
         if self.speaker.speaking and self.lips is not None and self.lips.would_open():
+            self.indicator.clear()
             self.speaker.stop()  # barge-in: you started talking (lips, not sound: the speaker would trigger that)
         if self.lips:
             is_open = self.lips.would_open()
@@ -274,6 +282,7 @@ class VoiceController:
             time.sleep(0.15)
 
     def _on_speech(self, text, t0, t1, clip=None):
+        self.indicator.clear()
         cmd = router.route(text)
         if cmd is None:
             return
