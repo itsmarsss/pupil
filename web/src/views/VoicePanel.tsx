@@ -7,10 +7,11 @@ const ROLE: Record<string, string> = {
 
 /** One model row: its name, and either "calling…" (live) or how long its last call took and how long ago. */
 function ModelRow({ m }: { m: ModelCall }) {
-  const ago = m.t ? Math.max(0, Math.round(Date.now() / 1000 - m.t)) : null;
+  const secs = m.t ? Math.max(0, Math.round(Date.now() / 1000 - m.t)) : null;
+  const ago = secs == null ? "" : `${secs < 60 ? `${secs}s` : `${Math.round(secs / 60)}m`} ago`;
   const last = m.active ? `${m.what || "calling"}…`
-    : m.ms != null ? `${m.ms} ms${ago != null ? ` · ${ago < 60 ? `${ago}s` : `${Math.round(ago / 60)}m`} ago` : ""}`
-    : "not called yet";
+    : m.ms != null ? `${m.ms} ms${ago ? ` · ${ago}` : ""}`
+    : ago || "not called yet"; // a stream (hearing) that has ended has no single duration
   return (
     <>
       <dt title={m.does}>{ROLE[m.role] ?? m.role}</dt>
