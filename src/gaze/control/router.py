@@ -35,6 +35,8 @@ _PATTERNS = [
     (r"^(?:re)?calibrate$", lambda m: Command("calibrate")),
     (r"^re[ -]?cent(?:re|er)(?: (?:gaze|tracking))?$", lambda m: Command("recentre")),
     (r"^(?:check|test) (?:the )?(?:accuracy|tracking|gaze)$", lambda m: Command("check")),
+    # a website or a search: typed into the browser's address bar (controller._navigate)
+    (r"^(?:search|google|look up)(?: the web| google)?(?: for)? (.+)$", lambda m: Command("navigate", {"query": m[1]})),
     # "no, the left one" / "the next one": the last target's neighbour (controller._relative)
     (r"^(?:no,? |not that,? )?(?:the )?(?:one )?(?:to the |on the )?(left|right)(?: one)?$|^(?:no,? )?(?:the )?(?:one )?(above|below)(?: it| that)?$",
      lambda m: Command("relative", {"direction": {"above": "up", "below": "down"}.get(m[1] or m[2], m[1] or m[2])})),
@@ -109,6 +111,12 @@ def route(utterance: str, wake: bool = True) -> Command | None:
             cmd = build(m)
             cmd.text = text
             return cmd
+
+    # A website ("go to github.com"): matched on the original text, since normalising drops the dots.
+    m = re.match(r"^(?:go to|open|visit|navigate to|load|pull up) (?:the )?(?:website |site |page )?"
+                 r"((?:https?://)?[\w-]+(?:\.[\w-]+)+(?:/\S*)?)[.!?]?$", text.strip(), flags=re.IGNORECASE)
+    if m:
+        return Command("navigate", {"url": m[1]}, text)
 
     # "type hello world" -> click the snapped field, then type. Keep the original casing/punctuation.
     m = re.match(r"^\s*type\s+(.+)$", text, flags=re.IGNORECASE)

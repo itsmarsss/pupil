@@ -480,3 +480,26 @@ def test_gaze_indicator_shows_the_most_important_state(monkeypatch):
     assert c._indicator_status().label == "✓ clicked"
     c.enabled = False
     assert c._indicator_status() is None
+
+
+def test_websites_and_searches_go_through_the_address_bar(monkeypatch):
+    from gaze.control import controller as ctl, router
+
+    assert router.route("Open incognito and go to cornhub.com.").kind == "unknown"  # compound: split first
+    assert router.route("go to cornhub.com").args == {"url": "cornhub.com"}
+    assert router.route("search for best eye trackers").args == {"query": "best eye trackers"}
+    assert router.route("open notes").kind == "unknown"  # an app, not a site
+
+    typed, pressed, opened = [], [], []
+    c = ctl.VoiceController.__new__(ctl.VoiceController)
+    c._ep, c._status, c._flash = {}, lambda text: None, None
+    monkeypatch.setattr(ctl.actions, "type_text", typed.append)
+    monkeypatch.setattr(ctl.actions, "press", lambda combo: pressed.append(combo))
+    monkeypatch.setattr(ctl.time, "sleep", lambda s: None)
+    monkeypatch.setattr(ctl.subprocess, "Popen", lambda cmd: opened.append(cmd))
+    monkeypatch.setattr(ctl.uitree, "press_menu_command", lambda phrases: "Open Location…")  # a browser in front
+    c._navigate(url="cornhub.com")
+    assert typed == ["cornhub.com"] and pressed == ["return"] and not opened  # in the window you're in
+    monkeypatch.setattr(ctl.uitree, "press_menu_command", lambda phrases: None)  # not a browser
+    c._navigate(query="eye trackers")
+    assert opened == [["open", "https://www.google.com/search?q=eye+trackers"]]

@@ -11,6 +11,8 @@ from __future__ import annotations
 import contextlib
 import queue
 import re
+import subprocess
+import urllib.parse
 import threading
 import time
 
@@ -37,6 +39,7 @@ CLARIFY_WINDOW_S = 10.0  # how long an answer to "Which one?" is taken as the an
 MAX_CLAUSES = 3  # longer chains go to the agent whole
 SETTLE_S = {"open_app": 1.5}  # wait after a compound step before deciding the next one; default below
 DEFAULT_SETTLE_S = 0.5
+RECENT_CONTEXT_S = 60  # commands this recent are context for the next one
 FLASH_S = 0.9  # how long "✓ clicked" stays on the gaze indicator
 CHOOSE_WINDOW_S = 12.0  # how long "which one?" waits for an answer
 RELATIVE_WINDOW_S = 20.0  # "no, the left one" refers to the last target this recently
@@ -86,6 +89,7 @@ class VoiceController:
         self.clarifying = None  # (request, missing, deadline, episode): the gate asked a question
         self._candidates: list = []  # elements near the gaze for the command being handled
         self.dictating = False  # dictation mode: every utterance is typed at the cursor
+        self._recent: list = []  # (time, text) of recent commands, for Jev's context
         self.choosing = None  # "which one?" asked: options, action, deadline
         self._cloud = None  # gaze heat for the command being handled
         self._last_target = None  # what the last element action hit, for "no, the left one"
@@ -408,6 +412,9 @@ class VoiceController:
         if cmd.kind == "shortcut":
             self._shortcut(cmd.args["shortcut"])
             return
+        if cmd.kind == "navigate":
+            self._navigate(**cmd.args)
+            return
         # Exact phrase ("click this"): the element with the most gaze heat (x fit with the words, when Jev is
         # there to judge it); if two are too close to call, ask.
         if cmd.kind in ("click", "type") and cloud and len(candidates) > 1:
@@ -452,6 +459,7 @@ class VoiceController:
 
     def _route_with_gate(self, request, gaze, target, candidates, allow_clarify=True):
         ep = self._ep
+        self._remember_command(request)
         app = macos.frontmost_app()
         ep["app"] = app
         if not self.gate.available:
@@ -527,6 +535,33 @@ class VoiceController:
             self._do(kind, args, gaze, d.target)
             return True
         return False
+
+    def _navigate(self, url=None, query=None):
+        """A website or a web search. In a browser: its own "Open Location" (the address bar, in any browser),
+        type, Return, so it lands in the window you're in (an incognito one included). Elsewhere: the default
+        browser."""
+        text = url or query
+        via = uitree.press_menu_command(commands.MENU_PHRASES["address_bar"])
+        if via:
+            time.sleep(0.15)  # let the address bar take focus
+            actions.type_text(text)
+            actions.press("return")
+            self._acted("type", {"text": text, "via": via})
+            self._status(f"Going to {text}")
+            return
+        if url:
+            target = url if "://" in url else f"https://{url}"
+        else:
+            target = "https://www.google.com/search?q=" + urllib.parse.quote_plus(query)
+        subprocess.Popen(["open", target])
+        self._acted("open_app", {"url": target})
+        self._status(f"Opened {target}")
+
+    def _remember_command(self, text):
+        """Recent commands, as context for Jev's next decision (follow-ups, clarifications)."""
+        now = time.time()
+        self._recent = [(t, s) for t, s in self._recent if now - t < RECENT_CONTEXT_S][-3:] + [(now, text)]
+        self.gate.recent = [s for _, s in self._recent[:-1]]  # before this one
 
     def _shortcut(self, shortcut, times=1):
         """A standard action, the way the frontmost app does it: its own menu command if it has one (shortcuts
@@ -656,6 +691,11 @@ class VoiceController:
             step = {"clause": clause}
             steps.append(step)
             sub = router.route(clause)
+            if sub is not None and sub.kind == "navigate":
+                step["route"] = "navigate"
+                self._navigate(**sub.args)
+                done.append(clause)
+                continue
             if sub is not None and sub.kind == "shortcut":
                 step["route"] = "shortcut"
                 self._shortcut(sub.args["shortcut"])

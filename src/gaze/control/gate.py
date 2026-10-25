@@ -31,7 +31,8 @@ MAX_CANDIDATES = 25  # nearest elements, one question each
 # --- Question wording (everything Jev reads lives here) ---
 
 IS_COMMAND = Noul(
-    instructions="Is `command` an instruction for the computer?",
+    instructions="Is `command` an instruction for the computer? `previous_commands` (if any) are what the user "
+                 "asked just before: a follow-up that continues or corrects them counts.",
     criteria=NoulCriteria(
         true="It asks the computer to do something, even in a word or two (\"search\", \"copy that\", \"next\") or "
              "phrased as a question or a wish (\"can you open my notes?\", \"I want to watch this\")",
@@ -47,7 +48,14 @@ WANTS_ELEMENT = Noul(
               "scrolling or switching apps",
     ),
 )
-WANTS_APP = Noul(instructions="Does `command` ask to open, launch or switch to an application?")
+WANTS_APP = Noul(
+    instructions="Does `command` ask to open, launch or switch to an application?",
+    criteria=NoulCriteria(
+        true="e.g. \"open Notes\", \"launch Spotify\", \"switch to Finder\"",
+        false="Opening something inside the current app: a window, tab, mode or page (\"open incognito\", \"open a "
+              "new tab\", \"open settings\"), or a website",
+    ),
+)
 WANTS_SHORTCUT = Noul(instructions="Does `command` ask for a standard editing, navigation, tab or window command, "
                                    "or a plain key, such as copy, paste, undo, save, find, go back, go forward, "
                                    "reload, new tab, close tab, zoom, quit, or a key it names or implies (an arrow key "
@@ -246,6 +254,7 @@ def _decide(a, elements, gaze, apps, allow_clarify=True, allow_compound=True, co
 
 class Gate:
     def __init__(self):
+        self.recent: list[str] = []  # the user's last few commands (the controller keeps it): for follow-ups
         self.error = None
         self._client = None
         if TypeSafeClient is None:
@@ -274,10 +283,10 @@ class Gate:
         _log({"tier": "gate", "kind": kind, "ms": round(ms), "request_id": getattr(result, "request_id", None)})
         return result, ms
 
-    @staticmethod
-    def _state(utterance, app_name, gaze, elements):
+    def _state(self, utterance, app_name, gaze, elements):
         return {
             "command": utterance,
+            **({"previous_commands": self.recent[-3:]} if self.recent else {}),
             "frontmost_app": app_name,
             "pointer": "The user is pointing at (looking at) a spot on screen; distances are measured from it.",
             "elements_near_pointer": [_element_info(el, gaze) for el in elements],
