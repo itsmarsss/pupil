@@ -113,6 +113,12 @@ class LipGate:
             faces = sum(1 for t in self._faces if a <= t <= b)
         return moving < max(MIN_MOVING_FRAMES, MIN_MOVING_SHARE * faces)
 
+    def lips_recent(self, seconds, now=None):
+        """Lips seen moving (while facing the screen) within `seconds` (or no tracker: fail open)."""
+        now = time.time() if now is None else now
+        with self._lock:
+            return now - self._last_msg > TRACKER_STALE_S or now - self._last_move < seconds
+
     def face_recent(self, now=None):
         """A face seen within LOOK_HOLD_S (or no tracker: fail open). Keeps a turn going only while you're there."""
         now = time.time() if now is None else now

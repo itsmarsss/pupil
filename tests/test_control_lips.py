@@ -91,3 +91,14 @@ def test_a_flicker_of_movement_during_someone_elses_speech_isnt_you(monkeypatch)
     t2 = feed(g2, 0, 6, lambda t: talking(t) if 2 < t < 4 else 0.02)  # talking through most of it
     monkeypatch.setattr(lips.time, "time", lambda: t2)
     assert not g2.someone_else(1.5, 4.5)
+
+
+def test_lips_recent_for_cutting_a_turn_short(monkeypatch):
+    import gaze.control.lips as lips
+
+    g = LipGate()
+    t = feed(g, 0, 2, talking)
+    t = feed(g, t, t + 3, lambda t: 0.02)  # then still for 3 s (a TV keeps talking)
+    monkeypatch.setattr(lips.time, "time", lambda: t)
+    assert g.face_recent() and not g.lips_recent(2.0)  # face there, lips still: stop streaming
+    assert g.lips_recent(4.0)

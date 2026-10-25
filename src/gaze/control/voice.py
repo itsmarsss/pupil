@@ -309,6 +309,7 @@ CARTESIA_VERSION = "2026-03-01"
 SEND_S = 0.1  # Cartesia recommends ~100 ms audio chunks
 SEND_SAMPLES = int(audio.RATE * SEND_S)
 SPEECH_LEAD_S = 0.3  # turn.start arrives a little after speech begins
+TURN_LIPS_STILL_S = 2.0  # mid-turn, lips still this long: stop streaming (silence ends the turn)
 KEEPALIVE_S = 15  # gate closed = nothing sent; Cartesia drops idle connections ("websocket_idle_timeout", seen
 # well within 60 s): 0.1 s of silence this often
 SILENCE = bytes(SEND_SAMPLES * 2)
@@ -422,8 +423,11 @@ class CartesiaVoice(Voice):
                     block, pending = _pcm16(pending[:SEND_SAMPLES]), pending[SEND_SAMPLES:]
                     t_block = pending_end - len(pending) / audio.RATE
                     try:
-                        # a turn in progress keeps going through pauses, but not once your face is gone
-                        if self.gate is None or self.gate.is_open() or (in_turn.is_set() and self.gate.face_recent()):
+                        # a turn in progress keeps going through pauses, but not once your face is gone or your lips
+                        # have been still for TURN_LIPS_STILL_S: then it's someone else (a TV) keeping it open, and
+                        # every second sent is billed
+                        if self.gate is None or self.gate.is_open() or (
+                                in_turn.is_set() and self.gate.face_recent() and self.gate.lips_recent(TURN_LIPS_STILL_S)):
                             if not sending:
                                 sending = True
                                 self._opened_at = (preroll[0][0] if preroll else t_block) - SEND_S
@@ -432,7 +436,7 @@ class CartesiaVoice(Voice):
                                 preroll.clear()
                             ws.send(block)
                             last_sent = time.time()
-                        elif in_turn.is_set():  # face gone mid-turn: silence, so Cartesia ends the turn
+                        elif in_turn.is_set():  # face gone or lips still mid-turn: silence, so Cartesia ends the turn
                             ws.send(SILENCE)
                             last_sent = time.time()
                         else:
