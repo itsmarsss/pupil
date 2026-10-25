@@ -20,6 +20,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from . import actions, apps, commands, config, console, dictation, extract, heat, macos, models, router, settings, snapping, uitree
+from . import agent as agent_mod
 from .agent import Agent
 from .episodes import EpisodeLog, element_dict
 from .gate import CLARIFY_PROMPTS, MAX_CANDIDATES, NO, YES, Gate
@@ -606,10 +607,7 @@ class VoiceController:
         self.agent.start(request, gaze, target, candidates, app, tier=tier, budget=budget,
                          context=self._conversation_context(request), research=research,
                          frame=getattr(self, "_frame", None),
-                         on_done=lambda text, steps, s: (
-                             self.episodes.outcome(ep, agent_result=text, agent_steps=steps, agent_s=round(s, 1),
-                                                   apify=list(self.agent.provider_metadata)),
-                             self._note_activity(text or "Agent finished", ep, agent=True)))
+                         on_done=self._agent_done(ep))
 
     def _route_with_gate(self, request, gaze, target, candidates, allow_clarify=True, assume_command=False):
         ep = self._ep
@@ -626,6 +624,9 @@ class VoiceController:
             with self._working("thinking", "thinking"):
                 research = getattr(self, "research", None)
                 self.gate.research_jobs = research.describe() if research is not None and research.jobs else ""
+                task = getattr(self.agent, "interrupted", None)
+                self.gate.interrupted_task = (task.describe() if task is not None
+                                              and time.time() - task.t < agent_mod.INTERRUPTED_KEEP_S else "")
                 context = {"last": self._last_action(), "running": [n for n, _ in macos.running_apps()]}
                 d = self.gate.decide(request, gaze, candidates, app, allow_clarify=allow_clarify, cloud=self._cloud,
                                      assume_command=assume_command, **context)
@@ -668,6 +669,12 @@ class VoiceController:
             self._status(prompt)
             self._say(prompt)
             return
+        if d.route == "pick_up":  # "keep going": the interrupted task, with its whole history
+            ep.update(acted=True, agent_request=self.agent.interrupted.request if self.agent.interrupted else request)
+            if self.agent.pick_up(request, on_done=self._agent_done(ep)):
+                self._status("Picking up where the agent left off...")
+                return
+            d.route = "agent"  # nothing to pick up after all: a new task
         if d.route == "agent" and d.research and self.research.available():  # in the background, the notch shows it
             self._start_research(request)
             return
@@ -814,6 +821,19 @@ class VoiceController:
         subprocess.Popen(["open", target])
         self._acted("open_app", {"url": target})
         self._status(f"Opened {target}")
+
+    def _agent_done(self, ep):
+        """What happens when an agent task ends (its thread): log it, show it, and if it was stopped before it
+        finished, say so in the conversation so "keep going" (or the agent next time) knows."""
+        def done(text, steps, seconds):
+            self.episodes.outcome(ep, agent_result=text, agent_steps=steps, agent_s=round(seconds, 1),
+                                  apify=list(self.agent.provider_metadata))
+            self._note_activity(text or "Agent finished", ep, agent=True)
+            task = getattr(self.agent, "interrupted", None)
+            if task is not None and time.time() - task.t < 5:
+                self._converse("done", f"the agent stopped before finishing {task.describe()}; "
+                                       "\"keep going\" picks it up")
+        return done
 
     def _start_research(self, request):
         """Research `request` in the background (research.py): you carry on, the notch shows how it's going."""

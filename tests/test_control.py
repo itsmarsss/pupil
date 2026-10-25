@@ -778,3 +778,42 @@ def test_asking_about_research_never_starts_new_research(monkeypatch):
     # "compare this with three alternatives" with research around: the new question wins
     route, why, _ = _decide(_answers(about_research=0.81, needs_research=0.95), [], None, {})
     assert route == "agent" and why.startswith("needs web research")
+
+
+def test_an_interrupted_task_is_picked_up_with_its_history():
+    from types import SimpleNamespace as NS
+
+    from pupil.control import agent as ag
+
+    a = ag.Agent.__new__(ag.Agent)
+    a._thread, a._paused, a.interrupted = None, None, None
+    spawned = []
+    a._spawn = lambda messages, request, calls: spawned.append((messages, request))
+    assert a.pick_up("keep going") is False  # nothing to pick up
+    plan = NS(type="tool_use", id="t1", name="open_app", input={"name": "Maps"})
+    history = [{"role": "user", "content": [{"type": "text", "text": "what's my postal code"}]},
+               {"role": "assistant", "content": [plan]}]  # stopped between deciding and doing
+    a.interrupted = ag.Interrupted("what's my postal code", history, ["open the app Maps"], 2, ag.time.time(), "Stopped.")
+    assert "postal code" in a.interrupted.describe() and "open the app Maps" in a.interrupted.describe()
+    assert a.pick_up("keep going") and a.interrupted is None
+    messages, request = spawned[0]
+    assert request == "what's my postal code"
+    last = messages[-1]["content"]
+    assert last[0]["type"] == "tool_result" and last[0]["tool_use_id"] == "t1" and last[0]["is_error"]
+    assert "keep going" in last[-1]["text"] and "check the screen first" in last[-1]["text"]
+    a.interrupted = ag.Interrupted("x", history, [], 1, ag.time.time() - ag.INTERRUPTED_KEEP_S - 1, "Stopped.")
+    assert a.pick_up("keep going") is False  # too long ago
+
+
+def test_keep_going_routes_to_the_interrupted_task_and_location_asks_first():
+    from types import SimpleNamespace as NS
+
+    from pupil.control import agent as ag
+    from pupil.control.gate import _decide
+
+    assert _decide(_answers(is_command=0.4, picks_up=0.95), [], None, {})[0] == "pick_up"
+    assert _decide(_answers(picks_up=0.2, needs_agent=0.9), [], None, {})[0] == "agent"
+    a = ag.Agent.__new__(ag.Agent)
+    a.gate = NS(available=False)
+    call = NS(type="tool_use", id="l1", name="location", input={})
+    assert a._risk_check("what's my postal code", [call]) == "look up where you are (your location)"

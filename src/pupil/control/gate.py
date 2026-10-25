@@ -34,8 +34,10 @@ IS_COMMAND = Noul(
     instructions="Is `command` an instruction for the computer? `previous_commands` (if any) are what the user "
                  "asked just before: a follow-up that continues or corrects them counts.",
     criteria=NoulCriteria(
-        true="It asks the computer to do something, even in a word or two (\"search\", \"copy that\", \"next\") or "
-             "phrased as a question or a wish (\"can you open my notes?\", \"I want to watch this\")",
+        true="It asks the computer to do something, even in a word or two (\"search\", \"copy that\", \"next\"), "
+             "phrased as a question or a wish (\"can you open my notes?\", \"I want to watch this\"), or asks it a "
+             "question to answer about the user, their Mac or the world (\"what's my postal code?\", \"how far is "
+             "the airport from here?\", \"what's on my calendar tomorrow?\")",
         false="Talking to someone else, thinking aloud, filler, or words that don't make sense as an instruction",
     ),
 )
@@ -66,7 +68,9 @@ NEEDS_AGENT = Noul(
     instructions="Does `command` need writing new text, reading or summarizing the screen, searching for "
                  "something, or steps that depend on what appears on screen?",
     criteria=NoulCriteria(
-        true="e.g. \"summarize this page\", \"reply saying I'm running late\", \"send this to Sam\", "
+        true="e.g. \"summarize this page\", \"reply saying I'm running late\", \"send this to Sam\", answering a "
+             "question with information that isn't on screen (\"what's my postal code?\", \"how far is the airport "
+             "from here?\", \"when is my next meeting?\"), "
              "\"find a cheap flight to Boston\", or acting on several things or with a condition: \"close these "
              "tabs but keep one\", \"delete all the empty ones\", or anything that takes several different steps, like "
              "renaming or moving a file or setting a field to a value (pressing one key a few times is one step)",
@@ -135,6 +139,14 @@ NEEDS_RESEARCH = Noul(
         false="Working with what's on screen or in an app (\"summarize this page\", \"reply to her\", \"open my "
               "notes\"), opening a website or one search, or asking about research already going or done "
               "(`background_research`): how it's going, what it found, or what to do with it",
+    ),
+)
+PICKS_UP = Noul(
+    instructions="Does `command` ask to carry on with `interrupted_task`, the task that was stopped before it "
+                 "finished (keep going, continue, finish that, where were we, try that again)?",
+    criteria=NoulCriteria(
+        true="e.g. \"keep going\", \"continue\", \"finish it\", \"where were we?\", \"carry on with the postal code\"",
+        false="A new request, or talk about something else",
     ),
 )
 ABOUT_RESEARCH = Noul(
@@ -292,6 +304,7 @@ CLARIFY_PROMPTS = {"what": "Which one? Look at it and say what to do.", "who": "
 @dataclass
 class Decision:
     route: str  # choose | click | close | double_click | right_click | scroll | open_app | shortcut | agent | ignore
+    #             | pick_up (carry on with the interrupted agent task)
     #             | maybe | clarify | compound | cancel | type | navigate | quit_app | reference | relative
     why: str  # the judgment(s) that decided it, for the status line and logs
     ms: float
@@ -354,6 +367,9 @@ def _decide(a, elements, gaze, apps, allow_clarify=True, allow_compound=True, co
     p = lambda k: nouls[k].noul if k in nouls else 0.0  # noqa: E731  (not asked, or a log from before it was)
     element_p = sorted(((p(f"el_{i}"), el) for i, el in enumerate(elements)), key=lambda x: -x[0])
 
+    # "keep going" after a task was stopped: carry on with it (its history is kept), whatever else it sounds like
+    if p("picks_up") >= YES:
+        return "pick_up", f"carry on with the interrupted task {p('picks_up'):.2f}", {}
     # "is the research done?", "open its sources": for us even when it doesn't sound like a command; the agent has
     # the research tool. A new question that happens to sound related ("compare this") is new research instead.
     if p("about_research") >= YES and p("about_research") >= p("needs_research"):
@@ -484,6 +500,7 @@ class Gate:
         self.last_reply: str | None = None  # what the assistant last said aloud, if just now (a question it asked)
         self.research_jobs: str = ""  # background research going on or done (research.Research.describe)
         self.remembered: str | None = None  # one line from durable memory: the item a later "select that" means
+        self.interrupted_task: str = ""  # the agent task that was stopped before it finished (agent.Interrupted)
         self.error = None
         self._client = None
         if TypeSafeClient is None:
@@ -520,6 +537,7 @@ class Gate:
             **({"assistant_just_said": self.last_reply} if self.last_reply else {}),
             **({"background_research": self.research_jobs} if getattr(self, "research_jobs", "") else {}),
             **({"remembered_item": self.remembered} if getattr(self, "remembered", None) else {}),
+            **({"interrupted_task": self.interrupted_task} if getattr(self, "interrupted_task", "") else {}),
             **({"last_action": last} if last else {}),
             "frontmost_app": app_name,
             "pointer": "The user is pointing at (looking at) a spot on screen; distances are measured from it.",
@@ -543,6 +561,7 @@ class Gate:
             "app": _app_question(apps), "shortcut": _shortcut_question(), "times": TIMES,
             "agent_tier": AGENT_TIER, "agent_budget": AGENT_BUDGET, "needs_research": NEEDS_RESEARCH,
             **({"about_research": ABOUT_RESEARCH} if self.research_jobs else {}),
+            **({"picks_up": PICKS_UP} if getattr(self, "interrupted_task", "") else {}),
             "scroll_direction": SCROLL_DIRECTION, "scroll_amount": SCROLL_AMOUNT, "element_action": ELEMENT_ACTION,
             "wants_cancel": WANTS_CANCEL, "wants_type": WANTS_TYPE, "wants_web": WANTS_WEB,
             "wants_quit": WANTS_QUIT, "force_quit": FORCE_QUIT, "intent": INTENT,

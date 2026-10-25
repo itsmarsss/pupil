@@ -153,6 +153,13 @@ as well as Camera.
 | 1 · `gate.py` | Jev answers small yes/no and pick-one questions about the command and the elements near your gaze; a truth table picks the action. No keyword lists: clicks, scrolling, shortcuts (via the app's own menu command, which Jev picks from its real menus), websites and searches, typing, quitting apps, "again" / "no, the left one" and answers to "which one?" are all its reading. A fast model (`extract.py`) pulls out the text Jev can't carry: what to type, the URL or search, the steps of a multi-step request. It asks a question only when something the screen can't supply is missing, holds commands it isn't sure were meant for it without interrupting ("do it" runs them), and runs a few actions in a row itself, handing the rest to the agent if a step needs it | "click this", "scroll down a little", "go to github.com", "type hello world", "quit Games", "open Safari", "close this tab" (asks to confirm risky ones), "select all and copy", "send it to…" → "Who to?" |
 | 2 · `agent.py` | Claude computer-use loop, told where you were looking while you spoke, with app-agnostic tools beside the screenshot/mouse/keyboard ones (`uitree.py`): any app's menu bar (`menu`), its controls by id (`ui_elements`, `press_element`, `set_value`), AppleScript/JXA, `drag` with any button and modifiers, `open_app`; plus app adapters where an app has its own scripting (`apps/`: Blender via `blender_python`) | "open this in a new tab and summarize it", "export this as PDF", "build me a car in Blender" |
 
+Beyond the screen: the agent fetches what a request needs the way a person would, instead of answering only from
+the screen: your location from macOS Location Services (the `location` tool, which always waits for your "confirm";
+macOS also asks once), the Maps app if that fails, Contacts / Calendar / Reminders through their apps, a web search
+or the research tool. "What's my postal code?" works. A task that's stopped, fails or runs out of steps is kept for
+15 minutes with its whole history: "keep going", "continue", "where were we" picks it up where it was (Jev reads
+those against the interrupted task; it checks the screen first and doesn't redo what's done).
+
 Attention check: it only listens while you're paying attention: your face visible, your head turned toward the
 screen (within 35°) and, once calibrated, your gaze on or near it. Turn to talk to someone or look down at your
 phone for more than 1.5 s and nothing is sent or transcribed, a turn in progress ends, and the notch says "Not

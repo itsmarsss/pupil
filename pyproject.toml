@@ -27,6 +27,7 @@ control = [
     "sounddevice>=0.5",
     "faster-whisper>=1.1",
     "certifi",  # Cartesia streaming speech-to-text (websockets is already a core dependency)
+    "pyobjc-framework-CoreLocation>=11",  # the agent's location tool (what's my postal code)
     "mcp>=2.3.0",
 ]
 

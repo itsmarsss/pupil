@@ -749,6 +749,7 @@ control = [
     { name = "mcp" },
     { name = "pillow" },
     { name = "pyautogui" },
+    { name = "pyobjc-framework-corelocation" },
     { name = "sounddevice" },
     { name = "typesafe-sdk" },
 ]
@@ -774,6 +775,7 @@ requires-dist = [
     { name = "pyobjc-framework-applicationservices", specifier = ">=11" },
     { name = "pyobjc-framework-avfoundation", specifier = ">=11" },
     { name = "pyobjc-framework-cocoa", specifier = ">=11" },
+    { name = "pyobjc-framework-corelocation", marker = "extra == 'control'", specifier = ">=11" },
     { name = "pyobjc-framework-quartz", specifier = ">=11" },
     { name = "sounddevice", marker = "extra == 'control'", specifier = ">=0.5" },
     { name = "typesafe-sdk", marker = "extra == 'control'", specifier = ">=0.7.5" },
@@ -966,6 +968,19 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/0e/71/bfbf1dffe9f08f31b444685e9d194e25cc3506db9f7a9d6ffdb56cc4408e/pyobjc_framework_coreaudio-12.2.2.tar.gz", hash = "sha256:880214f7328d6502a0c60ee744fa1eabe77a0d0c9ae276009453b69474eacf38", size = 79573, upload-time = "2026-08-11T19:44:07.04Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/10/75/556b8f887a8b68c3125aa64e8281c26cce42d5e7338b90ef5474d8a519b1/pyobjc_framework_coreaudio-12.2.2-cp311-cp311-macosx_10_9_universal2.whl", hash = "sha256:2217911fb21cd6d8002d0895f6353a15fd6ce2c4e191b3f4cb6e16ad7a428591", size = 34980, upload-time = "2026-08-11T19:33:10.982Z" },
+]
+
+[[package]]
+name = "pyobjc-framework-corelocation"
+version = "12.2.2"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "pyobjc-core" },
+    { name = "pyobjc-framework-cocoa" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/b8/d9/ce6e1e697f6f2830c8ac416951a3f7eb6a6c28d1ca4ddeda029da3511b31/pyobjc_framework_corelocation-12.2.2.tar.gz", hash = "sha256:f14b44d96b56dd16f8c40dc067f492668e929fec542e78e9c27c9c9e90f21ba8", size = 60568, upload-time = "2026-08-11T19:44:10.898Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/78/7d/1a755ccf443147d380085fe79c6e012019a7d05b5a0ea99cf38bc5b985f2/pyobjc_framework_corelocation-12.2.2-cp311-cp311-macosx_10_9_universal2.whl", hash = "sha256:a22becf4b0526106c3a8563ce603fdda1dbf7ba3cfa9e3b564d73a42454fd293", size = 12829, upload-time = "2026-08-11T19:33:41.713Z" },
 ]
 
 [[package]]
