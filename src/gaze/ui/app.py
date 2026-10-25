@@ -174,10 +174,11 @@ class GazeApp:
         }
 
     def _start_dashboard(self, port: int) -> None:
+        from ..dashboard.feeds import LiveFeed
         from ..dashboard.server import DashboardServer
 
-        self.dashboard = DashboardServer(self.tracker, context=self._dashboard_context,
-                                         commands=self._remote_commands(), lid=lambda: self.lid_now, port=port)
+        feed = LiveFeed(self.tracker, context=self._dashboard_context, lid=lambda: self.lid_now)
+        self.dashboard = DashboardServer(feed, commands=self._remote_commands(), port=port)
         self.dashboard.start()
 
     def _dashboard_context(self) -> dict:

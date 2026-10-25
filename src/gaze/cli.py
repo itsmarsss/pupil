@@ -96,6 +96,21 @@ def cmd_replay(args) -> int:
     from .eval.replay import replay
     from .models.mnn_face_eye import MNNFaceEyeModel
 
+    if args.dashboard:
+        import threading
+        import webbrowser
+
+        from .dashboard.replay import build_replay
+        from .dashboard.server import DashboardServer
+
+        print("running the pipeline over the session (~1 minute)…")
+        feed = build_replay(Path(args.session), MNNFaceEyeModel(args.model))
+        server = DashboardServer(feed, port=args.dashboard_port)
+        threading.Timer(1.5, webbrowser.open, args=(server.url,)).start()
+        print(f"replay at {server.url}  (Ctrl+C to stop)")
+        server.serve_forever()
+        return 0
+
     rows = replay(Path(args.session), MNNFaceEyeModel(args.model), modes=args.modes.split(","),
                   all_calibrators=args.all)
     print(f"{'mode':8} {'config':17} {'calibrator':22} {'checks':13} {'accuracy':>9} {'p95':>7} {'jitter':>7} {'loss':>5}  head in range")
@@ -272,6 +287,8 @@ def main(argv: list[str] | None = None) -> int:
     rp.add_argument("session")
     rp.add_argument("--modes", default="hd+roll,hd", help="e.g. hd, vga, hd+roll, hd+frontal")
     rp.add_argument("--all", action="store_true", help="also score every calibrator, not just the auto choice")
+    rp.add_argument("--dashboard", action="store_true", help="play the session back in the web dashboard instead")
+    rp.add_argument("--dashboard-port", type=int, default=8766)
     rp.add_argument("--model", help="path to the gaze model")
 
     args = parser.parse_args(argv)

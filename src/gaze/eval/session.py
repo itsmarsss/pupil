@@ -79,6 +79,7 @@ class SessionFrame:
     target: tuple[float, float]
     onset_ns: int
     image: np.ndarray | None  # full-size RGB canvas with the face region pasted in
+    lid_deg: float | None = None
 
 
 def read_session(root: Path):
@@ -94,7 +95,7 @@ def read_session(root: Path):
                 x, y, rw, rh = row["roi"]
                 canvas = np.zeros((h, w, 3), np.uint8)
                 canvas[y : y + rh, x : x + rw] = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)[:rh, :rw]
-        yield SessionFrame(row["t_ns"], row["phase"], tuple(row["target"]), row["onset_ns"], canvas)
+        yield SessionFrame(row["t_ns"], row["phase"], tuple(row["target"]), row["onset_ns"], canvas, row.get("lid"))
 
 
 def session_meta(root: Path) -> dict:
