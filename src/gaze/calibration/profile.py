@@ -36,6 +36,7 @@ class ProfileMeta:
     screen_pt: tuple[float, float]
     features: str = FEATURE_SET
     lid_deg: float | None = None  # hinge angle at calibration, if the Mac has the sensor
+    offset_pt: tuple[float, float] = (0.0, 0.0)  # drift correction added to every prediction
     created: float = field(default_factory=time.time)
     updated: float = field(default_factory=time.time)
     fit: dict = field(default_factory=dict)
@@ -189,7 +190,21 @@ class Profile:
             g = geometry.predict(from_array(measure))
             if g is not None:
                 x, y = (1 - GEO_WEIGHT) * x + GEO_WEIGHT * g[0], (1 - GEO_WEIGHT) * y + GEO_WEIGHT * g[1]
-        return float(x), float(y)
+        dx, dy = self.meta.offset_pt
+        return float(x + dx), float(y + dy)
+
+    def recentre(self, predictions: np.ndarray, target: tuple[float, float], max_shift_pt: float = 600.0) -> tuple[float, float]:
+        """Drift correction from one dot: shift all predictions so this dot's median lands on it. Between
+        sessions the error is mostly such a shift (posture, lid): on replayed session pairs a stale
+        calibration was 3–9° off and one re-centred dot brought it back to ~2°.
+        `predictions` are this profile's outputs (offset included) while the user looked at `target`.
+        Returns the new offset; shifts beyond `max_shift_pt` are refused (recalibrate instead)."""
+        miss = np.asarray(target, float) - np.median(np.asarray(predictions, float), axis=0)
+        if np.hypot(*miss) > max_shift_pt:
+            raise ValueError(f"off by {np.hypot(*miss):.0f} pt: too far for a re-centre, recalibrate")
+        ox, oy = self.meta.offset_pt
+        self.meta.offset_pt = (float(ox + miss[0]), float(oy + miss[1]))
+        return self.meta.offset_pt
 
     def confidence(self, features: np.ndarray) -> float:
         """1 inside the head-pose range seen during calibration, falling to 0 outside it."""

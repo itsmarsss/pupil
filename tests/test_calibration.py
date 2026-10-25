@@ -111,3 +111,18 @@ def test_grid_and_timing():
     assert not t.accepts(0, 300_000_000)
     assert t.accepts(0, 500_000_000)
     assert not t.accepts(0, 950_000_000)
+
+
+def test_recentre_shifts_predictions_onto_the_dot():
+    p = Profile(ProfileMeta("x", "m", "c", SCREEN), DIM)
+    X, Y, _, g = synth(grid(9, *SCREEN))
+    for gid in np.unique(g):
+        p.add(X[g == gid], tuple(Y[g == gid][0]), EXPLICIT)
+    p.fit()
+    before = np.array(p.predict(X[0]))
+    drifted = np.tile(before + [40.0, -25.0], (10, 1))  # everything 40 pt right, 25 up
+    p.recentre(drifted, tuple(before))
+    assert np.allclose(p.meta.offset_pt, (-40.0, 25.0))
+    assert np.allclose(p.predict(X[0]), before - [40, -25])
+    with pytest.raises(ValueError):
+        p.recentre(np.tile(before + [900.0, 0.0], (5, 1)), tuple(before))  # too far: recalibrate instead
