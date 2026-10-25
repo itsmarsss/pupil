@@ -3,10 +3,18 @@
 import base64
 import io
 
+import threading
+
 import Quartz
 from PIL import Image, ImageDraw
 
 from . import config
+
+CAPTURE_TIMEOUT_S = 3.0
+
+
+class ScreenshotUnavailable(RuntimeError):
+    pass
 
 
 def _main_display_points():
@@ -19,6 +27,7 @@ class Screen:
     and screenshot pixels (what Claude sees and answers in)."""
 
     def __init__(self):
+        self._capturing: threading.Thread | None = None  # a capture that may still be stuck
         self.w_pt, self.h_pt = _main_display_points()
         max_w, max_h = config.SCREENSHOT_MAX
         self.scale = min(max_w / self.w_pt, max_h / self.h_pt, 1.0)  # points -> screenshot pixels
@@ -31,8 +40,30 @@ class Screen:
         return x * self.scale, y * self.scale
 
     def _grab(self):
-        """The main display in physical pixels. Quartz directly (~20 ms): mss took 30 s per grab here (a timeout
-        in its macOS backend), which was most of every agent step."""
+        """The main display in physical pixels, or ScreenshotUnavailable within CAPTURE_TIMEOUT_S. macOS screen
+        capture can stall system-wide (seen: 30 s per grab while a Screenshot-app session held the display), and an
+        agent step shouldn't wait on it: the agent carries on with its accessibility and menu tools instead."""
+        if self._capturing is not None and self._capturing.is_alive():
+            raise ScreenshotUnavailable("screen capture is still stuck on the previous screenshot")
+        result = {}
+
+        def work():
+            try:
+                result["image"] = self._capture()
+            except Exception as e:
+                result["error"] = e
+
+        self._capturing = threading.Thread(target=work, name="capture", daemon=True)
+        self._capturing.start()
+        self._capturing.join(CAPTURE_TIMEOUT_S)
+        if self._capturing.is_alive():
+            raise ScreenshotUnavailable(f"screen capture didn't respond within {CAPTURE_TIMEOUT_S:.0f} s")
+        if "error" in result:
+            raise ScreenshotUnavailable(str(result["error"]))
+        return result["image"]
+
+    def _capture(self):
+        """Quartz directly (~70 ms when healthy)."""
         bounds = Quartz.CGDisplayBounds(Quartz.CGMainDisplayID())
         image = Quartz.CGWindowListCreateImage(bounds, Quartz.kCGWindowListOptionOnScreenOnly,
                                                Quartz.kCGNullWindowID, Quartz.kCGWindowImageDefault)

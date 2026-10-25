@@ -59,6 +59,11 @@ SAVE_AUDIO = os.environ.get("GAZE_SAVE_AUDIO", "1") != "0"  # each command's aud
 VOICE_PROCESSING = os.environ.get("GAZE_VOICE_PROCESSING", "0") == "1"  # Apple's noise suppression + echo cancel.
 # Off by default: on AirPods it forces a call-style path that sounded and transcribed worse; ◉ → Voice isolation
 # on the system default input (not available for a mic picked by name)
+# Speaking back (speech.py): Claude's replies and questions read aloud with Cartesia Sonic; talking cuts it off
+SPEAK = os.environ.get("GAZE_SPEAK", "1") != "0"
+TTS_MODEL = os.environ.get("GAZE_TTS_MODEL", "sonic-3.6")
+TTS_VOICE = os.environ.get("GAZE_TTS_VOICE", "db6b0ed5-d5d3-463d-ae85-518a07d3c2b4")  # Cartesia's example voice
+
 # Lip gate (lips.py): speech counts only while you face the screen and move your lips. on | shadow (log what it
 # would block, block nothing) | off. Eye tracking only; with --gaze mouse there is no face to watch.
 LIP_GATE = os.environ.get("GAZE_LIP_GATE", "on")

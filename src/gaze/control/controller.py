@@ -19,6 +19,7 @@ from .gate import CLARIFY_PROMPTS, MAX_CANDIDATES, YES, Gate
 from .hud import Hud
 from .lips import LipGate
 from .screen import Screen
+from .speech import Speaker
 from .voice import CartesiaVoice, TypedInput, Voice
 
 # Gate routes -> the direct action they map to.
@@ -49,6 +50,8 @@ class VoiceController:
         if not self.gate.available:
             self._status(f"Fast tier (Jev) off: {self.gate.error}. Unmatched commands go straight to Claude.")
         self.agent = Agent(self.screen, self.gate, self._status)
+        self.speaker = Speaker(on_state=lambda on: self.events.put(("speaking", on)))
+        self.agent.on_reply = self.speaker.say  # Claude's answer (or what it's waiting to confirm), read aloud
         self.episodes = EpisodeLog(source="typed" if typed else "voice")
         self.flash_until = 0.0
         self.pending = None  # direct action waiting for "confirm"
@@ -121,6 +124,8 @@ class VoiceController:
     def _on_mic_state(self, state):
         self.gaze.report("mic", state)
         self.events.put(("mic", state))
+        if state == "listening" and self.lips is None:  # no lips to watch: any speech at the mic barges in
+            self.speaker.stop()
 
     def _status(self, text):
         print(f"[{time.strftime('%H:%M:%S')}] {text}", flush=True)
@@ -130,8 +135,10 @@ class VoiceController:
             self._ep["status"] = text
 
     def _set_pending(self, pending, text=""):
-        """A direct action waiting for "confirm" (None clears it); the dashboard shows it."""
+        """A direct action waiting for "confirm" (None clears it); the dashboard shows it, and it's asked aloud."""
         self.pending = pending
+        if pending and text:
+            self.speaker.say(f"{text}? Say confirm.")
         if pending and self._ep is not None:
             self._ep["pending"] = True
         self.gaze.report("pending", text if pending else "")
@@ -153,6 +160,8 @@ class VoiceController:
                 self.episodes.save_audio(ep, clip)
                 self.episodes.finish(ep)
                 self.hud.status = f'Dropped (lips didn\'t move): "{text}"'
+            elif kind == "speaking":
+                self.hud.speaking = payload
             elif kind == "partial":  # words so far, while you're still talking
                 self.hud.heard = f"{payload}…" if payload else ""
             elif kind == "mic":
@@ -166,6 +175,8 @@ class VoiceController:
                 self.flash_until = time.time() + 0.4
         h = self.hud
         h.gaze = self.gaze.point()
+        if self.speaker.speaking and self.lips is not None and self.lips.would_open():
+            self.speaker.stop()  # barge-in: you started talking (lips, not sound: the speaker would trigger that)
         if self.lips:
             is_open = self.lips.would_open()
             if self.lips.mode == "on":
@@ -206,6 +217,7 @@ class VoiceController:
             ep["heard_as"] = text
         self.hud.heard = cmd.text
         if cmd.kind == "cancel":  # handled immediately, even while a command is running
+            self.speaker.stop()
             if self.dictating:
                 self.dictating = False
                 self.hud.status = "Dictation off."
@@ -294,9 +306,15 @@ class VoiceController:
                 ep["route"] = "nothing_to_confirm"
                 self._status("Nothing to confirm.")
             return
-        if self.agent.busy:
-            ep["route"] = "busy"
-            self._status('Still working: say "stop" to cancel.')
+        if self.agent.busy:  # talking to Claude mid-task: it hears this at its next step
+            ep["route"] = "steer"
+            self.agent.steer(cmd.text)
+            self._status(f'Telling Claude: "{cmd.text}"')
+            return
+        if self.agent.paused and cmd.kind not in ("cancel", "confirm"):  # something else instead of "confirm"
+            ep["route"] = "redirect"
+            self.agent.redirect(cmd.text)
+            self._status(f'Skipped that; telling Claude: "{cmd.text}"')
             return
         if self.gaze.busy:
             ep["route"] = "calibrating"
@@ -383,6 +401,7 @@ class VoiceController:
             self.clarifying = (request, d.missing, time.time() + CLARIFY_WINDOW_S, ep)
             self.gaze.report("pending", prompt)
             self._status(prompt)
+            self.speaker.say(prompt)
             return
         if d.route == "compound":
             self._compound(request, gaze, target, candidates, app)

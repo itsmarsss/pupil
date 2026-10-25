@@ -5,7 +5,7 @@ import time
 
 import pyautogui
 
-from .screen import image_block
+from .screen import ScreenshotUnavailable, image_block
 
 pyautogui.PAUSE = 0.02  # pyautogui's FAILSAFE stays on: slam the mouse into the top-left corner to abort
 
@@ -163,10 +163,12 @@ class ComputerExecutor:
         ok = [{"type": "text", "text": "OK"}]
         mods = [_key(m) for m in inp.get("text", "").split("+") if m] if name != "type" else []
 
-        if name == "screenshot":
-            return [image_block(self.screen.screenshot())]
-        if name == "zoom":
-            return [image_block(self.screen.zoom(inp["region"]))]
+        if name in ("screenshot", "zoom"):
+            try:
+                image = self.screen.screenshot() if name == "screenshot" else self.screen.zoom(inp["region"])
+            except ScreenshotUnavailable as e:
+                return [{"type": "text", "text": f"Screenshot unavailable ({e}). Work without it: ui_elements, menu and applescript still see the apps."}]
+            return [image_block(image)]
         if name in _CLICKS:
             clicks, button = _CLICKS[name]
             x, y = self._pt(inp["coordinate"]) if "coordinate" in inp else pyautogui.position()

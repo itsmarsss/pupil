@@ -135,6 +135,12 @@ device Whisper `base.en` behind a Silero speech detector. `GAZE_LIP_GATE=shadow`
 would block; `GAZE_VOICE_PROCESSING=1` turns voice isolation on at start. Misheard commands and on-
 screen labels are snapped to what was meant ("closed time" → "close tab").
 
+Talking back: Claude's replies, its clarifying questions and "say confirm" prompts are read aloud with
+Cartesia Sonic (one short sentence; `GAZE_SPEAK=0` turns it off). Start talking and it stops: barge-in is
+detected from your lips moving, not sound, so the Mac's own speaker doesn't cut itself off. Speaking while
+Claude is working reaches it at its next step ("actually, make it blue"); saying something other than
+"confirm" when it's waiting to confirm skips that step and follows the new instruction; "stop" cancels.
+
 Typing: "type …" and dictation mode ("start dictation" … "stop dictation") type what you meant, not the
 raw transcript: a fast model (Claude Haiku) uses the app and the text before the cursor to turn "slash btw"
 into `/btw` in a chat box, "dash dash help" into `--help`, spoken punctuation into punctuation, and to drop

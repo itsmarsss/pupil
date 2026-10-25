@@ -405,3 +405,24 @@ def test_menu_commands_are_found_by_their_words_in_any_app():
     assert find_menu_title(wezterm, MENU_PHRASES["close_tab"]) == "close current tab"
     assert find_menu_title(wezterm, MENU_PHRASES["refresh"]) is None  # not "reload configuration"
     assert find_menu_title(finder, MENU_PHRASES["new_tab"]) == "new tab"
+
+
+def test_agent_hears_interruptions_and_redirects_when_paused(monkeypatch):
+    from gaze.control import agent as agent_mod
+
+    a = agent_mod.Agent.__new__(agent_mod.Agent)
+    a._steer, a._steer_lock = [], agent_mod.threading.Lock()
+    a._thread, a._paused = None, None
+    a.steer("actually make it blue")
+    assert a._take_steer() == [{"type": "text", "text": 'The user just said: "actually make it blue"'}]
+    assert a._take_steer() == []  # delivered once
+
+    spawned = []
+    a._spawn = lambda messages, request, approved: spawned.append((messages, approved))
+    messages = [{"role": "user", "content": "delete the old drafts"}]
+    a._paused = (messages, [_A(id="t1"), _A(id="t2")], "delete the old drafts")
+    assert a.redirect("no, just archive them")
+    sent = spawned[0][0][-1]["content"]
+    assert [b.get("tool_use_id") for b in sent[:2]] == ["t1", "t2"] and all(b["is_error"] for b in sent[:2])
+    assert sent[2]["text"] == 'The user just said: "no, just archive them"' and spawned[0][1] is None
+    assert a._paused is None

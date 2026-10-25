@@ -95,6 +95,7 @@ class Hud:
         self.status = self.heard = self.warning = ""
         self.mic, self.mic_device = "off", ""
         self.gate = ""  # lip gate state, when it's on
+        self.speaking = False  # replies being read aloud
         self._drawn = None
 
     def show(self) -> None:
@@ -107,7 +108,7 @@ class Hud:
         mic = f"mic: {self.mic_device} · {self.mic}" if self.mic_device else f"mic: {self.mic}"
         if self.gate:
             mic += f" · {self.gate}"
-        parts = [self.warning, mic, f'heard: "{self.heard}"' if self.heard else "", self.status]
+        parts = [self.warning, "🔊 speaking (talk to interrupt)" if self.speaking else mic, f'heard: "{self.heard}"' if self.heard else "", self.status]
         return "   |   ".join(p for p in parts if p)
 
     def update(self) -> None:
