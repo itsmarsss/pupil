@@ -14,7 +14,7 @@ export interface Series {
 }
 
 export const SERIES_KEYS = [
-  "yaw", "pitch", "roll", "distance", "open_l", "open_r", "confidence", "disagreement", "fps", "latency",
+  "yaw", "pitch", "roll", "distance", "open_l", "open_r", "confidence", "disagreement", "fps", "latency", "lid",
 ] as const;
 
 class EngineStore {
@@ -114,6 +114,7 @@ class EngineStore {
     push("disagreement", f.gaze.disagreement_pt);
     push("fps", f.fps);
     push("latency", f.latency_ms);
+    push("lid", f.lid_deg);
     while (s.t.length && s.t[s.t.length - 1] - s.t[0] > HISTORY_S) {
       for (const k of Object.keys(s)) s[k].shift();
     }

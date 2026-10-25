@@ -10,7 +10,7 @@ import { ScreenView } from "./views/ScreenView";
 
 // Every view is a dockview panel: drag tabs to rearrange, split or stack them, drag the dividers to resize.
 // The layout is saved per browser; bump LAYOUT_KEY when panels change so stale layouts are dropped.
-const LAYOUT_KEY = "gaze.layout.v2";
+const LAYOUT_KEY = "gaze.layout.v3";
 
 const components: Record<string, FunctionComponent<IDockviewPanelProps>> = {
   scene: () => <div className="pane flush"><Scene3D /></div>,

@@ -14,6 +14,7 @@ export const PLOTS: PlotSpec[] = [
     { key: "yaw", label: "yaw", color: "#ff6b6b" }, { key: "pitch", label: "pitch", color: "#51cf66" },
     { key: "roll", label: "roll", color: "#4dabf7" }] },
   { id: "distance", title: "Distance (cm)", series: [{ key: "distance", label: "distance", color: "#ffd43b" }] },
+  { id: "lid", title: "Lid (°)", series: [{ key: "lid", label: "hinge", color: "#9aa4b2" }] },
   { id: "eyes", title: "Eye openness", series: [
     { key: "open_l", label: "left", color: "#e599f7" }, { key: "open_r", label: "right", color: "#91a7ff" }] },
   { id: "disagreement", title: "ML vs eyeball (pt)", series: [{ key: "disagreement", label: "disagreement", color: "#ff9f43" }] },
