@@ -147,6 +147,10 @@ class App:
         cmd = router.route(text)
         if cmd is None:
             return
+        fixed = router.correct(cmd.text) if cmd.kind == "unknown" else None
+        if fixed:  # near-miss of a known phrase: "closed time" -> "close tab"
+            print(f"[{time.strftime('%H:%M:%S')}] treating \"{cmd.text}\" as \"{fixed}\"", flush=True)
+            cmd = router.route(fixed, wake=False)
         self.overlay.heard = cmd.text
         if cmd.kind == "cancel":  # handled immediately, even while a command is running
             self.agent.cancel()
@@ -190,7 +194,12 @@ class App:
         target, candidates = snapping.snap(*gaze, self.screen.w_pt, self.screen.h_pt) if gaze else (None, [])
 
         if cmd.kind == "unknown":
-            self._route_with_gate(cmd.args["request"], gaze, target, candidates)
+            request = cmd.args["request"]
+            fixed = router.correct(request, [c.label for c in candidates if c.label])
+            if fixed:  # near-miss of a label near the gaze: "click search repose" -> "click Search repositories"
+                self._status(f'Treating "{request}" as "{fixed}"')
+                request = fixed
+            self._route_with_gate(request, gaze, target, candidates)
             return
 
         # Exact phrase, but several elements are close together: let Jev pick which one "this" means.
