@@ -88,6 +88,7 @@ class VoiceController:
         self.episodes = EpisodeLog(source="typed" if typed else "voice")
         self.flash_until = 0.0
         self.pending = None  # direct action waiting for "confirm"
+        self.pending_text = None  # what it is, in words
         self.clarifying = None  # (request, missing, deadline, episode): the gate asked a question
         self.maybe = None  # (request, deadline, gaze, target, candidates, episode): maybe a command; "do it" runs it
         self._candidates: list = []  # elements near the gaze for the command being handled
@@ -232,6 +233,7 @@ class VoiceController:
     def _set_pending(self, pending, text=""):
         """A direct action waiting for "confirm" (None clears it); the dashboard shows it, and it's asked aloud."""
         self.pending = pending
+        self.pending_text = text if pending else None  # for the notch
         if pending and text:
             self._say(f"{text}? Say confirm.")
         if pending and self._ep is not None:

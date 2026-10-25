@@ -5,6 +5,7 @@ reads its latest point from a 60 Hz timer instead of calling into AppKit from th
 """
 from __future__ import annotations
 
+import collections
 import json
 import logging
 import os
@@ -24,6 +25,7 @@ from ..calibration.targets import TargetTiming
 from ..capture.camera import CameraSource, list_cameras
 from ..core.lid import LidMonitor
 from ..core.paths import APP_SUPPORT
+from ..core.types import TrackingState
 from ..eval.session import SessionWriter
 from ..health.tracker import HealthTracker
 from ..tracker import Tracker
@@ -75,6 +77,9 @@ class GazeApp:
         self.health = HealthTracker(log_dir=APP_SUPPORT / "health",  # blinks, eye fatigue, breaks
                                     pt_per_deg=lambda: self.tracker.pt_per_deg)
         self._health_now: dict = {}
+        self._fatigue_series: collections.deque = collections.deque(maxlen=1800)  # (t, score), 30 min at 1 Hz
+        self._reminder: tuple[str, float] | None = None  # the last health nudge, until when the notch shows it
+        self.notch = None  # the user-facing status (ui/notch.py)
         self.session: SessionWriter | None = None
         self.dashboard = None
         self.controller = None  # voice control (gaze.control), when on
@@ -98,6 +103,13 @@ class GazeApp:
                            quit=self.quit, session_label=self._session_label)
         self.flows.pending_measure = o["measure"]
         self._build_menu()
+        if os.environ.get("GAZE_NOTCH", "1") != "0":
+            from .notch import Notch
+
+            self.notch = Notch(on_toggle_voice=self._toggle_voice if not o["voice_typed"] else None,
+                               on_toggle_reminders=lambda: setattr(self.health, "reminders_on",
+                                                                   not self.health.reminders_on))
+            NSTimer.scheduledTimerWithTimeInterval_repeats_block_(1 / 30, True, self._notch_tick)
         if o["snap"]:
             self.snapping.toggle()
         if o["record_path"] is not None:
@@ -308,12 +320,57 @@ class GazeApp:
     def _health_tick(self, _timer) -> None:
         """Once a second: eye-health reminders, as a notification and (with voice control) a caption at the gaze."""
         self._health_now = self.health.snapshot()  # for the dashboard (every frame) without recomputing it
+        if self._health_now.get("fatigue") is not None:
+            self._fatigue_series.append((time.time(), self._health_now["fatigue"]))
         for message in self.health.due_reminders():
             log.info("health: %s", message)
+            self._reminder = (message, time.time() + 8)
             subprocess.Popen(["osascript", "-e", f'display notification "{message}" with title "Eyes"'])
             if self.controller is not None:
                 self.controller.indicator.say(message)
                 self.controller.indicator._caption_end = time.time() + 6
+
+    def _notch_tick(self, _timer) -> None:
+        try:
+            self.notch.update(self._notch_model(), self._gaze_now(), hidden=self.flows.busy)
+        except Exception:  # an exception in an NSTimer block vanishes silently: say so, once
+            if not getattr(self, "_notch_failed", False):
+                self._notch_failed = True
+                log.exception("notch update failed")
+
+    def _gaze_now(self):
+        p = self.tracker.last_point
+        return (p.x, p.y) if p is not None and p.valid else None
+
+    def _notch_model(self):
+        from ..control import models
+        from .notch_content import NotchModel
+
+        p = self.tracker.last_point
+        prof = self.tracker.profile
+        tracking = ("calibrating" if self.flows.busy else "starting" if p is None
+                    else "no face" if p.state == TrackingState.NO_FACE
+                    else "uncalibrated" if p.state == TrackingState.UNCALIBRATED or prof is None or not prof.calibrated
+                    else "tracking")
+        last = self.flows.last_result
+        m = NotchModel(tracking=tracking,
+                       accuracy_deg=float(last.accuracy_deg) if last is not None and np.isfinite(last.accuracy_deg) else None,
+                       distance_cm=self.tracker.distance_mm / 10 if self.tracker.distance_mm else None,
+                       fps=self.tracker.fps, health=self._health_now, fatigue_series=list(self._fatigue_series),
+                       reminders_on=self.health.reminders_on, reminder=self._reminder)
+        c = self.controller
+        if c is not None:
+            status = c._indicator_status()
+            ind = c.indicator
+            m.voice_on = c.enabled
+            m.state, m.label = (status.state, status.label) if status else (None, "")
+            m.heard = c.hud.heard.rstrip("…") if c.hud.heard else ""
+            m.caption = (ind._caption, ind._caption_start, ind._caption_end) if ind._caption else None
+            m.pending = c.pending_text or ("let the agent continue" if c.agent.paused else None)
+            m.mic = c.hud.mic_device or ""
+            active = next((r for r in models.snapshot() if r.get("active") and r["role"] != "stt"), None)
+            m.model = None if active is None else "Jev" if active["role"] == "jev" else active["model"]
+        return m
 
     def gaze_sigma_pt(self) -> float:
         """How wide the gaze heat map is right now: the last measured accuracy (launch check, validation or
@@ -358,6 +415,7 @@ class GazeApp:
                                           lambda name=name: self.tracker.set_smoothing(name))
                                          for name in SMOOTHING_ORDER]),
             Toggle("Snap to buttons", lambda: self.snapping.enabled, self.snapping.toggle),
+            Toggle("Notch", lambda: self.notch is not None and self.notch.enabled, self._toggle_notch),
             Action("Open dashboard", self._open_dashboard),
             SEPARATOR,
             Header("Input"),
@@ -404,6 +462,10 @@ class GazeApp:
         if self.lid_moved:
             parts.append(f"lid moved {self.lid_moved:+.0f}° since calibration: check accuracy")
         return "  ·  ".join(parts)
+
+    def _toggle_notch(self) -> None:
+        if self.notch is not None:
+            self.notch.enabled = not self.notch.enabled
 
     def _toggle_overlay(self) -> None:
         self.overlay_on = not self.overlay_on
