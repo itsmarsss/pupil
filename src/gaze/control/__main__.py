@@ -10,7 +10,6 @@ Tiers: 0 = exact phrases (router.py), 1 = Jev gate (gate.py), 2 = Claude compute
 
 import argparse
 import atexit
-import json
 import queue
 import subprocess
 import sys
@@ -74,7 +73,6 @@ class App:
             if self.lips and self.lips.someone_else(t0, t1):
                 if self.lips.mode == "on":
                     print(f"[{stamp}] ignored (your lips didn't move): \"{text}\"", flush=True)
-                    self._log_gate("dropped", text=text, t0=round(t0, 3), t1=round(t1, 3))
                     self.events.put(("partial", ""))
                     self.events.put(("status", f'Dropped (lips didn\'t move): "{text}"'))
                     return
@@ -82,7 +80,6 @@ class App:
             elif self.lips and self.lips.mode == "shadow":
                 print(f"[{stamp}] [shadow] gate would have let through: \"{text}\"", flush=True)
             print(f"[{stamp}] heard: \"{text}\"", flush=True)
-            self._log_gate("transcript", text=text, t0=round(t0, 3), t1=round(t1, 3))
             self.events.put(("speech", (text, t0, t1)))
 
         def on_mic_state(state):
@@ -90,17 +87,13 @@ class App:
                 print(f"[{time.strftime('%H:%M:%S')}] {state}...", flush=True)
             self.events.put(("mic", state))
 
-        self.voice = None
-        self.panel_on = (args.listen_only or args.gate_panel) and not args.typed
-        self.misses, self._unsent_since, self._miss_counted, self._panel_state = 0, None, False, None
         if args.typed:
             TypedInput(on_utterance).start()
             self.overlay.mic = "typing in terminal"
         else:
             voice = CartesiaVoice if config.STT == "cartesia" else Voice
-            self.voice = voice(on_utterance, on_mic_state, lambda name: self.events.put(("mic_device", name)),
-                               on_partial=lambda text: self.events.put(("partial", text)), gate=self.lips)
-            self.voice.start()
+            voice(on_utterance, on_mic_state, lambda name: self.events.put(("mic_device", name)),
+                  on_partial=lambda text: self.events.put(("partial", text)), gate=self.lips).start()
             self.overlay.mic = "loading"
 
         self.timer = QTimer()
@@ -159,8 +152,6 @@ class App:
 
         o = self.overlay
         o.gaze = self.gaze.point()
-        if self.panel_on and self.voice:
-            self._update_panel()
         if self.lips and self.lips.mode == "on":
             o.gate = "open" if self.lips.would_open() else f"waiting ({self.lips.reason})"
         o.target, o.candidates = self.snap
@@ -170,38 +161,7 @@ class App:
             o.flash = None
         o.update()
 
-    def _update_panel(self):
-        """Live gate indicator (--listen-only / --gate-panel): log every change, count possible misses."""
-        now, v = time.time(), self.voice
-        gate_open = self.lips.would_open() if self.lips else True
-        reason = self.lips.reason if self.lips else "no lip gate"
-        rec, voiced = v.sending, v.voiced
-        state = (gate_open, rec, voiced)
-        if state != self._panel_state:
-            self._log_gate("state", gate_open=gate_open, reason=reason, rec=rec, voice=voiced)
-            self._panel_state = state
-        if voiced and not rec and not self.gaze.busy:  # speech at the mic, nothing sent: a miss, unless it wasn't you
-            self._unsent_since = self._unsent_since or now
-            if now - self._unsent_since >= 0.3 and not self._miss_counted:
-                self.misses += 1
-                self._miss_counted = True
-                self._log_gate("possible_miss", reason=reason)
-                print(f"[{time.strftime('%H:%M:%S')}] possible miss: voice at the mic, gate closed ({reason})", flush=True)
-        else:
-            self._unsent_since, self._miss_counted = None, False
-        self.overlay.panel = dict(gate_open=gate_open, reason=reason, rec=rec, voice=voiced, level=v.level,
-                                  misses=self.misses)
-
-    def _log_gate(self, event, **fields):
-        config.LOG_DIR.mkdir(exist_ok=True)
-        with open(config.LOG_DIR / "gate.jsonl", "a") as f:
-            f.write(json.dumps({"t": round(time.time(), 3), "event": event, **fields}) + "\n")
-
     def _on_speech(self, text, t0, t1):
-        if self.args.listen_only:  # demo: show what was heard, act on nothing
-            self.overlay.heard = text
-            self.overlay.status = "listen-only: not acting"
-            return
         cmd = router.route(text)
         if cmd is None:
             return
@@ -357,9 +317,6 @@ def main(argv=None):
                         help="eyes = webcam eye tracking (default); mouse = the cursor stands in for gaze")
     parser.add_argument("--calibrate", action="store_true", help="recalibrate the tracker on start (eyes only)")
     parser.add_argument("--typed", action="store_true", help="type commands in the terminal instead of speaking")
-    parser.add_argument("--listen-only", action="store_true",
-                        help="demo the lip gate: live gate / recording panel and transcripts; never acts on commands")
-    parser.add_argument("--gate-panel", action="store_true", help="show the live gate panel while running normally")
     parser.add_argument("--no-tracker", action="store_true",
                         help="don't start the tracker; use one already running with `gaze --publish`")
     parser.add_argument("--tracker-args", nargs=argparse.REMAINDER, default=[],
