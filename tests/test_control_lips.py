@@ -102,3 +102,32 @@ def test_lips_recent_for_cutting_a_turn_short(monkeypatch):
     monkeypatch.setattr(lips.time, "time", lambda: t)
     assert g.face_recent() and not g.lips_recent(2.0)  # face there, lips still: stop streaming
     assert g.lips_recent(4.0)
+
+
+def test_audio_is_kept_only_around_your_lip_movement(monkeypatch):
+    import gaze.control.lips as lips
+
+    g = LipGate()
+    t = feed(g, 0, 2, lambda t: 0.02)  # still: someone else talking
+    t = feed(g, t, t + 1.5, talking)  # you speak (2 .. 3.5 s)
+    t = feed(g, t, t + 2, lambda t: 0.02)  # still again
+    monkeypatch.setattr(lips.time, "time", lambda: t)
+    assert not g.moved_near(1.0)  # before you spoke: muted
+    assert g.moved_near(2.5) and g.moved_near(3.9)  # while you speak, and a short pause after
+    assert g.moved_near(1.85)  # just before your lips opened: kept (camera lag)
+    assert not g.moved_near(5.0)  # long after: muted
+
+
+def test_voice_mutes_chunks_without_lip_movement():
+    from gaze.control.voice import Voice
+
+    class Gate:
+        mode = "on"
+
+        def moved_near(self, t):
+            return 2 <= t <= 4
+
+    v = Voice(lambda *a: None, lambda s: None, gate=Gate())
+    assert v._yours(3.0) and not v._yours(1.0) and not v._yours(5.0)
+    Gate.mode = "shadow"  # shadow mode never changes what's sent
+    assert v._yours(1.0)

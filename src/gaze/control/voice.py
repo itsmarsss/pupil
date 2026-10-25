@@ -21,7 +21,8 @@ from . import audio, config
 CHUNK_S = audio.CHUNK / audio.RATE
 SPEECH_START, SPEECH_END = 0.5, 0.35  # Silero probability to start / keep an utterance (hysteresis)
 START_CHUNKS = 3  # ~100 ms of speech starts one: a click or a cough doesn't
-PREROLL_S = 1.5  # audio kept from before the lip gate opens, so a late open loses no words
+PREROLL_S = 0.6  # audio kept from before the lip gate opens (it opens ~0.2-0.4 s into speech); longer only adds
+# whoever was talking before you
 PREROLL_CHUNKS = int(PREROLL_S / CHUNK_S)
 END_SILENCE_S = 0.6
 MAX_UTTERANCE_S = 15
@@ -257,6 +258,11 @@ class Voice(threading.Thread):
                 except Exception:
                     pass
 
+    def _yours(self, t) -> bool:
+        """Keep the audio captured at `t`? Not if the lip gate saw your lips still around then: it's someone else,
+        and muting it keeps them out of your transcript."""
+        return self.gate is None or self.gate.mode != "on" or self.gate.moved_near(t)
+
     def _chunks(self, blocks, watch):
         """(capture end time, 32 ms chunk) from the input, until a restart is asked for or the default input
         changes. Every block is also kept for `clip`."""
@@ -280,7 +286,7 @@ class Voice(threading.Thread):
         for t_end, chunk in self._chunks(blocks, watch):
             p = vad(chunk)
             if not speaking:
-                preroll.append(chunk)
+                preroll.append((t_end, chunk))
                 voiced = voiced + 1 if p >= SPEECH_START else 0
                 if voiced >= START_CHUNKS and (self.gate is None or self.gate.is_open()):
                     speaking, buf, silence = True, list(preroll), 0
@@ -288,14 +294,14 @@ class Voice(threading.Thread):
                     self.on_state("listening")
                 continue
 
-            buf.append(chunk)
+            buf.append((t_end, chunk))
             silence = silence + 1 if p < SPEECH_END else 0
             if silence * CHUNK_S < END_SILENCE_S and len(buf) * CHUNK_S < MAX_UTTERANCE_S:
                 continue
 
             speaking, ended = False, t_end - silence * CHUNK_S
             preroll.clear()
-            audio_clip = np.concatenate(buf)
+            audio_clip = np.concatenate([c if self._yours(t) else np.zeros_like(c) for t, c in buf])
             self.on_state("transcribing")
             segments, _ = model.transcribe(audio_clip, language="en", beam_size=1, condition_on_previous_text=False)
             text = " ".join(s.text for s in segments).strip()
@@ -431,10 +437,10 @@ class CartesiaVoice(Voice):
                             if not sending:
                                 sending = True
                                 self._opened_at = (preroll[0][0] if preroll else t_block) - SEND_S
-                                for _, b in preroll:
-                                    ws.send(b)
+                                for t_pre, b in preroll:  # the lead-in, muted where your lips weren't moving
+                                    ws.send(b if self._yours(t_pre) else SILENCE)
                                 preroll.clear()
-                            ws.send(block)
+                            ws.send(block if self._yours(t_block) else SILENCE)  # others, in your pauses: muted
                             last_sent = time.time()
                         elif in_turn.is_set():  # face gone or lips still mid-turn: silence, so Cartesia ends the turn
                             ws.send(SILENCE)

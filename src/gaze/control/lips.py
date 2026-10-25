@@ -28,6 +28,8 @@ MIN_MOVING_FRAMES = 3
 LOOK_HOLD_S = 1.5  # glancing away mid-sentence doesn't count as not looking
 MIN_CONFIDENCE = 0.2  # tracker confidence: falls toward 0 when the head leaves the range it was calibrated facing
 TRACKER_STALE_S = 1.0  # no tracker messages for this long: fail open
+MASK_BEFORE_S = 0.6  # audio is kept only within this long after the lips last moved (pauses between words)...
+MASK_AFTER_S = 0.3  # ...or just before they move (the camera lags the mic; speech starts as the lips open)
 
 
 class LipGate:
@@ -112,6 +114,20 @@ class LipGate:
             moving = sum(1 for t in self._moves if a <= t <= b)
             faces = sum(1 for t in self._faces if a <= t <= b)
         return moving < max(MIN_MOVING_FRAMES, MIN_MOVING_SHARE * faces)
+
+    def moved_near(self, t, before=MASK_BEFORE_S, after=MASK_AFTER_S):
+        """Did the lips move around time `t` (an audio chunk's capture time)? Chunks where they didn't are someone
+        else (or nobody), so the audio is muted before it's transcribed. `after` covers the camera's lag behind the
+        mic. No tracker: True (fail open)."""
+        with self._lock:
+            if time.time() - self._last_msg > TRACKER_STALE_S:
+                return True
+            for m in reversed(self._moves):
+                if m < t - before:
+                    return False
+                if m <= t + after:
+                    return True
+        return False
 
     def lips_recent(self, seconds, now=None):
         """Lips seen moving (while facing the screen) within `seconds` (or no tracker: fail open)."""
