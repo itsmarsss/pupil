@@ -145,6 +145,17 @@ def test_truth_table_clarify_and_compound():
     assert route == "scroll" and extras["args"] == {"direction": "down", "amount": 4}
 
 
+def test_research_goes_to_the_agent_only_with_the_research_tools(monkeypatch):
+    from pupil.control import config
+    from pupil.control.gate import _decide
+
+    research = _answers(needs_research=0.95, wants_shortcut=0.9)
+    monkeypatch.setattr(config, "APIFY_TOKEN", "")
+    assert _decide(research, [], None, {})[0] == "shortcut"  # no token: as before
+    monkeypatch.setattr(config, "APIFY_TOKEN", "configured")
+    assert _decide(research, [], None, {})[0] == "agent"
+
+
 def test_truth_table_unsure_commands_and_follow_ups():
     from pupil.control.controller import _last_sentence
     from pupil.control.gate import _decide

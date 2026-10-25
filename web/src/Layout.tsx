@@ -44,8 +44,8 @@ function defaultLayout(api: DockviewApi) {
   add("crops", "Model input", { referencePanel: "camera", direction: "within" });
   add("scene", "3D", { referencePanel: "camera", direction: "below" });
   add("voice", "Voice & agent", { referencePanel: "screen", direction: "below" });
-  add("research", "Decision research", { referencePanel: "voice", direction: "within" });
   add("lips", "Lips", { referencePanel: "voice", direction: "within" });
+  add("research", "Decision research", { referencePanel: "voice", direction: "within" });
   add("plot-fatigue", "Fatigue (30 min)", { referencePanel: "health", direction: "below" });
   add("plot-eyes", "Eye openness", { referencePanel: "plot-fatigue", direction: "within" });
   add("calibration", "Calibration", { referencePanel: "status", direction: "within" });

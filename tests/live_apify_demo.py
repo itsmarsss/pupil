@@ -1,7 +1,7 @@
 """Opt-in capped Apify demo rehearsal; intentionally excluded from normal pytest.
 
 Run from the repository root:
-    GAZE_LIVE_APIFY=1 uv run python tests/live_apify_demo.py
+    PUPIL_LIVE_APIFY=1 uv run python tests/live_apify_demo.py
 """
 from __future__ import annotations
 
@@ -13,12 +13,12 @@ import time
 from pupil.control.providers.apify import ApifyProvider
 
 
-if os.environ.get("GAZE_LIVE_APIFY") != "1":
-    raise SystemExit("Set GAZE_LIVE_APIFY=1 to spend Apify credits on this live rehearsal.")
+if (os.environ.get("PUPIL_LIVE_APIFY") or os.environ.get("GAZE_LIVE_APIFY")) != "1":
+    raise SystemExit("Set PUPIL_LIVE_APIFY=1 to spend Apify credits on this live rehearsal.")
 
-runs = int(os.environ.get("GAZE_APIFY_DEMO_RUNS", "10"))
+runs = int(os.environ.get("PUPIL_APIFY_DEMO_RUNS", "10"))
 if runs < 1 or runs > 10:
-    raise SystemExit("GAZE_APIFY_DEMO_RUNS must be between 1 and 10.")
+    raise SystemExit("PUPIL_APIFY_DEMO_RUNS must be between 1 and 10.")
 
 provider = ApifyProvider()
 if not provider.configured:

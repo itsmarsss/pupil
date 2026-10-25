@@ -26,17 +26,31 @@ def test_mcp_url_is_minimal_and_anonymous_is_read_only():
     assert "telemetry-enabled=false" in authenticated
 
 
-def test_tool_filtering_preserves_no_token_behavior(monkeypatch):
+def test_tools_follow_the_token_and_jevs_research_judgment(monkeypatch):
     monkeypatch.setattr(config, "APIFY_TOKEN", "")
-    assert providers.tools_for("write this in Notes") == []
-    assert {t["name"] for t in providers.tools_for("search Apify actors")} == {
-        "apify_search_actors", "apify_actor_details",
-    }
+    assert providers.tools_for(research=False) == []
+    assert {t["name"] for t in providers.tools_for(research=True)} == {"apify_search_actors", "apify_actor_details"}
     monkeypatch.setattr(config, "APIFY_TOKEN", "configured")
-    ordinary = {t["name"] for t in providers.tools_for("summarize this")}
+    ordinary = {t["name"] for t in providers.tools_for(research=False)}
     assert ordinary == {"apify_web_research", "apify_fetch_page"}
-    live = {t["name"] for t in providers.tools_for("research current product prices")}
+    live = {t["name"] for t in providers.tools_for(research=True)}
     assert "apify_run_actor" in live and len(live) == 5
+
+
+def test_one_task_cannot_spend_past_its_budget(monkeypatch):
+    agent = Agent.__new__(Agent)
+    agent._cancel, agent.on_status, agent.on_provider_event = None, lambda text: None, lambda state: None
+    monkeypatch.setattr(config, "APIFY_TASK_BUDGET_USD", 0.5)
+    monkeypatch.setattr(config, "APIFY_MAX_CHARGE_USD", 0.25)
+    calls = []
+    monkeypatch.setattr(providers, "call", lambda name, inp, *a: calls.append(name) or providers.ProviderResult(
+        "ok", metadata={"charge_usd": None, "max_charge_usd": 0.25}))
+    agent.provider_metadata = []
+    assert agent._custom("apify_web_research", {"query": "a"})[1] is False
+    assert agent._custom("apify_web_research", {"query": "b"})[1] is False
+    text, is_error = agent._custom("apify_web_research", {"query": "c"})
+    assert is_error and "budget" in text and len(calls) == 2  # third would pass $0.50 worst case: refused
+    assert agent._custom("apify_search_actors", {"query": "x"})[1] is False  # lookups are free
 
 
 def test_search_uses_cached_discovery(monkeypatch):

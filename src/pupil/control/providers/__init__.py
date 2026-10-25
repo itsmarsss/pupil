@@ -10,12 +10,6 @@ from .apify import ALLOWED_ACTORS, ApifyProvider, ProviderResult
 _provider: ApifyProvider | None = None
 _lock = threading.Lock()
 
-_LIVE_TERMS = {
-    "actor", "apify", "current", "latest", "live", "web", "research", "compare",
-    "competitor", "lead", "monitor", "social", "scrape", "source", "price", "listing",
-}
-
-
 def _apify() -> ApifyProvider:
     global _provider
     with _lock:
@@ -118,17 +112,36 @@ RUN_TOOL = {
 TOOLS = {t["name"]: t for t in (RESEARCH_TOOL, FETCH_TOOL, SEARCH_TOOL, DETAILS_TOOL, RUN_TOOL)}
 
 
-def tools_for(request: str) -> list[dict]:
-    text = request.lower()
-    live = any(term in text for term in _LIVE_TERMS)
+def tools_for(research: bool) -> list[dict]:
+    """research: Jev judged the request needs current information from the web (gate.NEEDS_RESEARCH). Reading
+    public pages is offered whenever there's a token; the Actor marketplace only when research is in play."""
     tools: list[dict] = []
     if config.APIFY_TOKEN:
         tools.extend((RESEARCH_TOOL, FETCH_TOOL))
-    if live:
+    if research:
         tools.extend((SEARCH_TOOL, DETAILS_TOOL))
         if config.APIFY_TOKEN:
             tools.append(RUN_TOOL)
     return tools
+
+
+PAID = {"apify_web_research", "apify_fetch_page", "apify_run_actor"}
+
+
+def charge_requested(name: str, inp: dict) -> float:
+    """The most a call may cost (its cap), 0 for the free marketplace lookups."""
+    if name not in PAID:
+        return 0.0
+    return min(float(inp.get("max_charge_usd", config.APIFY_MAX_CHARGE_USD)), config.APIFY_MAX_CHARGE_USD)
+
+
+def spent(metadata: list[dict]) -> float:
+    """What a task's runs cost so far: the charge Apify reported, else the run's cap (assume the worst)."""
+    total = 0.0
+    for m in metadata:
+        charge = m.get("charge_usd")
+        total += float(charge) if isinstance(charge, (int, float)) else float(m.get("max_charge_usd") or 0.0)
+    return total
 
 
 def call(

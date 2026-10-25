@@ -43,6 +43,8 @@ APIFY_MAX_OUTPUT_BYTES = min(
 )
 APIFY_MAX_CHARGE_USD = min(1.0, max(0.01, float(env("APIFY_MAX_CHARGE_USD", "0.25"))))
 APIFY_RESEARCH_ACTOR = env("APIFY_RESEARCH_ACTOR", "apify/rag-web-browser")
+# All paid runs in one agent task together; each run is also capped by APIFY_MAX_CHARGE_USD
+APIFY_TASK_BUDGET_USD = min(5.0, max(0.01, float(env("APIFY_TASK_BUDGET_USD", "1.0"))))
 APIFY_RESEARCH_RETENTION = min(20, max(1, int(env("APIFY_RESEARCH_RETENTION", "5"))))
 
 # Fast tier: a Jev-style decision model (TypeSafe System One API; any compatible base URL works)

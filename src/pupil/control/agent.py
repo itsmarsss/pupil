@@ -135,9 +135,10 @@ class Agent:
         self._paused = None
 
     def start(self, request, gaze, target, candidates, app_name, on_done=None, tier="standard", budget="normal",
-              context=""):
+              context="", research=False):
         """on_done(result text, steps, seconds) when the run ends (not when it pauses for "confirm"). context: the
-        conversation just before this request, so "that", "the other one" and answers make sense."""
+        conversation just before this request, so "that", "the other one" and answers make sense. research: Jev
+        judged it needs current web information (offers the Apify marketplace tools)."""
         if not (os.environ.get("ANTHROPIC_API_KEY") or os.environ.get("ANTHROPIC_AUTH_TOKEN")):
             self.on_status("This needs the agent, but ANTHROPIC_API_KEY isn't set (add it to .env).")
             return
@@ -151,7 +152,8 @@ class Agent:
         self.tier, self.budget = tier, budget  # chosen by Jev (gate.AGENT_TIER / AGENT_BUDGET)
         self._model, self._effort = config.AGENT_TIERS.get(tier, config.AGENT_TIERS["standard"])
         self._max_steps = config.AGENT_BUDGETS.get(budget, config.MAX_AGENT_STEPS)
-        self._tools = [*TOOLS, *apps.tools_for(request), *providers.tools_for(request)]
+        # app adapters only when their app is in play; web research tools when there's a token or Jev asks for them
+        self._tools = [*TOOLS, *apps.tools_for(request), *providers.tools_for(research)]
         messages = [self._first_message(request, gaze, target, candidates, app_name, context)]
         self._spawn(messages, request, None)
 
@@ -335,6 +337,10 @@ class Agent:
         adapted = apps.call(name, inp)
         if adapted is not None:
             return adapted
+        cost, so_far = providers.charge_requested(name, inp), providers.spent(self.provider_metadata)
+        if cost and so_far + cost > config.APIFY_TASK_BUDGET_USD + 1e-9:  # each run is capped; so is the task
+            return (f"Not run: this task's Apify budget is ${config.APIFY_TASK_BUDGET_USD:.2f} and ${so_far:.2f} is "
+                    f"already used (this run may cost up to ${cost:.2f}). Work with what you have."), True
         provided = providers.call(name, inp, self._cancel, self.on_status, self.on_provider_event)
         if provided is not None:
             if provided.metadata:

@@ -139,7 +139,7 @@ class Recording:
 
 
 class VoiceLog:
-    """Events from the voice controller (gaze.control): mic state, what it heard, what it decided.
+    """Events from the voice controller (pupil.control): mic state, what it heard, what it decided.
     Written from the publisher's thread, read by the dashboard."""
 
     def __init__(self, keep: int = 30):
@@ -147,7 +147,7 @@ class VoiceLog:
         self._log: collections.deque = collections.deque(maxlen=keep)
         self._state: dict = {}
         self._lips: collections.deque = collections.deque(maxlen=12)  # lip-gate verdicts, newest last
-        retention = min(20, max(1, int(env("APIFY_RESEARCH_RETENTION", "5"))))
+        retention = min(20, max(1, int(env("APIFY_RESEARCH_RETENTION", "5"))))  # finished research runs kept
         self._research: collections.deque = collections.deque(maxlen=retention)
 
     def add(self, msg: dict) -> None:

@@ -105,10 +105,8 @@ class VoiceController:
         self.gate = Gate()
         if not self.gate.available:
             self._status(f"Fast tier (Jev) off: {self.gate.error}. Unmatched commands go straight to the agent.")
-        self.agent = Agent(
-            self.screen, self.gate, self._status,
-            on_provider_event=lambda state: self.gaze.report("research", research=state),
-        )
+        self.agent = Agent(self.screen, self.gate, self._status,
+                           on_provider_event=lambda state: self.gaze.report("research", research=state))
         self.speaker = Speaker(on_state=lambda on: self.events.put(("speaking", on)))
         self.agent.on_reply = lambda text: self._say(text)  # the agent's answer (or what it's waiting on), aloud
         self.episodes = EpisodeLog(source="typed" if typed else "voice")
@@ -516,18 +514,18 @@ class VoiceController:
         ep.setdefault("agent_request", request)
         tier, budget = getattr(self, "_agent_route", ("standard", "normal"))
         ep.update(agent_tier=tier, agent_budget=budget)
+        research = getattr(self, "_agent_research", False)
+        ep["agent_research"] = research
         self.agent.start(request, gaze, target, candidates, app, tier=tier, budget=budget,
-                         context=self._conversation_context(request),
+                         context=self._conversation_context(request), research=research,
                          on_done=lambda text, steps, s: (
-                             self.episodes.outcome(
-                                 ep, agent_result=text, agent_steps=steps, agent_s=round(s, 1),
-                                 apify=list(self.agent.provider_metadata),
-                             ),
+                             self.episodes.outcome(ep, agent_result=text, agent_steps=steps, agent_s=round(s, 1),
+                                                   apify=list(self.agent.provider_metadata)),
                              self._note_activity(text or "Agent finished", ep, agent=True)))
 
     def _route_with_gate(self, request, gaze, target, candidates, allow_clarify=True, assume_command=False):
         ep = self._ep
-        self._agent_route = ("standard", "normal")  # until Jev says otherwise
+        self._agent_route, self._agent_research = ("standard", "normal"), False  # until Jev says otherwise
         if not assume_command:  # (a confirmed "maybe" is already remembered)
             self._remember_command(request)
         app = macos.frontmost_app()
@@ -558,6 +556,7 @@ class VoiceController:
         if d.answers["nouls"].get("corrects_last", 0) >= YES:  # "no, not that": the last action was wrong
             self.episodes.corrected(ep)
         self._agent_route = (d.tier, d.budget)  # which model and how long, if this goes to the agent
+        self._agent_research = d.research  # and whether it needs the web research tools
         self._candidates = candidates  # for _close: the close button that belongs to the target
         self._status(d.summary())
 
