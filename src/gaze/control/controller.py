@@ -178,7 +178,13 @@ class VoiceController:
         cmd = router.route(text)
         if cmd is None:
             return
+        fixed = router.correct(cmd.text) if cmd.kind == "unknown" else None
+        if fixed:  # near-miss of a known phrase: "closed time" -> "close tab"
+            print(f"[{time.strftime('%H:%M:%S')}] treating \"{cmd.text}\" as \"{fixed}\"", flush=True)
+            cmd = router.route(fixed, wake=False)
         ep = self.episodes.begin(cmd.text, t0, t1, cmd.kind)
+        if fixed:
+            ep["heard_as"] = text
         if lips:
             ep["lips"] = lips
         self.hud.heard = cmd.text
@@ -268,8 +274,12 @@ class VoiceController:
 
         if cmd.kind == "unknown":
             ep["route"] = "gate"
-            self._route_with_gate(cmd.args["request"], gaze, target, candidates,
-                                  allow_clarify=not cmd.args.get("clarified"))
+            request = cmd.args["request"]
+            fixed = router.correct(request, [c.label for c in candidates if c.label])
+            if fixed:  # near-miss of a label near the gaze: "click search repose" -> "click Search repositories"
+                self._status(f'Treating "{request}" as "{fixed}"')
+                ep["corrected_to"] = request = fixed
+            self._route_with_gate(request, gaze, target, candidates, allow_clarify=not cmd.args.get("clarified"))
             return
 
         ep["route"] = cmd.kind
