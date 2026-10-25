@@ -110,14 +110,25 @@ def _ray_sphere_near(ray: np.ndarray, centre: np.ndarray, radius: float) -> np.n
     return centre + radius * normalize(ray * b - centre)  # missed: closest sphere point to the ray
 
 
-def measure(face: FaceObservation) -> EyeMeasure | None:
+@dataclass(frozen=True)
+class Reconstruction:
+    """Full 3D reconstruction of one frame, for visualisation. `measure` is the compact part."""
+
+    points: np.ndarray  # (478, 3) landmarks in camera space (cm)
+    iris: np.ndarray  # (2, 3) iris centres on the eyeball spheres, right then left
+    head_origin: np.ndarray  # (3,) MediaPipe's head origin (cm)
+    measure: EyeMeasure
+
+
+def reconstruct(face: FaceObservation) -> Reconstruction | None:
     if face.transform is None or face.focal_px is None:
         return None
     w, h = face.frame_size
     tan_x, tan_y = w / (2 * face.focal_px), h / (2 * face.focal_px)
     R, t = _split_pose(face.transform)
     f_mp = 1 / np.tan(np.radians(MEDIAPIPE_VFOV_DEG) / 2)
-    depth = abs(t[2]) * (1 / tan_y) / f_mp
+    scale = (1 / tan_y) / f_mp  # MediaPipe's depth for its assumed FOV → real depth
+    depth = abs(t[2]) * scale
 
     lm = face.landmarks
     u, v, z = lm[:, 0] / w, lm[:, 1] / h, lm[:, 2] / w  # MediaPipe's normalised coordinates
@@ -126,25 +137,47 @@ def measure(face: FaceObservation) -> EyeMeasure | None:
 
     fwd = R[:, 2] if R[2, 2] > 0 else -R[:, 2]
     B = np.stack([R[:, 0], R[:, 1], fwd], axis=1)
-    centres, angles = [], []
+    centres, angles, irises = [], [], []
     for eye in ("right", "left"):
         c = pts[list(CORNERS[eye])].mean(axis=0) - fwd * CENTRE_DEPTH_CM
         i = IRIS[eye]
         ray = normalize(np.array([(2 * u[i] - 1) * tan_x, (1 - 2 * v[i]) * tan_y, -1.0]))
         iris = _ray_sphere_near(ray, c, EYEBALL_RADIUS_CM)
         centres.append(c)
+        irises.append(iris)
         angles.append(to_angles(B, normalize(iris - c)))
-    return EyeMeasure(np.array(centres), np.array(angles), B, _head_ypr(R), pts[NOSE_TIP])
+    m = EyeMeasure(np.array(centres), np.array(angles), B, _head_ypr(R), pts[NOSE_TIP])
+    return Reconstruction(pts, np.array(irises), np.array([t[0], t[1], t[2] * scale]), m)
+
+
+def measure(face: FaceObservation) -> EyeMeasure | None:
+    rec = reconstruct(face)
+    return rec.measure if rec is not None else None
+
+
+def eye_rays(m: EyeMeasure, gain: np.ndarray, kappa: np.ndarray) -> tuple[np.ndarray, np.ndarray | None]:
+    """Per-eye calibrated visual-axis directions (2, 3) and their screen-plane hits (2, 3), or None if a ray
+    points away from the screen."""
+    dirs = from_angles(m.basis, m.angles * gain + kappa)
+    if np.any(dirs[:, 2] <= 1e-6):
+        return dirs, None
+    s = -m.centres[:, 2] / dirs[:, 2]
+    return dirs, m.centres + dirs * s[:, None]
+
+
+def face_pointing(m: EyeMeasure) -> np.ndarray | None:
+    """Where the head's forward axis from the nose tip meets the screen plane (cm, x/y)."""
+    f = m.basis[:, 2]
+    if f[2] <= 1e-6:
+        return None
+    return (m.nose + f * (-m.nose[2] / f[2]))[:2]
 
 
 def hits(m: EyeMeasure, gain: np.ndarray, kappa: np.ndarray) -> np.ndarray | None:
     """Screen-plane hit (cm, x/y) of the calibrated visual axes, averaged over both eyes.
     gain, kappa: (2,) for yaw, pitch; angle = gain * measured + kappa."""
-    dirs = from_angles(m.basis, m.angles * gain + kappa)  # (2, 3)
-    if np.any(dirs[:, 2] <= 1e-6):
-        return None  # a ray points away from the screen
-    s = -m.centres[:, 2] / dirs[:, 2]
-    return (m.centres + dirs * s[:, None])[:, :2].mean(axis=0)
+    _, per_eye = eye_rays(m, gain, kappa)
+    return None if per_eye is None else per_eye[:, :2].mean(axis=0)
 
 
 MEASURE_DIM = 25  # flattened EyeMeasure: centres 6, angles 4, basis 9, head_ypr 3, nose 3
