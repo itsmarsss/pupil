@@ -97,6 +97,7 @@ class Agent:
         self._paused = None  # (messages, calls, request) waiting for the user's "confirm"
         self._on_done, self._steps, self._started = None, 0, 0.0
         self._tools = TOOLS
+        self.request = ""
         self.on_reply = lambda text: None  # the run's final or paused message (read aloud)
         self._steer: list[str] = []  # what the user said while the agent was working
         self._steer_lock = threading.Lock()
@@ -127,6 +128,7 @@ class Agent:
             return
         self._paused = None
         self._on_done, self._steps, self._started = on_done, 0, time.time()
+        self.request = request  # what it's working on (for judging interruptions)
         self._tools = [*TOOLS, *apps.tools_for(request)]  # app adapters only when their app is in play
         messages = [self._first_message(request, gaze, target, candidates, app_name)]
         self._spawn(messages, request, None)

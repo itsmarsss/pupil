@@ -15,7 +15,7 @@ import time
 from . import actions, apps, commands, config, dictation, macos, router, snapping, uitree
 from .agent import Agent
 from .episodes import EpisodeLog, element_dict
-from .gate import CLARIFY_PROMPTS, MAX_CANDIDATES, YES, Gate
+from .gate import CLARIFY_PROMPTS, MAX_CANDIDATES, NO, YES, Gate
 from .hud import Hud
 from .lips import LipGate
 from .screen import Screen
@@ -306,7 +306,17 @@ class VoiceController:
                 ep["route"] = "nothing_to_confirm"
                 self._status("Nothing to confirm.")
             return
-        if self.agent.busy:  # talking to Claude mid-task: it hears this at its next step
+        if self.agent.busy:  # talking to Claude mid-task: it hears this at its next step, if it's meant for it
+            if self.gate.available and cmd.kind == "unknown":
+                try:
+                    p, _ = self.gate.is_for_the_task(cmd.text, ep.get("agent_request") or self.agent.request)
+                except Exception:
+                    p = 1.0  # can't tell: better to pass it on than lose an instruction
+                ep["steer_p"] = round(p, 3)
+                if p < NO:
+                    ep["route"] = "ignore"
+                    self._status(f'Not for Claude: "{cmd.text}"')
+                    return
             ep["route"] = "steer"
             self.agent.steer(cmd.text)
             self._status(f'Telling Claude: "{cmd.text}"')

@@ -283,6 +283,18 @@ class Gate:
               "elements": {el.describe(): round(result.nouls[f"el_{i}"].noul, 3) for i, el in enumerate(elements)}})
         return decision
 
+    def is_for_the_task(self, utterance, task):
+        """While the agent works on `task`, is `utterance` an instruction for it (change, add to, narrow or stop
+        the task), rather than the user talking to someone or thinking aloud? (probability, ms)"""
+        result, ms = self._ask("steer", {"assistant_is_working_on": task, "user_just_said": utterance}, {
+            "steer": Noul(instructions="Is `user_just_said` meant for the assistant, about the task it's working on "
+                                       "(a correction, an addition, a preference, a follow-up, or stop)?",
+                          criteria=NoulCriteria(
+                              true="e.g. \"actually make it blue\", \"view it from above\", \"delete this wheel\", "
+                                   "\"no, the other one\", \"also add a spoiler\"",
+                              false="talking to someone else, thinking aloud, filler, or words unrelated to the task"))})
+        return result.nouls["steer"].noul, ms
+
     def pick_target(self, utterance, gaze, candidates):
         """Which of several nearby elements a bare command ("click this") means: (element, probability, ms)."""
         elements = candidates[:MAX_CANDIDATES]
