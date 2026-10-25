@@ -50,7 +50,7 @@ export function Panel() {
           ))}
         </ul>
       </section>
-      <section className="controls">
+      {!scene?.replay && <section className="controls">
         <h3>Controls</h3>
         <button disabled={!connected || busy} onClick={() => engine.send("recalibrate")}>Recalibrate</button>
         <button disabled={!connected || busy} onClick={() => engine.send("recentre")}>Re-centre (1 dot)</button>
@@ -58,7 +58,7 @@ export function Panel() {
         <button disabled={!connected || busy} onClick={() => engine.send("measure")}>Measure (still + moving)</button>
         <button disabled={!connected} onClick={() => engine.send("cycle_smoothing")}>Smoothing: {frame?.smoothing ?? "–"}</button>
         <button disabled={!connected} onClick={() => engine.send("toggle_overlay")}>Ring: {frame?.overlay ? "on" : "off"}</button>
-      </section>
+      </section>}
     </aside>
   );
 }

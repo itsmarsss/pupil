@@ -50,3 +50,13 @@ main {
 .plots { display: grid; grid-template-columns: repeat(5, 1fr); gap: 8px; padding: 0 8px 8px; min-height: 0; }
 .plot { background: var(--card); border: 1px solid var(--line); border-radius: 8px; overflow: hidden; min-width: 0; }
 .plot .u-title { font-size: 11px; font-weight: 500; color: var(--muted); height: 22px; line-height: 22px; }
+
+header { display: flex; align-items: center; gap: 16px; }
+.timeline { display: flex; align-items: center; gap: 8px; flex: 1; font-weight: 400; }
+.timeline .session { color: var(--muted); font-size: 12px; }
+.timeline button, .timeline select { background: #1c2230; color: var(--text); border: 1px solid #2c3445;
+                                     border-radius: 6px; padding: 3px 9px; cursor: pointer; }
+.timeline .track { position: relative; flex: 1; height: 22px; display: flex; align-items: center; }
+.timeline .track input { width: 100%; position: relative; z-index: 1; }
+.timeline .marker { position: absolute; top: 0; width: 2px; height: 6px; }
+.timeline .pos { color: var(--muted); font-size: 12px; min-width: 140px; text-align: right; }

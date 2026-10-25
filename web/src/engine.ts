@@ -54,8 +54,8 @@ class EngineStore {
     this.ws?.close();
   }
 
-  send(cmd: Command) {
-    this.ws?.send(JSON.stringify({ cmd }));
+  send(cmd: Command, value?: number) {
+    this.ws?.send(JSON.stringify(value === undefined ? { cmd } : { cmd, value }));
   }
 
   private receive(data: string | ArrayBuffer) {
@@ -73,13 +73,23 @@ class EngineStore {
       this.schemaMismatch = true;
       return;
     }
-    if (msg.type === "scene") this.scene = msg;
+    if (msg.type === "scene") {
+      if (this.scene?.replay?.session !== msg.replay?.session) this.resetHistory();
+      this.scene = msg;
+    }
     else if (msg.type === "calibration") this.calibration = msg;
     else this.addFrame(msg);
     this.version++;
   }
 
+  private resetHistory() {
+    this.trail = [];
+    for (const k of Object.keys(this.series)) this.series[k] = [];
+  }
+
   private addFrame(f: FrameState) {
+    // a replay jumping backwards (seek or loop) would make the plots' time axis run backwards
+    if (this.frame && f.t < this.frame.t) this.resetHistory();
     this.frame = f;
     if (f.gaze.smoothed) {
       this.trail.push(f.gaze.smoothed);

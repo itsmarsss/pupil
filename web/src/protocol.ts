@@ -13,6 +13,7 @@ export interface SceneInfo {
   screen: { width_pt: number; height_pt: number; width_mm: number; height_mm: number; corners_cm: Vec3[] };
   camera: { focal_px_1080: number; measured: boolean; hfov_deg: number };
   lid_deg: number | null;
+  replay?: { session: string; frames: number; markers: { index: number; phase: string | null }[] };
 }
 
 export interface CalibrationInfo {
@@ -79,8 +80,11 @@ export interface FrameState {
   lid_deg?: number | null;
   smoothing?: string;
   overlay?: boolean;
+  replay?: { index: number; playing: boolean; speed: number };
 }
 
 export type EngineMessage = SceneInfo | CalibrationInfo | FrameState;
 
-export type Command = "recalibrate" | "recentre" | "check" | "measure" | "cycle_smoothing" | "toggle_overlay";
+export type Command =
+  | "recalibrate" | "recentre" | "check" | "measure" | "cycle_smoothing" | "toggle_overlay" // live app
+  | "play" | "pause" | "seek" | "step" | "speed"; // replay

@@ -64,6 +64,10 @@ target and every estimate, live plots, the calibration summary, and controls. It
 listens on 127.0.0.1. For dashboard development, run `pnpm dev` in `web/` next to a
 running `gaze --dashboard`.
 
+`uv run gaze replay SESSION --dashboard` plays a saved session back in the same views, with
+the app's own calibration fitted on that session, a timeline marking each dot, and
+play / pause / step / speed controls.
+
 ### Options
 
 | Option | |
