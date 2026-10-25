@@ -25,6 +25,7 @@ PREROLL_S = 1.5  # audio kept from before the lip gate opens, so a late open los
 PREROLL_CHUNKS = int(PREROLL_S / CHUNK_S)
 END_SILENCE_S = 0.6
 MAX_UTTERANCE_S = 15
+RECENT_S = 30  # mic audio kept for `clip` (each command's audio is saved with its episode)
 HALLUCINATIONS = {"", "you", "thank you", "thanks for watching", "bye"}  # Whisper's favorite outputs on noise
 
 
@@ -54,6 +55,54 @@ def default_input_id():
     return device.value if err == 0 else None
 
 
+_TRANSPORT = _PropertyAddress(_fourcc("tran"), _fourcc("glob"), 0)  # kAudioDevicePropertyTransportType
+_BLUETOOTH = {_fourcc("blue"), _fourcc("blea")}  # classic and LE (AirPods, headsets)
+
+
+def default_input_is_bluetooth():
+    """True when the system default input is a Bluetooth device. Using its mic switches it to call-quality audio
+    for everything it plays, for as long as the mic is open (and voice control keeps it open)."""
+    device = default_input_id()
+    if device is None:
+        return False
+    transport, size = ctypes.c_uint32(0), ctypes.c_uint32(4)
+    err = _coreaudio.AudioObjectGetPropertyData(device, ctypes.byref(_TRANSPORT), 0, None,
+                                                ctypes.byref(size), ctypes.byref(transport))
+    return err == 0 and transport.value in _BLUETOOTH
+
+
+_LISTENER = ctypes.CFUNCTYPE(ctypes.c_int32, ctypes.c_uint32, ctypes.c_uint32, ctypes.POINTER(_PropertyAddress),
+                             ctypes.c_void_p)
+
+
+class DefaultInputWatch:
+    """Sets `changed` the moment macOS switches its default input (AirPods connected, taken out, put in the case),
+    via a CoreAudio property listener; `poll()` is the fallback if the listener couldn't be installed."""
+
+    def __init__(self):
+        self.changed = threading.Event()
+        self._last, self._last_poll = default_input_id(), time.time()
+        self._callback = _LISTENER(self._fire)  # keep a reference: CoreAudio holds only the pointer
+        self.listening = _coreaudio.AudioObjectAddPropertyListener(1, ctypes.byref(_DEFAULT_INPUT),
+                                                                   self._callback, None) == 0
+
+    def _fire(self, *_):
+        self.changed.set()
+        return 0
+
+    def poll(self):
+        if not self.listening and time.time() - self._last_poll > 1.0:
+            self._last_poll = time.time()
+            if default_input_id() != self._last:
+                self.changed.set()
+        return self.changed.is_set()
+
+    def close(self):
+        if self.listening:
+            _coreaudio.AudioObjectRemovePropertyListener(1, ctypes.byref(_DEFAULT_INPUT), self._callback, None)
+            self.listening = False
+
+
 def find_mic(name):
     """Index of the first input device whose name contains `name`, else None."""
     for i, device in enumerate(sd.query_devices()):
@@ -71,20 +120,28 @@ def input_devices():
     return names
 
 
+def builtin_mic():
+    index = find_mic("MacBook")
+    return index if index is not None else find_mic("Built-in")
+
+
 def pick_mic(preferred=None):
     """(device index, name): `preferred` if it's connected, else the system default input, unless that's a
-    silent virtual device, in which case the built-in mic."""
+    silent virtual device or (config.AVOID_BLUETOOTH_MIC) Bluetooth, in which case the built-in mic: AirPods keep
+    full-quality audio, and the MacBook mic hears you fine from the desk."""
     if preferred:
         index = find_mic(preferred)
         if index is not None:
             return index, sd.query_devices(index)["name"]
     try:
         default = sd.query_devices(kind="input")
-        if not any(v in default["name"].lower() for v in VIRTUAL_INPUTS):
+        virtual = any(v in default["name"].lower() for v in VIRTUAL_INPUTS)
+        bluetooth = config.AVOID_BLUETOOTH_MIC and default_input_is_bluetooth() and builtin_mic() is not None
+        if not virtual and not bluetooth:
             return default["index"], default["name"]
     except sd.PortAudioError:
         pass  # no default input right now
-    index = find_mic("MacBook") or find_mic("Built-in")
+    index = builtin_mic()
     return index, (sd.query_devices(index)["name"] if index is not None else "system default")
 
 
@@ -101,6 +158,8 @@ class Voice(threading.Thread):
         self.gate = gate
         self.choice = config.MIC_NAME or None  # None: follow the system default input
         self.isolation = config.VOICE_PROCESSING  # Apple voice processing on the default input
+        self._recent: deque = deque(maxlen=int(RECENT_S * audio.RATE / audio.CHUNK) + 8)  # (capture end, samples)
+        self._recent_lock = threading.Lock()
         self.device = ""  # name of the mic in use
         self._restart = threading.Event()  # reopen the stream (another mic chosen, or turned on/off)
         self._enabled = threading.Event()
@@ -110,6 +169,21 @@ class Voice(threading.Thread):
         """Switch to the mic named `name`, or None to follow the system default (callable from any thread)."""
         self.choice = name
         self._restart.set()
+
+    def _remember(self, t_end, samples):
+        with self._recent_lock:
+            self._recent.append((t_end, samples))
+
+    def clip(self, t0, t1):
+        """The mic audio captured between t0 and t1 (time.time() clock) from the last RECENT_S, 16 kHz float32."""
+        with self._recent_lock:
+            blocks = [(t, x) for t, x in self._recent if t > t0 and t - len(x) / audio.RATE < t1]
+        if not blocks:
+            return np.zeros(0, np.float32)
+        x = np.concatenate([b for _, b in blocks])
+        start = blocks[0][0] - len(blocks[0][1]) / audio.RATE
+        a, b = max(int((t0 - start) * audio.RATE), 0), max(int((t1 - start) * audio.RATE), 0)
+        return x[a:b]
 
     def set_isolation(self, on):
         """Apple voice processing on or off (reopens the mic)."""
@@ -158,7 +232,7 @@ class Voice(threading.Thread):
             # PortAudio caches the device list at startup; re-initialize so newly connected devices show up.
             sd._terminate()
             sd._initialize()
-            watched = default_input_id() if self.choice is None else None  # only follow the default when unset
+            watch = DefaultInputWatch() if self.choice is None else None  # only follow the default when unset
             try:
                 source, name = self._open()
             except Exception as e:  # no usable input right now (e.g. AirPods mid-connect)
@@ -171,45 +245,46 @@ class Voice(threading.Thread):
             try:
                 self.on_state("idle")
                 vad.reset()
-                self._listen(model, vad, source.blocks, watched)
+                self._listen(model, vad, source.blocks, watch)
             except sd.PortAudioError as e:  # device vanished mid-stream (e.g. AirPods taken out)
                 print(f"Microphone error ({e}); switching...", flush=True)
                 time.sleep(1)
             finally:
+                if watch is not None:
+                    watch.close()
                 try:
                     source.stop()
                 except Exception:
                     pass
 
-    def _chunks(self, blocks, watched):
-        """32 ms chunks from the input, until a restart is asked for or the system default input changes."""
-        pending = np.zeros(0, np.float32)
-        last_check = time.time()
-        while not self._restart.is_set():
-            if watched is not None and time.time() - last_check > 1.0:
-                last_check = time.time()
-                if default_input_id() != watched:
-                    return
+    def _chunks(self, blocks, watch):
+        """(capture end time, 32 ms chunk) from the input, until a restart is asked for or the default input
+        changes. Every block is also kept for `clip`."""
+        pending, pending_end = np.zeros(0, np.float32), 0.0
+        while not self._restart.is_set() and not (watch is not None and watch.poll()):
             try:
-                pending = np.concatenate([pending, blocks.get(timeout=0.5)])
+                pending_end, block = blocks.get(timeout=0.5)
             except queue.Empty:
                 continue  # stream stalled (device switching); the checks above handle it
+            self._remember(pending_end, block)
+            pending = np.concatenate([pending, block])
             while len(pending) >= audio.CHUNK:
-                yield pending[:audio.CHUNK]
-                pending = pending[audio.CHUNK:]
+                chunk, pending = pending[:audio.CHUNK], pending[audio.CHUNK:]
+                yield pending_end - len(pending) / audio.RATE, chunk
 
-    def _listen(self, model, vad, blocks, watched):
-        """Speech (by Silero, not loudness) starts an utterance; END_SILENCE_S without it ends one."""
+    def _listen(self, model, vad, blocks, watch):
+        """Speech (by Silero, not loudness) starts an utterance; END_SILENCE_S without it ends one. Times come
+        from when the audio was captured, so they stay right while Whisper is busy with the previous utterance."""
         preroll = deque(maxlen=PREROLL_CHUNKS)
         speaking, voiced, silence, buf, started = False, 0, 0, [], 0.0
-        for chunk in self._chunks(blocks, watched):
+        for t_end, chunk in self._chunks(blocks, watch):
             p = vad(chunk)
             if not speaking:
                 preroll.append(chunk)
                 voiced = voiced + 1 if p >= SPEECH_START else 0
                 if voiced >= START_CHUNKS and (self.gate is None or self.gate.is_open()):
                     speaking, buf, silence = True, list(preroll), 0
-                    started = time.time() - len(preroll) * CHUNK_S
+                    started = t_end - len(preroll) * CHUNK_S
                     self.on_state("listening")
                 continue
 
@@ -218,7 +293,7 @@ class Voice(threading.Thread):
             if silence * CHUNK_S < END_SILENCE_S and len(buf) * CHUNK_S < MAX_UTTERANCE_S:
                 continue
 
-            speaking, ended = False, time.time() - silence * CHUNK_S
+            speaking, ended = False, t_end - silence * CHUNK_S
             preroll.clear()
             audio_clip = np.concatenate(buf)
             self.on_state("transcribing")
@@ -280,7 +355,7 @@ class CartesiaVoice(Voice):
             self._wait_enabled()
             sd._terminate()  # see Voice.run: pick up newly connected mics
             sd._initialize()
-            watched = default_input_id() if self.choice is None else None
+            watch = DefaultInputWatch() if self.choice is None else None
             try:
                 source, name = self._open()
             except Exception as e:  # no usable input right now
@@ -294,12 +369,14 @@ class CartesiaVoice(Voice):
                 with connect(self._url(), additional_headers={"X-API-Key": config.CARTESIA_API_KEY,
                                                               "Cartesia-Version": CARTESIA_VERSION},
                              ssl=tls, open_timeout=5) as ws:
-                    self._stream(ws, source.blocks, watched)
+                    self._stream(ws, source.blocks, watch)
             except Exception as e:  # network down, bad key: retry, then fall back
                 self._failures += 1
                 print(f"Cartesia error ({e}); retrying...", flush=True)
                 time.sleep(1)
             finally:
+                if watch is not None:
+                    watch.close()
                 try:
                     source.stop()
                 except Exception:
@@ -313,7 +390,7 @@ class CartesiaVoice(Voice):
         params += [("keyterm", term) for term in keyterms()]
         return f"{CARTESIA_URL}?{urllib.parse.urlencode(params, quote_via=urllib.parse.quote)}"
 
-    def _stream(self, ws, blocks, watched):
+    def _stream(self, ws, blocks, watch):
         """Send audio and handle turn events until the connection drops, another mic is picked or voice control is
         turned off (return), or the default mic changes.
 
@@ -322,30 +399,38 @@ class CartesiaVoice(Voice):
         stop, failed = threading.Event(), threading.Event()
         in_turn = threading.Event()
         self._opened_at = None  # when the gate last opened: speech started about then
+        # Capture time of the newest audio: Cartesia's events are about audio up to here, so turn times use it
+        # rather than when the event arrived (which adds network and Bluetooth delay).
+        self._captured = time.time()
 
         def send_audio():  # off the audio callback, which must never block on the network
-            pending = np.zeros(0, np.float32)
-            preroll = deque(maxlen=int(PREROLL_S / SEND_S))
+            pending, pending_end = np.zeros(0, np.float32), 0.0
+            preroll = deque(maxlen=int(PREROLL_S / SEND_S))  # (capture end, pcm)
             sending, last_sent = False, time.time()
             while not stop.is_set():
                 try:
-                    pending = np.concatenate([pending, blocks.get(timeout=0.5)])
+                    pending_end, x = blocks.get(timeout=0.5)
                 except queue.Empty:
                     continue
+                self._remember(pending_end, x)
+                self._captured = pending_end
+                pending = np.concatenate([pending, x])
                 while len(pending) >= SEND_SAMPLES:
                     block, pending = _pcm16(pending[:SEND_SAMPLES]), pending[SEND_SAMPLES:]
+                    t_block = pending_end - len(pending) / audio.RATE
                     try:
                         if self.gate is None or self.gate.is_open() or in_turn.is_set():
                             if not sending:
-                                sending, self._opened_at = True, time.time() - len(preroll) * SEND_S
-                                for b in preroll:
+                                sending = True
+                                self._opened_at = (preroll[0][0] if preroll else t_block) - SEND_S
+                                for _, b in preroll:
                                     ws.send(b)
                                 preroll.clear()
                             ws.send(block)
                             last_sent = time.time()
                         else:
                             sending = False
-                            preroll.append(block)
+                            preroll.append((t_block, block))
                             if KEEPALIVE_S and time.time() - last_sent > KEEPALIVE_S:
                                 ws.send(SILENCE)
                                 last_sent = time.time()
@@ -362,7 +447,7 @@ class CartesiaVoice(Voice):
                 try:
                     msg = json.loads(ws.recv(timeout=1.0))
                 except TimeoutError:
-                    if started is None and watched is not None and default_input_id() != watched:
+                    if started is None and watch is not None and watch.poll():
                         return
                     continue
                 kind = msg.get("type")
@@ -370,18 +455,18 @@ class CartesiaVoice(Voice):
                     self._failures = 0
                 elif kind == "turn.start":
                     in_turn.set()
-                    started, last_word = time.time() - SPEECH_LEAD_S, time.time()
+                    started, last_word = self._captured - SPEECH_LEAD_S, self._captured
                     if self._opened_at is not None:  # pre-roll arrives in a burst: speech began at the gate
                         started = max(min(started, self._opened_at + PREROLL_S), self._opened_at)
                     self.on_state("listening")
                 elif kind == "turn.update":
-                    last_word = time.time()
+                    last_word = self._captured
                     if msg.get("transcript"):
                         self.on_partial(msg["transcript"])
                 elif kind == "turn.end":
                     in_turn.clear()
                     text = msg.get("transcript", "").strip()
-                    now = time.time()
+                    now = self._captured
                     if text:
                         self.on_utterance(text, started or now - 1.0, last_word or now)
                     started = last_word = None

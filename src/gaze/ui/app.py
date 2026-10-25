@@ -384,6 +384,7 @@ class GazeApp:
         threading.Thread(target=work, name="switch-camera", daemon=True).start()
 
     def _mic_options(self, voice) -> list:
+        from ..control import config as control_config
         from ..control.voice import input_devices  # voice extras are only there when voice control is
 
         try:
@@ -391,8 +392,11 @@ class GazeApp:
         except Exception:  # PortAudio may be re-initialising on the voice thread
             names = [voice.device] if voice.device else []
         follow = voice.choice is None
-        default = f"System default ({voice.device})" if follow and voice.device else "System default"
-        return [(default, follow, lambda: voice.use(None))] + [
+        auto = "Automatic: system default" + (", MacBook mic instead of Bluetooth"
+                                              if control_config.AVOID_BLUETOOTH_MIC else "")
+        if follow and voice.device:
+            auto += f" (now {voice.device})"
+        return [(auto, follow, lambda: voice.use(None))] + [
             (name, not follow and name == voice.device, lambda name=name: voice.use(name)) for name in names]
 
     def _toggle_voice(self) -> None:

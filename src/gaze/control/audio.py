@@ -9,8 +9,10 @@ Two inputs:
 """
 from __future__ import annotations
 
+import ctypes
 import os
 import queue
+import time
 import warnings
 
 import numpy as np
@@ -18,6 +20,13 @@ import numpy as np
 RATE = 16000
 CHUNK = 512  # Silero's frame at 16 kHz: 32 ms
 DUCK_MIN = 10  # AVAudioVoiceProcessingOtherAudioDuckingLevelMin: turn other apps down as little as possible
+
+_libc = ctypes.CDLL(None)
+_libc.mach_absolute_time.restype = ctypes.c_uint64
+
+
+def _mach_now() -> int:
+    return _libc.mach_absolute_time()
 
 
 class Resampler:
@@ -77,7 +86,9 @@ class SpeechDetector:
 
 
 class _Input:
-    """Pushes 16 kHz float32 blocks into `blocks` while started."""
+    """Pushes (capture time, 16 kHz float32 block) into `blocks` while started. The time is when the block's last
+    sample was captured (time.time() clock, from the driver's timestamps), not when it reached Python, so speech
+    times stay right even when the consumer falls behind (Whisper transcribing) or the mic is slow (Bluetooth)."""
 
     label = ""
 
@@ -96,8 +107,14 @@ class PortAudioInput(_Input):
     def start(self) -> None:
         import sounddevice as sd
 
+        def callback(data, frames, when, _status):
+            now = time.time()
+            # inputBufferAdcTime: when the first sample hit the converter (0 if the host doesn't say)
+            first = now - (when.currentTime - when.inputBufferAdcTime) if when.inputBufferAdcTime > 0 else now - frames / RATE
+            self.blocks.put((first + frames / RATE, data[:, 0].copy()))
+
         self._stream = sd.InputStream(device=self.device, samplerate=RATE, channels=1, dtype="float32",
-                                      blocksize=CHUNK, callback=lambda data, *_: self.blocks.put(data[:, 0].copy()))
+                                      blocksize=CHUNK, callback=callback)
         self._stream.start()
 
     def stop(self) -> None:
@@ -127,10 +144,16 @@ class AppleVoiceInput(_Input):
         fmt = node.outputFormatForBus_(0)  # e.g. 24 kHz, 3 channels; channel 0 is the processed voice
         resample = Resampler(fmt.sampleRate())
 
-        def tap(buffer, _when):
+        rate = fmt.sampleRate()
+
+        def tap(buffer, when):
             n = buffer.frameLength()
             samples = np.frombuffer(buffer.floatChannelData()[0].as_buffer(n), np.float32)
-            self.blocks.put(resample(samples))
+            end = time.time()
+            if when.isHostTimeValid():  # host time of the first sample -> seconds ago
+                ago = AV.AVAudioTime.secondsForHostTime_(_mach_now()) - AV.AVAudioTime.secondsForHostTime_(when.hostTime())
+                end = time.time() - ago + n / rate
+            self.blocks.put((end, resample(samples)))
 
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")  # PyObjC warns about the raw AudioUnit pointer type

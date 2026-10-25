@@ -174,3 +174,57 @@ def test_speech_detector_ignores_silence_and_noise():
     rng = np.random.default_rng(0)
     probs = [vad((rng.standard_normal(CHUNK) * 0.02).astype(np.float32)) for _ in range(30)]
     assert max(probs) < 0.5
+
+
+def test_chunks_carry_capture_times_and_clip_cuts_by_them():
+    import queue
+
+    import numpy as np
+
+    from gaze.control.audio import CHUNK, RATE
+    from gaze.control.voice import Voice
+
+    v = Voice(lambda *a: None, lambda s: None)
+    blocks = queue.Queue()
+    t0 = 1000.0
+    for i in range(10):  # 10 blocks of 0.1 s, block i holds the value i, captured ending at t0 + 0.1 (i + 1)
+        blocks.put((t0 + 0.1 * (i + 1), np.full(RATE // 10, i, np.float32)))
+    chunks = []
+    for t, c in v._chunks(blocks, None):
+        chunks.append((t, c))
+        if len(chunks) == 25:
+            break
+    # a chunk's time is when its last sample was captured, however late it's processed
+    assert abs(chunks[0][0] - (t0 + CHUNK / RATE)) < 1e-6
+    assert abs(chunks[24][0] - (t0 + 25 * CHUNK / RATE)) < 1e-6
+    clip = v.clip(t0 + 0.3, t0 + 0.5)
+    assert len(clip) == int(0.2 * RATE) and clip[0] == 3 and clip[-1] == 4
+
+
+def test_automatic_mic_skips_bluetooth(monkeypatch):
+    from gaze.control import config, voice
+
+    devices = [{"name": "AirPods", "max_input_channels": 1, "index": 0},
+               {"name": "MacBook Pro Microphone", "max_input_channels": 1, "index": 1}]
+    monkeypatch.setattr(voice.sd, "query_devices",
+                        lambda i=None, kind=None: devices[0] if kind == "input" else devices if i is None else devices[i])
+    monkeypatch.setattr(voice, "default_input_is_bluetooth", lambda: True)
+    monkeypatch.setattr(config, "AVOID_BLUETOOTH_MIC", True)
+    assert voice.pick_mic() == (1, "MacBook Pro Microphone")
+    assert voice.pick_mic("AirPods") == (0, "AirPods")  # chosen by name: honoured
+    monkeypatch.setattr(config, "AVOID_BLUETOOTH_MIC", False)
+    assert voice.pick_mic() == (0, "AirPods")
+
+
+def test_episode_audio_is_saved_as_wav(tmp_path):
+    import wave
+
+    import numpy as np
+
+    from gaze.control.episodes import EpisodeLog
+
+    log = EpisodeLog(tmp_path / "e.jsonl")
+    ep = log.begin("click this", 0, 1, "click")
+    log.save_audio(ep, np.zeros(16000, np.float32))
+    with wave.open(str(tmp_path / ep["audio"])) as w:
+        assert (w.getframerate(), w.getnframes(), w.getsampwidth()) == (16000, 16000, 2)

@@ -21,6 +21,7 @@ from pathlib import Path
 
 from . import config
 
+MAX_AUDIO_FILES = 1000  # newest kept; ~1 s of 16 kHz mono is 32 KB
 CORRECT_S = 4.0
 REPEAT_S = 10.0
 CORRECTIONS = {"no", "nope", "undo", "undo that", "wrong", "wrong one", "not that", "no not that", "not that one"}
@@ -74,6 +75,27 @@ class EpisodeLog:
         with self._lock:
             self._recent.append(ep)
         self._write({k: v for k, v in ep.items() if k != "label"})
+
+    def save_audio(self, ep: dict, samples, rate: int = 16000) -> None:
+        """The command's audio as a WAV beside the log (`.logs/audio/<id>.wav`), to replay misheard or wrongly
+        gated commands later. Local only: .logs is git-ignored."""
+        import wave
+
+        import numpy as np
+
+        if samples is None or not len(samples):
+            return
+        folder = self.path.parent / "audio"
+        folder.mkdir(parents=True, exist_ok=True)
+        path = folder / f"{ep['id']}.wav"
+        with wave.open(str(path), "wb") as w:
+            w.setnchannels(1)
+            w.setsampwidth(2)
+            w.setframerate(rate)
+            w.writeframes((np.clip(samples, -1, 1) * 32767).astype("<i2").tobytes())
+        ep["audio"] = str(path.relative_to(self.path.parent))
+        for old in sorted(folder.glob("*.wav"), key=lambda p: p.stat().st_mtime)[:-MAX_AUDIO_FILES]:
+            old.unlink(missing_ok=True)
 
     def label(self, ep: dict, label: str) -> None:
         ep["label"] = label

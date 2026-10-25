@@ -33,6 +33,7 @@ CLARIFY_WINDOW_S = 10.0  # how long an answer to "Which one?" is taken as the an
 MAX_CLAUSES = 3  # longer chains go to the agent whole
 SETTLE_S = {"open_app": 1.5}  # wait after a compound step before deciding the next one; default below
 DEFAULT_SETTLE_S = 0.5
+CLIP_PAD_S = 0.3  # audio saved with each episode: the utterance plus this either side
 
 
 class VoiceController:
@@ -100,18 +101,19 @@ class VoiceController:
         if self.lips:  # the dashboard's Lips plot marks each utterance with the verdict
             self.gaze.report("lips", t0=round(self.gaze.frame_time(t0), 3), t1=round(self.gaze.frame_time(t1), 3),
                              moving=not someone_else, why="lips didn't move" if someone_else else "")
+        clip = self.voice.clip(t0 - CLIP_PAD_S, t1 + CLIP_PAD_S) if self.voice and config.SAVE_AUDIO else None
         if someone_else:
             if self.lips.mode == "on":
                 print(f"[{stamp}] ignored (your lips didn't move): \"{text}\"", flush=True)
                 self.events.put(("partial", ""))
-                self.events.put(("dropped", (text, t0, t1)))
+                self.events.put(("dropped", (text, t0, t1, clip)))
                 return
             print(f"[{stamp}] [shadow] gate would have BLOCKED: \"{text}\"", flush=True)
         elif self.lips and self.lips.mode == "shadow":
             print(f"[{stamp}] [shadow] gate would have let through: \"{text}\"", flush=True)
         print(f"[{stamp}] heard: \"{text}\"", flush=True)
         self.gaze.report("heard", text)
-        self.events.put(("speech", (text, t0, t1)))
+        self.events.put(("speech", (text, t0, t1, clip)))
 
     def _on_mic_state(self, state):
         self.gaze.report("mic", state)
@@ -142,9 +144,10 @@ class VoiceController:
             if kind == "speech":
                 self._on_speech(*payload)
             elif kind == "dropped":  # heard, but the lip gate is sure it wasn't you
-                text, t0, t1 = payload
+                text, t0, t1, clip = payload
                 ep = self.episodes.begin(text, t0, t1, "dropped")
                 ep["route"] = "lip_gate"
+                self.episodes.save_audio(ep, clip)
                 self.episodes.finish(ep)
                 self.hud.status = f'Dropped (lips didn\'t move): "{text}"'
             elif kind == "partial":  # words so far, while you're still talking
@@ -186,7 +189,7 @@ class VoiceController:
             self.snap = snapping.snap(*point, self.screen.w_pt, self.screen.h_pt) if point else (None, [])
             time.sleep(0.15)
 
-    def _on_speech(self, text, t0, t1):
+    def _on_speech(self, text, t0, t1, clip=None):
         cmd = router.route(text)
         if cmd is None:
             return
@@ -195,6 +198,7 @@ class VoiceController:
             print(f"[{time.strftime('%H:%M:%S')}] treating \"{cmd.text}\" as \"{fixed}\"", flush=True)
             cmd = router.route(fixed, wake=False)
         ep = self.episodes.begin(cmd.text, t0, t1, cmd.kind)
+        self.episodes.save_audio(ep, clip)
         if fixed:
             ep["heard_as"] = text
         self.hud.heard = cmd.text
