@@ -122,7 +122,7 @@ class Agent:
     def start(self, request, gaze, target, candidates, app_name, on_done=None):
         """on_done(result text, steps, seconds) when the run ends (not when it pauses for "confirm")."""
         if not (os.environ.get("ANTHROPIC_API_KEY") or os.environ.get("ANTHROPIC_AUTH_TOKEN")):
-            self.on_status("This needs Claude, but ANTHROPIC_API_KEY isn't set (add it to .env).")
+            self.on_status("This needs the agent, but ANTHROPIC_API_KEY isn't set (add it to .env).")
             return
         if self.busy:
             self.on_status('Still working - say "stop" to cancel.')
@@ -228,7 +228,7 @@ class Agent:
                                        else [{"type": "text", "text": last["content"]}]) + steer
                 else:
                     messages.append({"role": "user", "content": steer})
-            self.on_status(f"Claude thinking... (step {step + 1})")
+            self.on_status(f"Agent thinking... (step {step + 1})")
             self.phase, self.doing = "thinking", ""
             self._steps += 1
             t0 = time.perf_counter()
@@ -247,7 +247,7 @@ class Agent:
             _log_step(step, time.perf_counter() - t0, response)
 
             if response.stop_reason == "refusal":
-                return "Claude declined that request."
+                return "The agent declined that request."
             # Append the full content unchanged (thinking/fallback blocks included): the history must stay append-only.
             messages.append({"role": "assistant", "content": response.content})
 

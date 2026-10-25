@@ -76,7 +76,7 @@ class VoiceController:
         self.events: queue.Queue = queue.Queue()  # (kind, payload) from worker threads, applied in tick()
         self.gate = Gate()
         if not self.gate.available:
-            self._status(f"Fast tier (Jev) off: {self.gate.error}. Unmatched commands go straight to Claude.")
+            self._status(f"Fast tier (Jev) off: {self.gate.error}. Unmatched commands go straight to the agent.")
         self.agent = Agent(self.screen, self.gate, self._status)
         self.speaker = Speaker(on_state=lambda on: self.events.put(("speaking", on)))
         self.agent.on_reply = self.speaker.say  # Claude's answer (or what it's waiting to confirm), read aloud
@@ -362,16 +362,16 @@ class VoiceController:
                 ep["steer_p"] = round(p, 3)
                 if p < NO:
                     ep["route"] = "ignore"
-                    self._status(f'Not for Claude: "{cmd.text}"')
+                    self._status(f'Not for the agent: "{cmd.text}"')
                     return
             ep["route"] = "steer"
             self.agent.steer(cmd.text)
-            self._status(f'Telling Claude: "{cmd.text}"')
+            self._status(f'Telling the agent: "{cmd.text}"')
             return
         if self.agent.paused and cmd.kind not in ("cancel", "confirm"):  # something else instead of "confirm"
             ep["route"] = "redirect"
             self.agent.redirect(cmd.text)
-            self._status(f'Skipped that; telling Claude: "{cmd.text}"')
+            self._status(f'Skipped that; telling the agent: "{cmd.text}"')
             return
         if self.gaze.busy:
             ep["route"] = "calibrating"
@@ -462,7 +462,7 @@ class VoiceController:
             with self._working("thinking", "thinking"):
                 d = self.gate.decide(request, gaze, candidates, app, allow_clarify=allow_clarify, cloud=self._cloud)
         except Exception as e:
-            self._status(f"Jev unavailable ({e}); asking Claude...")
+            self._status(f"Jev unavailable ({e}); asking the agent...")
             ep["decision"] = "agent"
             self._start_agent(request, gaze, target, candidates, app)
             return
@@ -490,9 +490,9 @@ class VoiceController:
             return
         # Needs writing, reading the screen, or nothing direct matched: Claude takes it.
         if not self.agent.available:
-            self._status(f"Skipped: needs Claude ({d.summary()}). Add ANTHROPIC_API_KEY to .env to enable Claude.")
+            self._status(f"Skipped: needs the agent ({d.summary()}). Add ANTHROPIC_API_KEY to .env to enable it.")
             return
-        self._status(f"Asking Claude ({d.why})...")
+        self._status(f"Asking the agent ({d.why})...")
         self._start_agent(request, gaze, d.target or target, candidates, app)
 
     def _apply(self, d, gaze) -> bool:
@@ -643,7 +643,7 @@ class VoiceController:
         clauses = router.split_clauses(request)
         ep["clauses"] = steps = []
         if not 2 <= len(clauses) <= MAX_CLAUSES:
-            self._status(f"Asking Claude ({len(clauses)} parts)...")
+            self._status(f"Asking the agent ({len(clauses)} parts)...")
             self._start_agent(request, gaze, target, candidates, app)
             return
         done = []
@@ -688,10 +688,10 @@ class VoiceController:
                     continue
             rest = " and then ".join(clauses[i:])
             if not self.agent.available:
-                self._status(f'Did {len(done)} of {len(clauses)}; "{rest}" needs Claude (ANTHROPIC_API_KEY).')
+                self._status(f'Did {len(done)} of {len(clauses)}; "{rest}" needs the agent (ANTHROPIC_API_KEY).')
                 return
             note = f' (Already done: {"; ".join(done)}. Do the rest: {rest}.)' if done else ""
-            self._status(f"Asking Claude for: {rest}")
+            self._status(f"Asking the agent for: {rest}")
             self._start_agent(request + note, gaze, target, candidates, app)
             return
         self._status(f"Done: {'; '.join(done)}")
@@ -716,8 +716,8 @@ class VoiceController:
             return Status("speaking", "speaking")
         if self.agent.busy:
             if self.agent.phase == "acting":
-                return Status("acting", f"Claude: {self.agent.doing}")
-            return Status("claude", f"Claude · step {max(self.agent._steps, 1)}")
+                return Status("acting", f"Agent: {self.agent.doing}")
+            return Status("agent", f"Agent · step {max(self.agent._steps, 1)}")
         if self.agent.paused or self.pending:
             return Status("waiting", 'say "confirm"')
         if self.choosing is not None:

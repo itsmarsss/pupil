@@ -471,9 +471,9 @@ def test_gaze_indicator_shows_the_most_important_state(monkeypatch):
     c._busy_with = Status("thinking", "thinking")
     assert c._indicator_status().state == "thinking"  # Jev deciding beats listening
     c.agent.busy, c.agent._steps = True, 3
-    assert c._indicator_status() == Status("claude", "Claude · step 3")
+    assert c._indicator_status() == Status("agent", "Agent · step 3")
     c.agent.phase, c.agent.doing = "acting", "left click"
-    assert c._indicator_status() == Status("acting", "Claude: left click")
+    assert c._indicator_status() == Status("acting", "Agent: left click")
     c.speaker.speaking = True
     assert c._indicator_status().state == "speaking"
     c._flash = (Status("done", "✓ clicked"), ctl.time.time() + 1)

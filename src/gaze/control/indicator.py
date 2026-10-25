@@ -49,8 +49,8 @@ STYLES = {
     "hearing": (_rgb(116, 192, 252), False),     # light blue: turning speech into text
     "thinking": (_rgb(255, 196, 61), True),      # amber: Jev deciding
     "writing": (_rgb(255, 196, 61), False),      # amber: formatting dictation
-    "claude": (_rgb(177, 151, 252), True),       # purple: Claude thinking
-    "acting": (_rgb(61, 220, 132), False),       # green: Claude or Jev doing it
+    "agent": (_rgb(177, 151, 252), True),        # purple: the agent thinking
+    "acting": (_rgb(61, 220, 132), False),       # green: the agent or Jev doing it
     "done": (_rgb(61, 220, 132), False),         # green: done (brief)
     "waiting": (_rgb(255, 146, 43), True),       # orange: needs your answer
     "speaking": (_rgb(32, 201, 151), False),     # teal: reading a reply aloud
