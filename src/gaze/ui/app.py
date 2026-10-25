@@ -204,7 +204,8 @@ class GazeApp:
     def _dashboard_context(self) -> dict:
         phase, target = self.flows.phase
         return {"phase": phase, "target": target, "busy": self.flows.busy, "lid_deg": self.lid.angle,
-                "smoothing": self.tracker.smoothing, "overlay": self.overlay_on, "voice": self.voice.snapshot()}
+                "smoothing": self.tracker.smoothing, "overlay": self.overlay_on, "voice": self.voice.snapshot(),
+                "gaze_sigma_pt": round(self.gaze_sigma_pt(), 1)}
 
     def _start_voice(self, typed: bool) -> None:
         """Voice control in this process: it reads gaze from the tracker and drives the flows directly."""
@@ -215,7 +216,7 @@ class GazeApp:
             log.error("voice control needs its extras (uv sync --extra control): %s", e)
             return
         commands = self._remote_commands()
-        gaze = TrackerGaze(busy=lambda: self.flows.busy, report=self.voice.add,
+        gaze = TrackerGaze(busy=lambda: self.flows.busy, report=self.voice.add, sigma=self.gaze_sigma_pt,
                            commands={k: commands[k] for k in ("recalibrate", "recentre", "validate")})
         self.tracker.add_listener(gaze.on_sample)
         self.controller = VoiceController(gaze, typed=typed)
@@ -242,8 +243,10 @@ class GazeApp:
         if p is not None and p.valid:
             self._last_valid_ns = now
             confidence = min(p.confidence, 0.3) if self.lid_moved else p.confidence
+            if self.ring.heat:
+                self.ring.sigma = self.gaze_sigma_pt()
             element = self.snapping.element_for(p)
-            if element is not None:
+            if element is not None and not self.ring.heat:  # the heat map shows raw gaze: the blur is the point
                 self.ring.show_at(*element.centre, fixating=True, confidence=confidence)
             else:
                 self.ring.show_at(p.x, p.y, fixating=p.fixation_id is not None, confidence=confidence)
@@ -261,6 +264,17 @@ class GazeApp:
         """Lid moved (called from the monitor's thread): saved sessions record it per frame."""
         if self.session is not None:
             self.session.context["lid"] = angle
+
+    def gaze_sigma_pt(self) -> float:
+        """How wide the gaze heat map is right now: the last measured accuracy (launch check, validation or
+        re-centre check) at the current distance, as a Gaussian width in screen points."""
+        from ..control.heat import DEFAULT_SIGMA_DEG, sigma_from_accuracy
+
+        last = self.flows.last_result if self.flows is not None else None
+        deg = last.accuracy_deg if last is not None and np.isfinite(last.accuracy_deg) else DEFAULT_SIGMA_DEG
+        if self.lid_moved:
+            deg *= 1.5  # the lid has moved since calibration: less sure
+        return sigma_from_accuracy(self.screen.deg_to_pt(deg, self.tracker.distance_mm))
 
     @property
     def lid_moved(self) -> float | None:
@@ -287,7 +301,9 @@ class GazeApp:
             Action("Measure (head still + moving)", f.measure, idle),
             SEPARATOR,
             Header("View"),
-            Toggle("Show gaze ring", lambda: self.overlay_on, self._toggle_overlay),
+            Choice("Gaze display", lambda: [(title, self._display() == key, lambda key=key: self._set_display(key))
+                                            for key, title in (("ring", "Ring"), ("heat", "Heat map (shows accuracy)"),
+                                                               ("off", "Off"))]),
             Choice("Smoothing", lambda: [(name.capitalize(), name == self.tracker.smoothing,
                                           lambda name=name: self.tracker.set_smoothing(name))
                                          for name in SMOOTHING_ORDER]),
@@ -333,6 +349,13 @@ class GazeApp:
 
     def _toggle_overlay(self) -> None:
         self.overlay_on = not self.overlay_on
+
+    def _display(self) -> str:
+        return "off" if not self.overlay_on else "heat" if self.ring.heat else "ring"
+
+    def _set_display(self, key: str) -> None:
+        self.overlay_on = key != "off"
+        self.ring.heat = key == "heat"
 
     def _cycle_smoothing(self) -> None:
         name = SMOOTHING_ORDER[(SMOOTHING_ORDER.index(self.tracker.smoothing) + 1) % len(SMOOTHING_ORDER)]

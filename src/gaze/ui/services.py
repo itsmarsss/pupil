@@ -156,6 +156,8 @@ class VoiceLog:
                 self._state["target"] = msg.get("target")
             elif kind == "lip_gate":
                 self._state["lip_gate"] = {k: v for k, v in msg.items() if k not in ("event", "text")}
+            elif kind == "heat":  # candidates for the last "this"/"that", with their share of the gaze heat
+                self._state["heat"] = msg.get("options")
             elif kind == "lips":
                 self._lips.append({k: v for k, v in msg.items() if k not in ("event", "text")})
             else:  # heard / status / tier

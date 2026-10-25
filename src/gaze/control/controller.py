@@ -411,6 +411,8 @@ class VoiceController:
             shares = heat.scores(els, cloud, fit)
             ranked = sorted(zip(shares, els), key=lambda x: -x[0])
             ep["shares"] = {el.describe(): round(s, 3) for s, el in ranked[:5]}
+            self.gaze.report("heat", options=[{"x": el.x, "y": el.y, "w": el.w, "h": el.h, "label": el.label[:40],
+                                               "share": round(s, 3)} for s, el in ranked[:4] if s >= 0.05])
             if heat.ambiguous(shares) and cmd.kind == "click":
                 self._ask_which([(s, el) for s, el in ranked[:3] if s >= 0.1], "click", cmd.args)
                 return
@@ -543,6 +545,8 @@ class VoiceController:
         self.choosing = {"options": [el for _, el in options], "action": action, "args": args,
                          "deadline": time.time() + CHOOSE_WINDOW_S}
         self.hud.badges = [el for _, el in options]
+        self.gaze.report("heat", options=[{"x": el.x, "y": el.y, "w": el.w, "h": el.h, "label": el.label[:40],
+                                           "share": round(s, 3)} for s, el in options])
         self._ep["route"] = "choose"
         self._ep["options"] = {el.describe(): s for s, el in options}
         names = " or ".join(NUMBERS[i] for i in range(len(options)))

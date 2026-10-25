@@ -3,13 +3,17 @@ import { useEngine } from "../engine";
 import { FitBox } from "./FitBox";
 import type { Vec2 } from "../protocol";
 
-/** The display, in points: calibration dots, the current target and every model's estimate. */
+const HEAT_POINTS = 30; // recent gaze points drawn as heat (the trail keeps ~1.5 s)
+
+/** The display, in points: calibration dots, the current target, every model's estimate, and gaze as a heat map
+ *  (recent points blurred by the tracker's measured accuracy), with the last "this"/"that" candidates' shares. */
 export function ScreenView() {
   const { scene, frame, calibration, trail } = useEngine();
   if (!scene) return <div className="pane placeholder">waiting for the engine</div>;
   const { width_pt: W, height_pt: H } = scene.screen;
   const g = frame?.gaze;
   const r = W / 120;
+  const sigma = frame?.gaze_sigma_pt;
   const dot = (p: Vec2 | null | undefined, color: string, size = 1, label?: string) =>
     p && (
       <g>
@@ -21,7 +25,27 @@ export function ScreenView() {
     <div className="pane">
     <FitBox aspect={W / H}>
       <svg viewBox={`0 0 ${W} ${H}`}>
+        <defs>
+          {/* a Gaussian falloff: each recent gaze point adds one of these, so overlapping ones read as heat */}
+          <radialGradient id="gaze-heat">
+            {[0, 0.25, 0.5, 0.75, 1].map((t) => (
+              <stop key={t} offset={t} stopColor="#ff6b3d" stopOpacity={Math.exp(-((t * 2.5) ** 2) / 2)} />
+            ))}
+          </radialGradient>
+        </defs>
         <rect x={0} y={0} width={W} height={H} fill="#151922" stroke={C.screen} strokeWidth={2} />
+        {sigma && trail.slice(-HEAT_POINTS).map((p, i) => (
+          <circle key={`h${i}`} cx={p[0]} cy={p[1]} r={sigma * 2.5} fill="url(#gaze-heat)" opacity={0.1} />
+        ))}
+        {frame?.voice?.heat?.map((o, i) => (
+          <g key={`c${i}`}>
+            <rect x={o.x} y={o.y} width={o.w} height={o.h} fill="none" stroke="#ffb23d" strokeWidth={2}
+                  strokeOpacity={0.3 + 0.7 * o.share} rx={4} />
+            <text x={o.x + 4} y={o.y + o.h + r * 2.4} fill="#ffb23d" fontSize={r * 2}>
+              {`${Math.round(o.share * 100)}% ${o.label.slice(0, 18)}`}
+            </text>
+          </g>
+        ))}
         {calibration?.targets?.map((p, i) => (
           <circle key={i} cx={p[0]} cy={p[1]} r={r * 0.6} fill="none" stroke={C.calib} strokeWidth={2} />
         ))}

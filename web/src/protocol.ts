@@ -83,6 +83,7 @@ export interface FrameState {
   overlay?: boolean;
   replay?: { index: number; playing: boolean; speed: number };
   voice?: VoiceState | null;
+  gaze_sigma_pt?: number; // gaze accuracy as a Gaussian width (points): the heat map's spread
 }
 
 /** What the voice controller (gaze control) heard, decided and is doing. */
@@ -94,6 +95,7 @@ export interface VoiceState {
   target?: { x: number; y: number; w: number; h: number; label: string } | null;
   log: { t: number; kind: "heard" | "status" | string; text: string }[];
   lip_gate?: LipGateState;
+  heat?: { x: number; y: number; w: number; h: number; label: string; share: number }[]; // last "this": candidates
   lips?: LipVerdict[];
 }
 
