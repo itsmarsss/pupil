@@ -40,7 +40,8 @@ def test_research_runs_in_the_background_and_answers(monkeypatch):
     _wait(job)
     assert job.phase == "done" and job.answer == "Bose QC Ultra edges it on comfort." and done == [job]
     name, inp = provider.calls[0]
-    assert name == "apify_web_research" and inp["query"].startswith("Compare the Sony") and "Sony" in inp["selected_text"]
+    assert name == "apify_web_research" and inp["query"].startswith("Compare the Sony")
+    assert "selected_text" not in inp  # the page and conversation stay private: they only shape the question
     summary = research.snapshot()[0]
     assert summary["sources"] == [("Review", "https://example.com/r")] and summary["phase"] == "done"
 
@@ -71,3 +72,24 @@ def test_notch_shows_research_status_and_answer():
     assert [r["status"] for r in rows] == ["12s", "1 source"] and rows[1]["url"] == "https://example.com/d"
     m.state = "listening"  # voice control comes first in the ears
     assert nc.ear_state(m) == "listening"
+
+
+def test_the_agent_reads_and_starts_research_instead_of_guessing(monkeypatch):
+    from pupil.control.agent import Agent
+
+    monkeypatch.setattr(R.extract, "research_question", lambda said, context: None)
+    monkeypatch.setattr(R.extract, "research_answer", lambda q, sources: "Standing desks: Uplift V2 wins.")
+    monkeypatch.setattr(R.config, "APIFY_TOKEN", "configured")
+    research = R.Research(provider=FakeProvider([{"title": "Wirecutter", "url": "https://example.com/w"}]))
+    agent = Agent.__new__(Agent)
+    agent.research, agent.request, agent._cancel = research, "", threading.Event()
+    assert agent._research_tool({"action": "status"}) == ("No research yet.", False)
+    text, error = agent._research_tool({"action": "start", "question": "best standing desks"})
+    assert not error and "#1" in text
+    text, error = agent._research_tool({"action": "wait", "id": 1})
+    assert not error and "Uplift V2 wins" in text and "https://example.com/w" in text and "UNTRUSTED" in text
+    assert "done" in agent._research_tool({"action": "status"})[0]
+    opened = []
+    monkeypatch.setattr("pupil.control.agent.subprocess.Popen", lambda cmd: opened.append(cmd))
+    assert agent._custom("open_urls", {"urls": ["https://example.com/w", "file:///etc/passwd"]}) == ("Opened 1 page.", False)
+    assert opened == [["open", "https://example.com/w"]]

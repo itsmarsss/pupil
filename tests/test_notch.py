@@ -27,11 +27,24 @@ def test_headline_reads_like_a_sentence():
 
 
 def test_recent_commands_newest_first_and_only_recent():
-    m = nc.NotchModel(activity=[{"said": "open notes", "did": "Opened Notes", "t": 0.0},
-                                {"said": "click this", "did": "Clicked Pull requests", "t": 900.0},
-                                {"said": "summarize this", "did": "3 key points", "t": 990.0, "agent": True}])
-    assert nc.recent(m, now=1000.0) == [("summarize this", "3 key points", "now", True),
-                                        ("click this", "Clicked Pull requests", "1m", False)]  # 16 min old: gone
+    m = nc.NotchModel(activity=[{"id": "a", "said": "open notes", "did": "Opened Notes", "t": 0.0},
+                                {"id": "b", "said": "click this", "did": "Clicked Pull requests", "t": 900.0},
+                                {"id": "c", "said": "summarize this", "did": "3 key points", "t": 990.0, "agent": True}])
+    rows = nc.recent(m, now=1000.0)
+    assert [(r["said"], r["when"], r["agent"]) for r in rows] == [("summarize this", "now", True),
+                                                                 ("click this", "1m", False)]  # 16 min old: gone
+
+
+def test_an_expanded_recent_says_how_it_was_handled():
+    agent = {"said": "summarize this", "did": "Three points: pricing, roadmap, team.", "t": 990.0, "agent": True,
+             "ep": {"decision": "agent", "agent_tier": "fast", "agent_steps": 2, "agent_s": 3.1}}
+    assert nc.details(agent)[:2] == ["Three points: pricing, roadmap, team.", "Agent · fast · 2 steps · 3.1 s"]
+    click = {"said": "click this", "did": "Clicked Pull requests", "t": 990.0,
+             "ep": {"decision": "click", "gate": {"why": "control 0.96, element 0.95"}, "ms": 420}}
+    assert nc.details(click)[1] == "Jev → click · control 0.96, element 0.95 · 0.4 s"
+    research = {"said": "compare this", "did": "Bose edges it.", "t": 990.0, "agent": True,
+                "ep": {"route": "research", "decision": "agent", "research_sources": 5, "research_s": 31.2}}
+    assert nc.details(research)[1] == "Researched in the background · 5 sources · 31.2 s"
 
 
 def test_actions_are_described_for_people():

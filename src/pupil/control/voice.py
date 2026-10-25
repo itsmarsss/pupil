@@ -17,7 +17,7 @@ from collections import deque
 import numpy as np
 import sounddevice as sd
 
-from . import audio, config, models
+from . import audio, config, console, models
 
 CHUNK_S = audio.CHUNK / audio.RATE
 SPEECH_START, SPEECH_END = 0.5, 0.35  # Silero probability to start / keep an utterance (hysteresis)
@@ -210,7 +210,7 @@ class Voice(threading.Thread):
                 source.start()
                 return source, f"{name} · {source.label}"
             except Exception as e:
-                print(f"Voice isolation off ({e}); using the raw mic.", flush=True)
+                console.notice(f"Voice isolation off ({e}); using the raw mic.")
         source = audio.PortAudioInput(mic)
         source.start()
         return source, name
@@ -238,10 +238,10 @@ class Voice(threading.Thread):
             try:
                 source, name = self._open()
             except Exception as e:  # no usable input right now (e.g. AirPods mid-connect)
-                print(f"Microphone error ({e}); retrying...", flush=True)
+                console.notice(f"Microphone error ({e}); retrying...")
                 time.sleep(1)
                 continue
-            print(f"Microphone: {name}", flush=True)
+            console.notice(f"Microphone: {name}")
             self.device = name
             self.on_device(name)
             try:
@@ -249,7 +249,7 @@ class Voice(threading.Thread):
                 vad.reset()
                 self._listen(model, vad, source.blocks, watch)
             except sd.PortAudioError as e:  # device vanished mid-stream (e.g. AirPods taken out)
-                print(f"Microphone error ({e}); switching...", flush=True)
+                console.notice(f"Microphone error ({e}); switching...")
                 time.sleep(1)
             finally:
                 if watch is not None:
@@ -370,10 +370,10 @@ class CartesiaVoice(Voice):
             try:
                 source, name = self._open()
             except Exception as e:  # no usable input right now
-                print(f"Microphone error ({e}); retrying...", flush=True)
+                console.notice(f"Microphone error ({e}); retrying...")
                 time.sleep(1)
                 continue
-            print(f"Microphone: {name} (Cartesia {config.CARTESIA_MODEL})", flush=True)
+            console.notice(f"Microphone: {name} (Cartesia {config.CARTESIA_MODEL})")
             self.device = name
             self.on_device(name)
             try:
@@ -384,7 +384,7 @@ class CartesiaVoice(Voice):
             except Exception as e:  # network down, bad key: retry, then fall back
                 if "idle_timeout" not in str(e):  # an idle drop isn't Cartesia failing: just reconnect
                     self._failures += 1
-                print(f"Cartesia error ({e}); retrying...", flush=True)
+                console.notice(f"Cartesia error ({e}); retrying...")
                 time.sleep(1)
             finally:
                 if watch is not None:
@@ -393,7 +393,7 @@ class CartesiaVoice(Voice):
                     source.stop()
                 except Exception:
                     pass
-        print("Cartesia unavailable; switching to on-device Whisper.", flush=True)
+        console.notice("Cartesia unavailable; switching to on-device Whisper.")
         super().run()
 
     def _url(self):

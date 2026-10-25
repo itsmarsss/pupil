@@ -7,6 +7,7 @@ part of the notch shows. (Eye health has its own reminders; the notch stays abou
 from __future__ import annotations
 
 import re
+import time
 from dataclasses import dataclass, field
 
 @dataclass
@@ -94,8 +95,10 @@ def headline(m: NotchModel) -> tuple[str, str]:
             title = m.label.replace("Agent: ", "Agent · ")
         sub = m.caption[0] if m.caption else (f"“{m.heard}”" if m.heard else "")
         return title, sub
-    if m.tracking in ("no face", "looking away"):
+    if m.tracking == "no face":
         return "Can’t see you", "Face the screen to talk"
+    if m.tracking == "looking away":
+        return "Not listening", "You’re looking away: look at the screen to talk"
     return "Ready", "Look at something and say what to do"
 
 
@@ -142,15 +145,39 @@ def research_rows(m: NotchModel, now: float) -> list[dict]:
 HINTS = ["“click this”", "“scroll down”", "“open Notes”", "“close that tab”"]
 
 
-def recent(m: NotchModel, now: float, keep_s: float = 600.0, n: int = 3) -> list[tuple[str, str, str, bool]]:
-    """The last few commands as (said, did, when, by the agent?), newest first; the last ten minutes only."""
+def recent(m: NotchModel, now: float, keep_s: float = 600.0, n: int = 3) -> list[dict]:
+    """The last few commands, newest first, the last ten minutes only: {id, said, did, when, agent, details}."""
     out = []
     for item in reversed(m.activity):
         age = now - item.get("t", now)
         if age > keep_s:
             break
         when = "now" if age < 60 else f"{int(age // 60)}m"
-        out.append((item.get("said", ""), item.get("did", ""), when, bool(item.get("agent"))))
+        out.append({"id": item.get("id"), "said": item.get("said", ""), "did": item.get("did", ""), "when": when,
+                    "agent": bool(item.get("agent")), "details": details(item)})
         if len(out) == n:
             break
     return out
+
+
+def details(item: dict) -> list[str]:
+    """What an expanded recent row says: the whole result, how it was handled, and when."""
+    ep = item.get("ep") or {}
+    route = "research" if ep.get("route") == "research" else ep.get("decision") or ep.get("route") or ""
+    lines = [item.get("did", "")]
+    if route == "research":
+        how = "Researched in the background"
+        if ep.get("research_sources") is not None:
+            how += f" · {ep['research_sources']} sources · {ep.get('research_s')} s"
+    elif route == "agent":
+        how = " · ".join(str(p) for p in ("Agent", ep.get("agent_tier"), ep.get("agent_steps") and
+                                          f"{ep['agent_steps']} steps", ep.get("agent_s") and f"{ep['agent_s']} s") if p)
+    else:
+        gate = ep.get("gate") or {}
+        how = " · ".join(p for p in (f"Jev → {route}" if route else "", gate.get("why", ""),
+                                     f"{ep['ms'] / 1000:.1f} s" if ep.get("ms") else "") if p)
+    if how:
+        lines.append(how)
+    if item.get("t"):
+        lines.append(time.strftime("at %H:%M:%S", time.localtime(item["t"])))
+    return [line for line in lines if line]

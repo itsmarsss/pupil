@@ -703,7 +703,7 @@ def test_research_goes_to_the_background_not_the_agent(monkeypatch):
     c._status = statuses.append
     c.gate = _A(available=True, recent=[], last_reply=None,
                 decide=lambda *a, **k: Decision("agent", "needs web research 0.95", 1, research=True, answers={"nouls": {}}))
-    c.research = _A(available=lambda: True,
+    c.research = _A(available=lambda: True, jobs=[], describe=lambda: "",
                     start=lambda request, context: started.append((request, context)) or Job(7, request, request, 0.0))
     c._research_eps, c._cloud, c._last_target = {}, None, None
     c.agent = _A(available=True, busy=False, start=lambda *a, **k: agent_runs.append(a))
@@ -766,3 +766,15 @@ def test_truth_table_falls_back_on_the_one_reading_of_the_command():
     said = dict(is_command=0.79, wants_element=0.55)
     assert _decide(_answers(choices={"intent": "click_on_screen"}, **said), [], None, {})[0] == "maybe"
     assert _decide(_answers(choices={"intent": "click_on_screen"}, **said), [], None, {}, assume_command=True)[0] == "agent"
+
+
+def test_asking_about_research_never_starts_new_research(monkeypatch):
+    from pupil.control import config
+    from pupil.control.gate import _decide
+
+    monkeypatch.setattr(config, "APIFY_TOKEN", "configured")
+    # "how's the research coming along?": for us even though it doesn't sound like a command
+    assert _decide(_answers(is_command=0.1, about_research=0.98, needs_research=0.06), [], None, {})[0] == "agent"
+    # "compare this with three alternatives" with research around: the new question wins
+    route, why, _ = _decide(_answers(about_research=0.81, needs_research=0.95), [], None, {})
+    assert route == "agent" and why.startswith("needs web research")

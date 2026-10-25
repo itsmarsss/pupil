@@ -11,7 +11,7 @@ from __future__ import annotations
 import os
 import time
 
-from . import config, models
+from . import config, console, models
 
 SYSTEM = """You turn a speech transcript into the exact text the speaker wants typed at their cursor. Output only that text: no quotes, no commentary, no explanation.
 
@@ -119,8 +119,8 @@ def format(raw: str, ctx: dict | None = None) -> str:
             response = _get_client().messages.create(model=config.DICTATION_MODEL, max_tokens=1024, system=SYSTEM,
                                                      messages=[{"role": "user", "content": _prompt(raw, ctx)}])
         text = "".join(b.text for b in response.content if b.type == "text").strip(" ")
-        print(f"[dictation] {raw!r} -> {text!r} ({(time.perf_counter() - t0) * 1000:.0f} ms)", flush=True)
+        console.status(f"dictation: {raw!r} -> {text!r} ({(time.perf_counter() - t0) * 1000:.0f} ms)")
         return join(ctx.get("text_before_cursor", ""), text) if text.strip() else raw
     except Exception as e:  # never lose the words: type them as heard
-        print(f"[dictation] formatting failed ({e}); typing as heard", flush=True)
+        console.status(f"dictation: formatting failed ({e}); typing as heard")
         return raw

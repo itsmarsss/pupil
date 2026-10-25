@@ -16,6 +16,24 @@ from . import config
 from .heat import FINAL_FIXATION_BOOST, GazeCloud
 
 MIN_FINAL_FIXATION_SAMPLES = 3
+ATTENTION_YAW_DEG = 35.0  # head turned further than this from the camera: talking to someone else, not the screen
+ATTENTION_MARGIN = (0.2, 0.25)  # gaze this far off screen (share of its width, height) still counts: it's ~2 cm
+
+
+def attending(s: Sample, screen_w: float, screen_h: float) -> bool:
+    """The attention check: a face, turned toward the screen, and (once calibrated) gaze on or near it."""
+    face, p = s.face, s.point
+    if face is None:
+        return False
+    if face.head_pose is not None:
+        yaw, _, _ = face.head_pose.yaw_pitch_roll_deg
+        if abs(yaw) > ATTENTION_YAW_DEG:
+            return False
+    if p.valid and p.state.value != "uncalibrated" and p.raw_x == p.raw_x:  # (not NaN)
+        mx, my = screen_w * ATTENTION_MARGIN[0], screen_h * ATTENTION_MARGIN[1]
+        if not (-mx <= p.raw_x <= screen_w + mx and -my <= p.raw_y <= screen_h + my):
+            return False
+    return True
 
 
 class TrackerGaze:
@@ -32,6 +50,10 @@ class TrackerGaze:
         self.lips = None  # a lips.LipGate fed with every frame
         self._last_seen = self._last_point = 0.0
         self._offset = time.time() - time.monotonic_ns() / 1e9  # speech is timestamped with time.time()
+        from AppKit import NSScreen
+
+        frame = NSScreen.mainScreen().frame()
+        self._screen_size = (float(frame.size.width), float(frame.size.height))  # for the attention check
 
     def on_sample(self, s: Sample) -> None:
         now = time.time()
@@ -41,6 +63,7 @@ class TrackerGaze:
             msg = {"state": p.state.value, "confidence": float(p.confidence), "busy": self.busy}
             if s.face is not None:
                 msg["mouth"] = s.face.mouth_open
+                msg["attending"] = attending(s, *self._screen_size)
             self.lips.update(msg, now)
         if p.valid:
             with self._lock:

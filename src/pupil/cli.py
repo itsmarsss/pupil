@@ -245,7 +245,10 @@ def cmd_doctor(args) -> int:
 
 def main(argv: list[str] | None = None) -> int:
     argv = sys.argv[1:] if argv is None else argv
+    from .control.console import quiet_libraries
     from .core.paths import migrate_app_support
+
+    quiet_libraries()  # before MediaPipe loads: it reads its log level then
 
     migrate_app_support()  # data saved before the rename (".../Gaze") moves to ".../Pupil", once
     if argv[:1] == ["control"]:  # its own options; it starts the tracker itself
@@ -312,7 +315,7 @@ def main(argv: list[str] | None = None) -> int:
 
     args = parser.parse_args(argv)
     logging.basicConfig(
-        level=logging.DEBUG if args.verbose else logging.INFO,
+        level=logging.DEBUG if args.verbose else logging.INFO,  # library chatter is quieted (control/console.py)
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
         datefmt="%H:%M:%S",
     )

@@ -59,11 +59,14 @@ PEEK_W = 380
 OPEN_W = 456
 ROW_H = 24  # a recent command
 RESEARCH_ROW_H, RESEARCH_ANSWER_H = 22, 18  # a research job, and its answer under it
+DETAIL_LINE_H = 16  # a line of an expanded recent command
+DETAIL_MAX_H = 9 * DETAIL_LINE_H + 4  # its most: six lines of result, three of how and when
 RESEARCH_MAX_H = 20 + 2 * (RESEARCH_ROW_H + RESEARCH_ANSWER_H) + 6  # the "Research" label and two jobs
 RECENT_ROWS = 3
 OPEN_TOP_H = 12 + 38 + 14 + 20  # status row, then the "Recent" label
 OPEN_FOOT_H = 8 + 14 + 18  # gap, footer line, bottom margin
-OPEN_BODY_H = OPEN_TOP_H + RESEARCH_MAX_H + RECENT_ROWS * ROW_H + OPEN_FOOT_H  # the tallest, below the notch band
+OPEN_BODY_H = (OPEN_TOP_H + RESEARCH_MAX_H + RECENT_ROWS * ROW_H + DETAIL_MAX_H  # the tallest, below the notch
+               + OPEN_FOOT_H)
 SHADOW_ROOM = 40  # around the shape, for its shadow
 MAX_W, MAX_H = OPEN_W + 2 * SHOULDER + 2 * SHADOW_ROOM, FALLBACK_H + OPEN_BODY_H + SHADOW_ROOM
 
@@ -171,6 +174,19 @@ def _open_url(url: str) -> None:
     from AppKit import NSURL, NSWorkspace
 
     NSWorkspace.sharedWorkspace().openURL_(NSURL.URLWithString_(url))
+
+
+def _wrap(text, font, width) -> list[str]:
+    """`text` in lines no wider than `width` (greedy, by words)."""
+    lines, line = [], ""
+    for word in str(text).split():
+        trial = f"{line} {word}".strip()
+        if line and text_width(trial, font) > width:
+            lines.append(line)
+            line = word
+        else:
+            line = trial
+    return lines + [line] if line else lines
 
 
 def text_width(s, font) -> float:
@@ -294,6 +310,8 @@ class Notch:
         self._opened_by_gaze = False
         self._last_tick = time.time()
         self._drawn_key = None
+        self._expanded = None  # the recent command clicked open (its id)
+        self._result_lines = 0
         self.enabled = True
 
     def _place(self):
@@ -351,8 +369,34 @@ class Notch:
         return collapsed, self._notch_h, RADIUS
 
     def _open_body_h(self, now):
-        rows = max(1, len(content.recent(self.model, now)))  # none yet: one row of suggestions
-        return OPEN_TOP_H + self._research_h(now) + rows * ROW_H + OPEN_FOOT_H
+        return OPEN_TOP_H + self._research_h(now) + self._recent_h(now) + OPEN_FOOT_H
+
+    def _toggle_row(self, row_id):
+        """Click a recent command: it expands to show everything; click again (or another) to fold it."""
+        self._expanded = None if self._expanded == row_id else row_id
+        self._drawn_key = None  # redraw
+
+    def _recent_layout(self, rows, width):
+        """[(row, detail lines)]: an expanded row's whole result, how it was handled and when, wrapped to `width`."""
+        out = []
+        for row in rows:
+            lines = []
+            if row["id"] is not None and row["id"] == self._expanded:
+                result, rest = row["details"][:1], row["details"][1:]
+                if text_width(f"“{row['said']}”", F_ROW) > (width + 20) * 0.42:  # cut short in the row: in full
+                    result = [f"“{row['said']}”", *result]
+                wrapped = [w for line in result for w in _wrap(line, F_ROW_DIM, width)][:6]
+                self._result_lines = len(wrapped)
+                lines = wrapped + [w for line in rest for w in _wrap(line, F_SMALL, width)][:3]
+            out.append((row, lines))
+        return out
+
+    def _recent_h(self, now):
+        rows = content.recent(self.model, now)
+        if not rows:
+            return ROW_H  # one row of suggestions
+        layout = self._recent_layout(rows, OPEN_W - 2 * 18 - 20)
+        return sum(ROW_H + len(lines) * DETAIL_LINE_H + (4 if lines else 0) for _, lines in layout)
 
     def _research_h(self, now):
         jobs = content.research_rows(self.model, now)
@@ -572,15 +616,28 @@ class Notch:
         y += 20
         row_h = ROW_H
         if rows:
-            for said, did, when, by_agent in rows:
-                if by_agent:  # the agent's own summary
+            for row, lines in self._recent_layout(rows, x1 - (x0 + 20)):
+                top = y
+                if row["agent"]:  # the agent's own summary
                     _draw_symbol("sparkles", 10.5, _rgb(STATE["agent"]), x0 + 6, y + 8, alpha)
                 else:
                     _draw_symbol("checkmark", 10, TONES["ok"], x0 + 6, y + 8, alpha)
-                ww = _text(when, F_SMALL, FAINT, x1, y + 1, alpha, align="right")
-                sw = _text(f"“{said}”", F_ROW, WHITE, x0 + 20, y, alpha, max_w=(x1 - x0) * 0.42)
-                _text(did, F_ROW_DIM, DIM, x0 + 20 + sw + 10, y + 1, alpha, max_w=x1 - ww - 12 - (x0 + 20 + sw + 10))
+                ww = _text(row["when"], F_SMALL, FAINT, x1, y + 1, alpha, align="right")
+                _draw_symbol("chevron.up" if lines else "chevron.down", 7.5, FAINT, x1 - ww - 9, y + 8, alpha)
+                sw = _text(f"“{row['said']}”", F_ROW, WHITE, x0 + 20, y, alpha, max_w=(x1 - x0) * 0.42)
+                if not lines:
+                    _text(row["did"], F_ROW_DIM, DIM, x0 + 20 + sw + 10, y + 1, alpha,
+                          max_w=x1 - ww - 24 - (x0 + 20 + sw + 10))
                 y += row_h
+                for i, line in enumerate(lines):  # expanded: everything, wrapped
+                    _text(line, F_ROW_DIM if i < self._result_lines else F_SMALL, DIM if i < self._result_lines
+                          else FAINT, x0 + 20, y - 4, alpha)
+                    y += DETAIL_LINE_H
+                if lines:
+                    y += 4
+                row_id = row["id"]
+                self._view.buttons.append(((x0, top - 2, x1 - x0, y - top),
+                                           lambda row_id=row_id: self._toggle_row(row_id)))
         else:  # nothing yet: what to try
             hx = x0
             for hint in content.HINTS:

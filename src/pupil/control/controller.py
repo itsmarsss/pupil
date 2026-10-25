@@ -19,7 +19,7 @@ from collections import deque
 from dataclasses import dataclass
 from pathlib import Path
 
-from . import actions, apps, commands, config, dictation, extract, heat, macos, models, router, settings, snapping, uitree
+from . import actions, apps, commands, config, console, dictation, extract, heat, macos, models, router, settings, snapping, uitree
 from .agent import Agent
 from .episodes import EpisodeLog, element_dict
 from .gate import CLARIFY_PROMPTS, MAX_CANDIDATES, NO, YES, Gate
@@ -114,7 +114,9 @@ class VoiceController:
         self.research = Research(on_done=lambda job: self.events.put(("research_done", job)),
                                  on_provider_event=lambda state: self.gaze.report("research", research=state))
         self._research_eps: dict = {}  # job id -> the episode that asked for it
+        self.agent.research = self.research  # the agent's research tool: status, results, start, wait
         self.episodes = EpisodeLog(source="typed" if typed else "voice")
+        self.episodes.show = True  # one block per command in the terminal (console.py)
         self.flash_until = 0.0
         self.pending = None  # direct action waiting for "confirm"
         self.pending_text = None  # what it is, in words
@@ -244,7 +246,6 @@ class VoiceController:
     def _on_utterance(self, text, t0, t1):
         if not self.enabled:
             return
-        stamp = time.strftime('%H:%M:%S')
         someone_else = self.lips.someone_else(t0, t1) if self.lips else False
         if self.lips:  # the dashboard's Lips plot marks each utterance with the verdict
             self.gaze.report("lips", t0=round(self.gaze.frame_time(t0), 3), t1=round(self.gaze.frame_time(t1), 3),
@@ -252,14 +253,14 @@ class VoiceController:
         clip = self.voice.clip(t0 - CLIP_PAD_S, t1 + CLIP_PAD_S) if self.voice and config.SAVE_AUDIO else None
         if someone_else:
             if self.lips.mode == "on":
-                print(f"[{stamp}] ignored (your lips didn't move): \"{text}\"", flush=True)
+                console.dropped(text, "lips still")
                 self.events.put(("partial", ""))
                 self.events.put(("dropped", (text, t0, t1, clip)))
                 return
-            print(f"[{stamp}] [shadow] gate would have BLOCKED: \"{text}\"", flush=True)
+            console.status(f'[shadow] lip gate would have blocked: "{text}"')
         elif self.lips and self.lips.mode == "shadow":
-            print(f"[{stamp}] [shadow] gate would have let through: \"{text}\"", flush=True)
-        print(f"[{stamp}] heard: \"{text}\"", flush=True)
+            console.status(f'[shadow] lip gate would have let through: "{text}"')
+        console.status(f'heard: "{text}"')
         self.gaze.report("heard", text)
         self.events.put(("speech", (text, t0, t1, clip)))
 
@@ -271,7 +272,7 @@ class VoiceController:
             self.speaker.stop()
 
     def _status(self, text):
-        print(f"[{time.strftime('%H:%M:%S')}] {text}", flush=True)
+        console.status(text)  # the command's block in the terminal says what mattered (console.py)
         self.gaze.report("status", text)
         self.events.put(("status", text))
         if self._ep is not None:
@@ -577,6 +578,8 @@ class VoiceController:
             return
         try:
             with self._working("thinking", "thinking"):
+                research = getattr(self, "research", None)
+                self.gate.research_jobs = research.describe() if research is not None and research.jobs else ""
                 context = {"last": self._last_action(), "running": [n for n, _ in macos.running_apps()]}
                 d = self.gate.decide(request, gaze, candidates, app, allow_clarify=allow_clarify, cloud=self._cloud,
                                      assume_command=assume_command, **context)
@@ -1161,8 +1164,8 @@ class VoiceController:
         same = next((item for item in activity if key is not None and item.get("id") == key), None)
         if same is not None:  # a later action of the same command (or research finishing after other commands)
             same.update(did=did, t=time.time(), agent=agent)
-        else:
-            activity.append({"id": key, "said": said, "did": did, "t": time.time(), "agent": agent})
+        else:  # the episode rides along (by reference: later outcomes show up) for the notch's expanded row
+            activity.append({"id": key, "said": said, "did": did, "t": time.time(), "agent": agent, "ep": ep})
 
     def _do(self, kind, args, gaze, target):
         if gaze is None and target is None:

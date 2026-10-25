@@ -28,7 +28,7 @@ def test_closed_while_lips_still_open_as_soon_as_they_move():
 def test_needs_you_facing_the_screen():
     g = LipGate()
     t = feed(g, 0, 2, talking, confidence=0.0)  # head turned away
-    assert not g.would_open(t) and g.reason == "not looking"
+    assert not g.would_open(t) and g.reason == "looking away"
 
 
 def test_holds_through_pauses_then_closes():
@@ -131,3 +131,52 @@ def test_voice_mutes_chunks_without_lip_movement():
     assert v._yours(3.0) and not v._yours(1.0) and not v._yours(5.0)
     Gate.mode = "shadow"  # shadow mode never changes what's sent
     assert v._yours(1.0)
+
+
+def test_attention_check_needs_you_facing_and_looking_at_the_screen():
+    from types import SimpleNamespace as NS
+
+    from pupil.control.sources import attending
+
+    def sample(yaw=0.0, x=700.0, y=400.0, state="tracking", face=True):
+        pose = NS(yaw_pitch_roll_deg=(yaw, 0.0, 0.0))  # a property on HeadPose
+        point = NS(valid=True, state=NS(value=state), raw_x=x, raw_y=y)
+        return NS(face=NS(head_pose=pose) if face else None, point=point)
+
+    assert attending(sample(), 1512, 982)
+    assert not attending(sample(face=False), 1512, 982)
+    assert not attending(sample(yaw=50), 1512, 982)  # turned to talk to someone
+    assert not attending(sample(y=1600), 1512, 982)  # looking down at a phone, well below the screen
+    assert attending(sample(y=1100), 1512, 982)  # just off the bottom edge: gaze is only good to ~2 cm
+    assert attending(sample(y=1600, state="uncalibrated"), 1512, 982)  # no calibration: gaze can't be judged
+
+
+def test_looking_away_closes_the_gate_and_ends_a_turn():
+    from pupil.control.lips import LOOK_HOLD_S, LipGate
+
+    g, t = LipGate(), 1000.0
+    for i in range(20):  # talking, facing the screen
+        g.update({"state": "tracking", "confidence": 1.0, "mouth": 0.3 if i % 2 else 0.02, "attending": True}, t + i * 0.03)
+    t += 0.6
+    assert g.would_open(t) and g.face_recent(t)
+    for i in range(80):  # still talking, but turned to someone else
+        g.update({"state": "tracking", "confidence": 1.0, "mouth": 0.3 if i % 2 else 0.02, "attending": False},
+                 t + i * 0.03)
+    t += 80 * 0.03
+    assert t - 1000.6 > LOOK_HOLD_S
+    assert not g.would_open(t) and g.reason == "looking away" and not g.face_recent(t)
+
+
+def test_attention_check_reads_a_real_head_pose():
+    from types import SimpleNamespace as NS
+
+    import numpy as np
+
+    from pupil.control.sources import attending
+    from pupil.core.types import HeadPose
+
+    def sample(yaw):
+        pose = HeadPose(rvec=np.array([0.0, np.radians(yaw), 0.0]), tvec=np.array([0.0, 0.0, 600.0]))
+        return NS(face=NS(head_pose=pose), point=NS(valid=True, state=NS(value="tracking"), raw_x=700.0, raw_y=400.0))
+
+    assert attending(sample(10), 1512, 982) and not attending(sample(60), 1512, 982)

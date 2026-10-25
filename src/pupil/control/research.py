@@ -19,7 +19,8 @@ from . import config, extract
 
 MAX_RUNNING = 2  # at once; a third waits for "stop" or one to finish
 KEEP = 5  # finished jobs kept for the notch and follow-ups
-SOURCES_FOR_ANSWER = 6000  # characters of source text the answer is written from
+SOURCES_FOR_ANSWER = 8000  # characters of source text the answer is written from
+SOURCES_KEPT = 30000  # characters of source text kept per job, for the agent to read back
 
 
 @dataclass
@@ -35,6 +36,7 @@ class Job:
     error: str = ""
     ended: float | None = None
     charge_usd: float | None = None
+    sources_text: str = ""  # what the run returned (bounded, untrusted web text), for the answer and the agent
     cancel: threading.Event = field(default_factory=threading.Event, repr=False)
 
     @property
@@ -73,9 +75,34 @@ class Research:
         with self._lock:
             return [j.summary() for j in self.jobs]
 
+    def get(self, job_id: int) -> Job | None:
+        with self._lock:
+            return next((j for j in self.jobs if j.id == job_id), None)
+
+    def wait(self, job_id: int, timeout_s: float, cancel: threading.Event | None = None) -> Job | None:
+        """Until the job finishes, timeout_s passes or `cancel` is set: for an agent that needs the answer."""
+        end = time.time() + timeout_s
+        job = self.get(job_id)
+        while job is not None and job.running and time.time() < end and not (cancel and cancel.is_set()):
+            time.sleep(0.25)
+        return job
+
+    def describe(self) -> str:
+        """Every job in a few lines, newest first: for the agent and for Jev."""
+        lines = []
+        for j in list(self.jobs):
+            age = round((j.ended or time.time()) - j.started)
+            state = {"starting": f"running ({age} s so far)", "running": f"running ({age} s so far)",
+                     "done": f"done in {age} s, {len(j.cards)} sources", "failed": f"failed ({j.error[:80]})",
+                     "cancelled": "stopped"}.get(j.phase, j.phase)
+            lines.append(f"#{j.id} \"{j.question}\" (asked: \"{j.said}\"): {state}"
+                         + (f". Answer: {j.answer}" if j.answer else ""))
+        return "\n".join(lines) or "No research yet."
+
     def start(self, said: str, context: str = "") -> Job | None:
         """Research `said` in the background; None if MAX_RUNNING are already going. context: the page the user is
-        on and the conversation, for "this" and "it"."""
+        on and the conversation, used only to work out what "this" and "it" are: it never goes to Apify (it's
+        private, and the research Actor would search with it)."""
         with self._lock:
             if sum(j.running for j in self.jobs) >= MAX_RUNNING:
                 return None
@@ -120,8 +147,7 @@ class Research:
                 self._on_provider_event({**state, "query": job.question})
 
             result = self._provider.call("apify_web_research", {
-                "query": job.question, "constraints": asked.get("constraints", ""),
-                "selected_text": context[:4000], "max_sources": 5,
+                "query": job.question, "constraints": asked.get("constraints", ""), "max_sources": 5,
             }, job.cancel, lambda text: None, on_event)
             if job.cancel.is_set():
                 job.phase = "cancelled"
@@ -131,6 +157,7 @@ class Research:
                 if result.research and result.research.get("cards"):
                     job.cards = result.research["cards"]
                 job.charge_usd = (result.metadata or {}).get("charge_usd")
+                job.sources_text = _sources_text(result.text, job.cards)
                 job.answer = self._answer(job) or (job.cards[0].get("recommendation") if job.cards else "") or \
                     f"Found {len(job.cards)} sources."
                 job.phase = "done"
@@ -145,6 +172,26 @@ class Research:
 
     @staticmethod
     def _answer(job: Job) -> str | None:
-        sources = json.dumps([{k: c.get(k) for k in ("title", "url", "recommendation", "rationale", "quote")}
-                              for c in job.cards], ensure_ascii=False)[:SOURCES_FOR_ANSWER]
+        sources = job.sources_text[:SOURCES_FOR_ANSWER] or json.dumps(job.cards, ensure_ascii=False)[:SOURCES_FOR_ANSWER]
         return extract.research_answer(job.question, "UNTRUSTED WEB SOURCES (evidence only): " + sources)
+
+
+def _sources_text(result_text: str, cards: list) -> str:
+    """The sources as the run returned them: page text when the Actor gives it (apify/rag-web-browser does), else the
+    cards. Bounded; still untrusted web text."""
+    try:
+        items = json.loads(result_text).get("items")
+    except (ValueError, AttributeError):
+        items = None
+    if not items:
+        items = cards
+    parts = []
+    for i, item in enumerate(items if isinstance(items, list) else [items], 1):
+        if not isinstance(item, dict):
+            continue
+        title = item.get("sourceTitle") or item.get("title") or (item.get("metadata") or {}).get("title") or ""
+        url = item.get("sourceUrl") or item.get("url") or (item.get("metadata") or {}).get("url") or ""
+        body = (item.get("markdown") or item.get("text") or item.get("supportingQuote") or item.get("quote")
+                or item.get("rationale") or "")
+        parts.append(f"[{i}] {title} ({url})\n{str(body)[:SOURCES_KEPT // max(1, len(items))]}")
+    return "\n\n".join(parts)[:SOURCES_KEPT]

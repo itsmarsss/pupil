@@ -10,7 +10,7 @@ import json
 import threading
 import time
 
-from . import config, models
+from . import config, console, models
 
 TTS_URL = "https://api.cartesia.ai/tts/bytes"
 VOICES_URL = "https://api.cartesia.ai/voices?limit=100&language=en"
@@ -68,7 +68,7 @@ class Speaker:
             self.voices = [{"id": v["id"], "name": v["name"], "tagline": v.get("tagline") or ""}
                            for v in data.get("data", []) if v.get("status", "active") == "active"]
         except Exception as e:
-            print(f"[speech] couldn't list voices: {e}", flush=True)
+            console.notice(f"Speaking couldn't list voices: {e}")
 
     @property
     def voice_name(self) -> str:
@@ -137,7 +137,7 @@ class Speaker:
                     if not started:
                         started = True
                         self.on_state(True)
-                        print(f"[speech] first audio after {(time.perf_counter() - t0) * 1000:.0f} ms", flush=True)
+                        console.status(f"speech: first audio after {(time.perf_counter() - t0) * 1000:.0f} ms")
                     data, carry = carry + data, b""
                     if len(data) % 2:  # a read can split a 16-bit sample: keep the odd byte for the next one
                         data, carry = data[:-1], data[-1:]
@@ -146,7 +146,7 @@ class Speaker:
                     out.abort()
         except Exception as e:  # speaking is a nicety: never take voice control down with it
             detail = e.read()[:200] if hasattr(e, "read") else e
-            print(f"[speech] failed: {detail}", flush=True)
+            console.notice(f"Speaking failed: {detail}")
         finally:
             if started:
                 self.on_state(False)

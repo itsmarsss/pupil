@@ -133,7 +133,17 @@ NEEDS_RESEARCH = Noul(
         true="e.g. \"compare this with three alternatives\", \"is this the cheapest?\", \"what are people saying "
              "about this\", \"find current prices for these\"",
         false="Working with what's on screen or in an app (\"summarize this page\", \"reply to her\", \"open my "
-              "notes\"), or opening a website or one search",
+              "notes\"), opening a website or one search, or asking about research already going or done "
+              "(`background_research`): how it's going, what it found, or what to do with it",
+    ),
+)
+ABOUT_RESEARCH = Noul(
+    instructions="Is `command` about the research in `background_research`: how it's going, what it found, its "
+                 "sources, or doing something with its results (open them, put them in a note, compare them)?",
+    criteria=NoulCriteria(
+        true="e.g. \"is the research done?\", \"what did it find?\", \"open the sources\", \"put that in a note\"",
+        false="A new question to look into, including about what's on screen now (\"compare this with three "
+              "alternatives\"), or anything else",
     ),
 )
 AGENT_TIER = Choice(
@@ -344,6 +354,10 @@ def _decide(a, elements, gaze, apps, allow_clarify=True, allow_compound=True, co
     p = lambda k: nouls[k].noul if k in nouls else 0.0  # noqa: E731  (not asked, or a log from before it was)
     element_p = sorted(((p(f"el_{i}"), el) for i, el in enumerate(elements)), key=lambda x: -x[0])
 
+    # "is the research done?", "open its sources": for us even when it doesn't sound like a command; the agent has
+    # the research tool. A new question that happens to sound related ("compare this") is new research instead.
+    if p("about_research") >= YES and p("about_research") >= p("needs_research"):
+        return "agent", f"about the research {p('about_research'):.2f}", {}
     if p("is_command") < NO and not assume_command:
         return "ignore", f"not a command {p('is_command'):.2f}", {}
     follow_up = p("follows_up") >= YES  # "knight g2" after "play the best move"
@@ -468,6 +482,7 @@ class Gate:
     def __init__(self):
         self.recent: list[str] = []  # what the user said just before (the controller keeps it): for follow-ups
         self.last_reply: str | None = None  # what the assistant last said aloud, if just now (a question it asked)
+        self.research_jobs: str = ""  # background research going on or done (research.Research.describe)
         self.error = None
         self._client = None
         if TypeSafeClient is None:
@@ -502,6 +517,7 @@ class Gate:
             "command": utterance,
             **({"previous_commands": self.recent[-4:]} if self.recent else {}),
             **({"assistant_just_said": self.last_reply} if self.last_reply else {}),
+            **({"background_research": self.research_jobs} if self.research_jobs else {}),
             **({"last_action": last} if last else {}),
             "frontmost_app": app_name,
             "pointer": "The user is pointing at (looking at) a spot on screen; distances are measured from it.",
@@ -524,6 +540,7 @@ class Gate:
             "wants_shortcut": WANTS_SHORTCUT, "wants_scroll": WANTS_SCROLL, "risky": RISKY,
             "app": _app_question(apps), "shortcut": _shortcut_question(), "times": TIMES,
             "agent_tier": AGENT_TIER, "agent_budget": AGENT_BUDGET, "needs_research": NEEDS_RESEARCH,
+            **({"about_research": ABOUT_RESEARCH} if self.research_jobs else {}),
             "scroll_direction": SCROLL_DIRECTION, "scroll_amount": SCROLL_AMOUNT, "element_action": ELEMENT_ACTION,
             "wants_cancel": WANTS_CANCEL, "wants_type": WANTS_TYPE, "wants_web": WANTS_WEB,
             "wants_quit": WANTS_QUIT, "force_quit": FORCE_QUIT, "intent": INTENT,
@@ -542,7 +559,9 @@ class Gate:
                                                          or {}).items()}}
         decision = Decision(route, why, ms, risky=result.nouls["risky"].noul, answers=answers,
                             tier=result.choices["agent_tier"].choice, budget=result.choices["agent_budget"].choice,
-                            research=result.nouls["needs_research"].noul >= YES, **extras)
+                            research=result.nouls["needs_research"].noul >= YES
+                            and not why.startswith("about the research"),  # asking about it isn't new research
+                            **extras)
         _log({"tier": "gate", "kind": "decision", "utterance": utterance, "route": route, "why": why,
               "target": decision.target.describe() if decision.target else None, "app": decision.app,
               "shortcut": decision.shortcut, "risky": round(decision.risky, 3),

@@ -153,6 +153,11 @@ as well as Camera.
 | 1 · `gate.py` | Jev answers small yes/no and pick-one questions about the command and the elements near your gaze; a truth table picks the action. No keyword lists: clicks, scrolling, shortcuts (via the app's own menu command, which Jev picks from its real menus), websites and searches, typing, quitting apps, "again" / "no, the left one" and answers to "which one?" are all its reading. A fast model (`extract.py`) pulls out the text Jev can't carry: what to type, the URL or search, the steps of a multi-step request. It asks a question only when something the screen can't supply is missing, holds commands it isn't sure were meant for it without interrupting ("do it" runs them), and runs a few actions in a row itself, handing the rest to the agent if a step needs it | "click this", "scroll down a little", "go to github.com", "type hello world", "quit Games", "open Safari", "close this tab" (asks to confirm risky ones), "select all and copy", "send it to…" → "Who to?" |
 | 2 · `agent.py` | Claude computer-use loop, told where you were looking while you spoke, with app-agnostic tools beside the screenshot/mouse/keyboard ones (`uitree.py`): any app's menu bar (`menu`), its controls by id (`ui_elements`, `press_element`, `set_value`), AppleScript/JXA, `drag` with any button and modifiers, `open_app`; plus app adapters where an app has its own scripting (`apps/`: Blender via `blender_python`) | "open this in a new tab and summarize it", "export this as PDF", "build me a car in Blender" |
 
+Attention check: it only listens while you're paying attention: your face visible, your head turned toward the
+screen (within 35°) and, once calibrated, your gaze on or near it. Turn to talk to someone or look down at your
+phone for more than 1.5 s and nothing is sent or transcribed, a turn in progress ends, and the notch says "Not
+listening". Glances don't count.
+
 Listening: the default mic (AirPods included), raw; Apple's voice processing (noise suppression, echo
 cancellation) is optional, ◉ → Voice isolation. The lip gate (`lips.py`) only lets speech through while
 you face the screen and your lips move, keeping 1.5 s of audio so a late open loses nothing, and drops
@@ -169,7 +174,10 @@ citing its sources. When Jev judges a request needs the web, it runs in the back
 model names what "this" is from the page you're on, one capped Apify run gathers sources, and the answer comes back
 as a sentence, while you carry on with something else. The notch shows it ("Researching" in its ears, then the
 answer, and in the open notch each job's progress, answer and a click-through to its top source); it's spoken
-only if nothing else is going on, two can run at once, and "stop" with nothing else running drops them. Inside
+only if nothing else is going on, two can run at once, and "stop" with nothing else running drops them. The
+agent's `research` tool reads it back (status, results with sources and page text, start, wait) and `open_urls`
+shows the sources, so "is it done?", "what did it find?", "open the sources" or "put that in a note" work without
+starting new research. Your conversation and window title only shape the question: they never go to Apify. Inside
 agent tasks the agent can also look up and run a specialised Apify Actor, always after you say "confirm". Scraped text is untrusted data; every run is capped (45 s, 15 items,
 $0.25 by default) and so is each task's total (`PUPIL_APIFY_TASK_BUDGET_USD`, $1). Results show in the
 dashboard's "Decision research" tab; `actors/accessible-decision-researcher` is a custom Actor for it.
@@ -198,6 +206,7 @@ fillers and self-corrections ("at 5, no wait, 6" → "at 6"). Password fields ar
 "This" means where you looked *while speaking*, snapped to the nearest Accessibility element
 (`snapping.py`). If the tracker wasn't confident then (head turned past what calibration covered),
 "click" and "type" ask you to confirm instead of acting. The notch shows what was heard and what happened
+(click a recent command in the open notch to see all of it: the whole result, how it was handled, when)
 (`PUPIL_HUD_BAR=1` brings back the old status bar at the bottom); the dashboard's "Voice & agent" panel logs it, outlines the target and
 lists which model each part calls (speech in, Jev, extraction, dictation, agent tier, speech out), lit
 while a call is open.
@@ -241,7 +250,9 @@ The heat map gives extra weight to your final stable fixation. For a recent clic
 "again" to repeat the action, "do the same here" while looking somewhere else, or
 "close the one I just clicked". References expire after `RELATIVE_WINDOW_S` (20 s) and never cross apps or windows.
 
-Every command is logged to `.logs/episodes.jsonl` with what was seen, decided and done, and labelled by
+The terminal shows one short block per command (what you said, what happened, Jev's time and the total) and a
+line when an agent task or research finishes; HTTP and library chatter is silenced (`PUPIL_VERBOSE=1` shows every
+status line). Every command is logged to `.logs/episodes.jsonl` with what was seen, decided and done, and labelled by
 your reaction ("stop" right after, or what Jev reads as "no, not that" = corrected; saying it again =
 repeated). `pupil episodes` lists
 them with latency per route, `--replay` re-runs the routing rules on the logged answers offline, and

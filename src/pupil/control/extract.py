@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import os
 
-from . import config, models
+from . import config, console, models
 
 _TOOLS = {
     "type": ({"text": {"type": "string", "description": "exactly what to type, as the user wants it written"}},
@@ -75,7 +75,7 @@ def extract(kind: str, command: str, context: str = "") -> dict | None:
                 model=config.EXTRACT_MODEL, max_tokens=512, tools=[tool],
                 tool_choice={"type": "tool", "name": kind}, messages=[{"role": "user", "content": content}])
     except Exception as e:
-        print(f"[extract] {kind} failed: {e}", flush=True)
+        console.status(f"extract: {kind} failed: {e}")
         return None
     for block in response.content:
         if block.type == "tool_use":

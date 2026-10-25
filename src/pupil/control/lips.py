@@ -1,4 +1,9 @@
-"""Lip-movement gate: speech only reaches the recognizer while you face the screen and your lips move.
+"""Lip-movement gate: speech only reaches the recognizer while you pay attention to the screen and your lips move.
+
+Paying attention (the attention check): your face is visible, your head is turned toward the screen (ATTENTION_YAW_DEG)
+and, once calibrated, your gaze lands on or near it (sources.TrackerGaze sends "attending"). Turned to talk to
+someone, or looking down at your phone, for more than LOOK_HOLD_S: nothing is sent, so nothing is transcribed, and
+a turn in progress ends.
 
 Built to never lose your words (no false negatives):
 - the mic always records into a local pre-roll buffer, and opening the gate sends that buffer first, so a gate
@@ -45,6 +50,7 @@ class LipGate:
         self._moves = deque(maxlen=2000)  # times the lips moved while looking
         self._faces = deque(maxlen=2000)  # times a face was visible
         self.reason = "starting"
+        self.attending = True  # the attention check, this frame (looking toward the screen)
 
     def update(self, msg, now=None):
         """One tracker message (see sinks/publisher.py)."""
@@ -52,9 +58,10 @@ class LipGate:
         with self._lock:
             self._last_msg = now
             face = "mouth" in msg
-            looking = face and not msg.get("busy") and (
+            looking = face and not msg.get("busy") and msg.get("attending", True) and (
                 msg.get("state") == "uncalibrated"  # nothing to judge "looking" by yet: a visible face will do
                 or (msg.get("state") in ("tracking", "blink") and msg.get("confidence", 1.0) >= MIN_CONFIDENCE))
+            self.attending = bool(looking)
             if looking:
                 self._last_look = now
             if not face:
@@ -94,7 +101,7 @@ class LipGate:
                 self.reason = "no tracker - open"
                 return True
             if now - self._last_look > LOOK_HOLD_S:
-                self.reason = "not looking"
+                self.reason = "looking away"
                 return False
             if now - self._last_move > HOLD_S:
                 self.reason = "lips still"
@@ -136,7 +143,8 @@ class LipGate:
             return now - self._last_msg > TRACKER_STALE_S or now - self._last_move < seconds
 
     def face_recent(self, now=None):
-        """A face seen within LOOK_HOLD_S (or no tracker: fail open). Keeps a turn going only while you're there."""
+        """You've paid attention within LOOK_HOLD_S (or no tracker: fail open). Keeps a turn going only while you're
+        there and facing the screen: turned away to talk to someone, the turn ends."""
         now = time.time() if now is None else now
         with self._lock:
-            return now - self._last_msg > TRACKER_STALE_S or bool(self._faces and now - self._faces[-1] < LOOK_HOLD_S)
+            return now - self._last_msg > TRACKER_STALE_S or now - self._last_look < LOOK_HOLD_S

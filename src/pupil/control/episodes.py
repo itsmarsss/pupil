@@ -19,7 +19,7 @@ from collections import deque
 from dataclasses import asdict
 from pathlib import Path
 
-from . import config
+from . import config, console
 
 MAX_AUDIO_FILES = 1000  # newest kept; ~1 s of 16 kHz mono is 32 KB
 CORRECT_S = 4.0
@@ -45,6 +45,7 @@ class EpisodeLog:
     def __init__(self, path: Path | None = None, source: str = "voice"):
         self.path = path or config.LOG_DIR / "episodes.jsonl"
         self.source = source
+        self.show = False  # print each command's block in the terminal (the controller turns it on)
         self._lock = threading.Lock()
         self._recent: deque = deque(maxlen=20)  # finished episodes, for reaction labels
         self._ids = itertools.count()
@@ -78,6 +79,8 @@ class EpisodeLog:
         with self._lock:
             self._recent.append(ep)
         self._write({k: v for k, v in ep.items() if k != "label"})
+        if self.show:
+            console.command(ep)
 
     def save_audio(self, ep: dict, samples, rate: int = 16000) -> None:
         """The command's audio as a WAV beside the log (`.logs/audio/<id>.wav`), to replay misheard or wrongly
@@ -119,6 +122,8 @@ class EpisodeLog:
         """Something that finished after the episode was written (the agent's result)."""
         ep.update(fields)
         self._write({"type": "outcome", "id": ep["id"], "t": time.time(), **fields})
+        if self.show:
+            console.result(ep, **fields)
 
     def _write(self, record: dict) -> None:
         with self._lock:

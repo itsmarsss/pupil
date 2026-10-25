@@ -159,7 +159,7 @@ export interface ResearchState {
 export interface LipGateState {
   mode: "on" | "shadow";
   open: boolean;
-  reason: string; // open | lips still | not looking | no tracker - open
+  reason: string; // open | lips still | looking away | no tracker - open
   threshold: number; // lip movement (max - min over 0.4 s) that opens it; adapts to your resting jitter
   open_above: number; // or a mouth held open wider than this
 }
