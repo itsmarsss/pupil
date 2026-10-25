@@ -79,7 +79,7 @@ def launch(app_path: str) -> str:
         if bridge_up():
             subprocess.Popen(["open", "-a", app_path])  # to the front
             return "Opened Blender (scriptable)."
-    return "Opened Blender, but the scripting bridge didn't start (see Gaze/blender.log)."
+    return "Opened Blender, but the scripting bridge didn't start (see Pupil/blender.log in Application Support)."
 
 
 # ---- as an agent adapter (apps/__init__.py) ----------------------------------------------------

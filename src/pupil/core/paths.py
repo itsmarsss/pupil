@@ -9,13 +9,12 @@ _OLD_APP_SUPPORT = Path.home() / "Library" / "Application Support" / "Gaze"  # b
 
 
 def migrate_app_support() -> None:
-    """Profiles, recordings and logs saved as "Gaze" move to "Pupil" once (a rename on the same disk, so nothing is
-    copied or lost); never over an existing "Pupil"."""
+    """Legacy Application Support folder renamed to Pupil once (same disk, nothing copied); never overwrites Pupil."""
     if _OLD_APP_SUPPORT.is_dir() and not APP_SUPPORT.exists():
         _OLD_APP_SUPPORT.rename(APP_SUPPORT)
 _REPO_MODELS = Path(__file__).resolve().parents[3] / "models"
 
-GAZE_MODEL_FILE = "gaze_base.mnn"
+PUPIL_GAZE_MODEL = "gaze_base.mnn"  # on-disk weights for the eye-gaze network
 FACE_LANDMARKER_FILE = "face_landmarker.task"
 FACE_LANDMARKER_URL = (
     "https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task"

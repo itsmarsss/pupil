@@ -29,13 +29,13 @@ def test_frame_state_from_a_real_frame():
     import cv2
 
     from pupil.calibration.profile import EXPLICIT, Profile, ProfileMeta
-    from pupil.core.paths import GAZE_MODEL_FILE, model_path
+    from pupil.core.paths import PUPIL_GAZE_MODEL, model_path
     from pupil.core.types import Frame
     from pupil.face.tracker import FaceTracker
     from pupil.telemetry import calibration_info, frame_state
     from pupil.tracker import Tracker
 
-    if not model_path(GAZE_MODEL_FILE).exists():
+    if not model_path(PUPIL_GAZE_MODEL).exists():
         pytest.skip("gaze model weights not present")
     from pupil.models.mnn_face_eye import MNNFaceEyeModel
 

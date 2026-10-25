@@ -14,6 +14,7 @@ from typing import Callable
 from ..core.types import Sample
 from . import config
 from .heat import FINAL_FIXATION_BOOST, GazeCloud
+from .lips import LipGate
 
 MIN_FINAL_FIXATION_SAMPLES = 3
 ATTENTION_YAW_DEG = 35.0  # head turned further than this from the camera: talking to someone else, not the screen
@@ -80,12 +81,12 @@ class TrackerGaze:
 
     @property
     def connected(self) -> bool:
-        return time.time() - self._last_seen < config.GAZE_STALE_S
+        return time.time() - self._last_seen < config.TRACKER_STALE_S
 
     def point(self):
         """Latest gaze point in screen points, or None if the tracker has lost you."""
         with self._lock:
-            if not self._history or self.busy or time.time() - self._last_point > config.GAZE_STALE_S:
+            if not self._history or self.busy or time.time() - self._last_point > config.TRACKER_STALE_S:
                 return None
             return self._history[-1][1:3]
 
@@ -128,6 +129,21 @@ class TrackerGaze:
         self._report({"event": event, "text": text, **extra})
 
 
+def tracker_lips_listener(lips: LipGate | None, busy: Callable[[], bool]) -> Callable[[Sample], None]:
+    """Feed the lip gate from tracker samples (mouse hybrid: camera for voice, cursor for gaze)."""
+
+    def on_sample(sample: Sample) -> None:
+        if lips is None:
+            return
+        p = sample.point
+        msg = {"state": p.state.value, "confidence": float(p.confidence), "busy": busy()}
+        if sample.face is not None:
+            msg["mouth"] = sample.face.mouth_open
+        lips.update(msg, time.time())
+
+    return on_sample
+
+
 class MouseGaze(threading.Thread):
     """Stand-in for eye tracking: the mouse cursor is where the user is "looking"."""
 
@@ -135,19 +151,29 @@ class MouseGaze(threading.Thread):
     busy = False
     connected = True
 
-    def __init__(self):
+    def __init__(self, report: Callable[[dict], None] | None = None, *, lip_gate: bool = True):
         super().__init__(daemon=True)
         self._lock = threading.Lock()
         self._history: deque = deque(maxlen=900)  # (t, x, y)
+        self._report = report or (lambda _msg: None)
+        self._running = True
+        self.lip_gate = lip_gate  # webcam feeds LipGate; cursor is still gaze
+        self.lips = None
+
+    def stop(self) -> None:
+        self._running = False
 
     def run(self):
         import Quartz  # local: only this stand-in needs it
 
-        while True:
+        while self._running:
             loc = Quartz.CGEventGetLocation(Quartz.CGEventCreate(None))  # global points, origin top-left
             with self._lock:
                 self._history.append((time.time(), loc.x, loc.y))
             time.sleep(1 / 30)
+
+    def frame_time(self, t: float) -> float:
+        return t  # voice timestamps are already wall clock
 
     def point(self):
         with self._lock:
@@ -174,4 +200,4 @@ class MouseGaze(threading.Thread):
         pass  # nothing to calibrate
 
     def report(self, event: str, text: str = "", **extra) -> None:
-        pass
+        self._report({"event": event, "text": text, **extra})

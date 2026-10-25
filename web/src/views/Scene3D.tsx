@@ -17,6 +17,7 @@ function Lid() {
   const { scene, frame } = useEngine();
   if (!scene) return null;
   const c = scene.screen.corners_cm;
+  if (c.length < 4) return null;
   const screen = [...c, c[0]] as Vec3[];
   const x0 = c[1][0] - BEZEL_CM, x1 = c[0][0] + BEZEL_CM;
   const top = c[0][1] + BEZEL_CM, hinge = c[2][1] - BEZEL_CM * 2;

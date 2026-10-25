@@ -136,6 +136,11 @@ class LipGate:
                     return True
         return False
 
+    def moved_since(self, t: float) -> bool:
+        """True if the lips moved at or after time `t` (for TTS barge-in: only after speech started)."""
+        with self._lock:
+            return self._last_move >= t
+
     def lips_recent(self, seconds, now=None):
         """Lips seen moving (while facing the screen) within `seconds` (or no tracker: fail open)."""
         now = time.time() if now is None else now

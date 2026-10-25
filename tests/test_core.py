@@ -93,7 +93,7 @@ def test_app_support_moves_from_the_old_name_once(tmp_path, monkeypatch):
 def test_settings_read_the_new_name_then_the_old(monkeypatch):
     from pupil.core.env import env
 
-    monkeypatch.setenv("GAZE_NOTCH", "0")
+    monkeypatch.setenv("PUPIL_NOTCH", "0")
     assert env("NOTCH", "1") == "0"
     monkeypatch.setenv("PUPIL_NOTCH", "1")
     assert env("NOTCH", "1") == "1"

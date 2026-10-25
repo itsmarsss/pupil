@@ -1,6 +1,6 @@
 # Accessible Decision Researcher
 
-An Apify Actor for hands-free decision support. It accepts a public page or question, gathers current evidence with `apify/web-fetch` and `apify/rag-web-browser`, deduplicates sources, flags conflicting language, and emits compact records that work in Apify Console, MCP clients, and the Gaze dashboard.
+An Apify Actor for hands-free decision support. It accepts a public page or question, gathers current evidence with `apify/web-fetch` and `apify/rag-web-browser`, deduplicates sources, flags conflicting language, and emits compact records that work in Apify Console, MCP clients, and the Pupil dashboard.
 
 ## Safety and limits
 

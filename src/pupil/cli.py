@@ -7,9 +7,25 @@ import sys
 from pathlib import Path
 
 
+def add_tracker_arguments(parser: argparse.ArgumentParser) -> None:
+    """Camera/tracker options shared by `pupil run` and `pupil control --gaze mouse`."""
+    parser.add_argument("--mode", choices=["hd", "vga"], default="hd", help="capture resolution (default hd)")
+    parser.add_argument("--camera", default="FaceTime", help="camera name substring or index")
+    parser.add_argument("--source", help="replay a video/image instead of the camera")
+    parser.add_argument("--model", help="path to the gaze model")
+    parser.add_argument("--appearance", choices=["network", "patches"], default="network",
+                        help="eye appearance features (default: network)")
+    parser.add_argument("--smoothing", choices=["off", "light", "medium", "strong"], default="medium")
+    parser.add_argument("--normalise", choices=["roll", "frontal", "none"], default="roll")
+
+
+def build_tracker(args):
+    return _build_tracker(args)
+
+
 def _build_tracker(args):
     from .capture.camera import CameraSource, FileSource
-    from .core.paths import GAZE_MODEL_FILE, model_path
+    from .core.paths import PUPIL_GAZE_MODEL, model_path
     from .core.screen import main_screen
     from .face.tracker import FaceTracker
     from .models.mnn_face_eye import MNNFaceEyeModel
@@ -20,7 +36,7 @@ def _build_tracker(args):
     else:
         camera = int(args.camera) if args.camera.isdigit() else args.camera
         source = CameraSource(mode=args.mode, camera=camera)
-    if args.appearance == "network" and not args.model and not model_path(GAZE_MODEL_FILE).exists():
+    if args.appearance == "network" and not args.model and not model_path(PUPIL_GAZE_MODEL).exists():
         print("No models/gaze_base.mnn: tracking with per-person eye patches (--appearance patches).", flush=True)
         args.appearance = "patches"
     if args.appearance == "patches":
@@ -53,14 +69,14 @@ def _single_instance():
 
 
 def cmd_run(args) -> int:
-    from .ui.app import GazeApp
+    from .ui.app import PupilApp
 
     lock = _single_instance()
     if lock is None:
-        print("gaze is already running (◉ in the menu bar). Quit it first: ◉ → Quit.", file=sys.stderr)
+        print("Pupil is already running (◉ in the menu bar). Quit it first: ◉ → Quit.", file=sys.stderr)
         return 1
     tracker = _build_tracker(args)
-    GazeApp(
+    PupilApp(
         tracker,
         profile_name=args.profile,
         n_targets=args.targets,
@@ -209,7 +225,7 @@ def cmd_doctor(args) -> int:
     import AVFoundation as AV
 
     from .capture.camera import find_camera, list_cameras
-    from .core.paths import FACE_LANDMARKER_FILE, GAZE_MODEL_FILE, model_path, models_dir
+    from .core.paths import FACE_LANDMARKER_FILE, PUPIL_GAZE_MODEL, model_path, models_dir
     from .core.screen import main_screen
 
     ok = True
@@ -224,7 +240,7 @@ def cmd_doctor(args) -> int:
     cams = list_cameras()
     idx = find_camera(args.camera)
     check(bool(cams), f"camera: {cams[idx] if cams else '-'}", "no cameras found")
-    check(model_path(GAZE_MODEL_FILE).exists(), f"gaze model in {models_dir()}", f"gaze model missing: {model_path(GAZE_MODEL_FILE)}")
+    check(model_path(PUPIL_GAZE_MODEL).exists(), f"gaze model in {models_dir()}", f"gaze model missing: {model_path(PUPIL_GAZE_MODEL)}")
     lm = model_path(FACE_LANDMARKER_FILE)
     print(("✓ " if lm.exists() else "• ") + ("face landmarker present" if lm.exists() else "face landmarker downloads on first run"))
     s = main_screen()
@@ -261,10 +277,7 @@ def main(argv: list[str] | None = None) -> int:
 
     run = sub.add_parser("run", help="start the tracker (default)")
     for p in (parser, run):
-        p.add_argument("--mode", choices=["hd", "vga"], default="hd", help="capture resolution (default hd)")
-        p.add_argument("--camera", default="FaceTime", help="camera name substring or index")
-        p.add_argument("--source", help="replay a video/image instead of the camera")
-        p.add_argument("--model", help="path to the gaze model")
+        add_tracker_arguments(p)
         p.add_argument("--profile", default="default", help="calibration profile name")
         p.add_argument("--targets", type=int, default=16, choices=[5, 9, 13, 16, 25], help="calibration dots (default 16)")
         p.add_argument("--recalibrate", action="store_true", help="ignore the saved calibration")
@@ -281,13 +294,6 @@ def main(argv: list[str] | None = None) -> int:
                        help="voice control: look at something and say what to do (needs: uv sync --extra control)")
         p.add_argument("--typed", action="store_true", help="with --voice: type commands in the terminal instead")
         p.add_argument("--dashboard-port", type=int, default=8766)
-        p.add_argument("--appearance", choices=["network", "patches"], default="network",
-                       help="eye appearance features: the pretrained network (default) or eye patches "
-                            "fitted per person (no pretrained weights; less accurate)")
-        p.add_argument("--smoothing", choices=["off", "light", "medium", "strong"], default="medium",
-                       help="ring smoothing; medium holds steady during fixations (default)")
-        p.add_argument("--normalise", choices=["roll", "frontal", "none"], default="roll",
-                       help="straighten the face before the gaze model (default: level the eyes)")
     sub.add_parser("control", help="shortcut for `pupil --voice` (see `pupil control -h`)")
     sub.add_parser("cameras", help="list cameras")
     fov = sub.add_parser("fov", help="measure the camera's field of view (once per camera)")

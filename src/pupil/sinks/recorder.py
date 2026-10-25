@@ -14,7 +14,7 @@ FIELDS = [
 ]
 
 
-class GazeRecorder:
+class PupilRecorder:
     """Attach `on_sample` as a tracker listener. Events (e.g. clicks) go in the same file."""
 
     def __init__(self, path: str | Path):

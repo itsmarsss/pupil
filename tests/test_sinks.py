@@ -3,8 +3,8 @@ import csv
 import numpy as np
 
 from pupil.core.types import GazePoint, Sample, TrackingState
-from pupil.sinks.publisher import GazePublisher
-from pupil.sinks.recorder import GazeRecorder
+from pupil.sinks.publisher import PupilPublisher
+from pupil.sinks.recorder import PupilRecorder
 from pupil.sinks.snapper import Element, choose, probe_points
 
 BUTTON_A = Element("AXButton", 100, 100, 80, 30)
@@ -41,7 +41,7 @@ def test_probe_points_cover_radius():
 
 
 def test_recorder_writes_samples_and_events(tmp_path):
-    rec = GazeRecorder(tmp_path / "g.csv")
+    rec = PupilRecorder(tmp_path / "g.csv")
     rec.on_sample(Sample(1, None, None, GazePoint(1, TrackingState.TRACKING, 10.0, 20.0, 11.0, 21.0, 3, 550.0)))
     rec.on_sample(Sample(2, None, None, GazePoint(2, TrackingState.NO_FACE)))
     rec.event("click", 5, 6)
@@ -53,7 +53,7 @@ def test_recorder_writes_samples_and_events(tmp_path):
 
 
 def test_publisher_sends_points_only_when_valid():
-    pub = GazePublisher(busy=lambda: True, port=0)
+    pub = PupilPublisher(busy=lambda: True, port=0)
     msg = pub.message(Sample(1, None, None, GazePoint(1, TrackingState.TRACKING, 10.0, 20.0, 11.0, 21.0, 3, 550.0, 0.8)))
     assert (msg["x"], msg["y"], msg["fixation"], msg["busy"]) == (10.0, 20.0, 3, True)
     assert "x" not in pub.message(Sample(2, None, None, GazePoint(2, TrackingState.BLINK, 10.0, 20.0)))

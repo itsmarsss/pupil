@@ -1,5 +1,5 @@
 """Streams gaze points over local UDP so another process (the voice controller in
-`gaze.control`) can use them, and takes commands back (e.g. "recalibrate").
+`pupil control`) can use them, and takes commands back (e.g. "recalibrate").
 
 Points are JSON: {"t": wall-clock seconds, "x", "y": screen points (top-left origin,
 smoothed), "state", "fixation", "confidence", "busy": calibration on screen}.
@@ -17,15 +17,15 @@ from ..core.types import Sample
 
 log = logging.getLogger(__name__)
 
-GAZE_PORT = 47800  # points out
+TRACKER_PUBLISH_PORT = 47800  # gaze points out
 CMD_PORT = 47801  # commands in
 
 
-class GazePublisher:
+class PupilPublisher:
     """Attach `on_sample` as a tracker listener; `busy()` says whether a calibration or
     check is on screen (the controller pauses while it is)."""
 
-    def __init__(self, busy: Callable[[], bool] = lambda: False, port: int = GAZE_PORT):
+    def __init__(self, busy: Callable[[], bool] = lambda: False, port: int = TRACKER_PUBLISH_PORT):
         self._busy = busy
         self._addr = ("127.0.0.1", port)
         self._sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)

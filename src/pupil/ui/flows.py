@@ -20,7 +20,7 @@ from ..core.lid import LidSensor
 from ..core.types import TrackingState
 from ..eval.metrics import ValidationResult, append_result, score
 from ..tracker import Tracker
-from .overlay import GazeRing
+from .overlay import PupilRing
 from .target_screen import ESC, RETURN, SPACE, TargetScreen, TargetSequence
 
 log = logging.getLogger(__name__)
@@ -34,7 +34,7 @@ Pair = tuple[np.ndarray, np.ndarray]  # (calibration features, eyeball measureme
 
 
 class Flows:
-    def __init__(self, tracker: Tracker, targets: TargetScreen, ring: GazeRing, lid: LidSensor, *,
+    def __init__(self, tracker: Tracker, targets: TargetScreen, ring: PupilRing, lid: LidSensor, *,
                  profile_name: str, n_targets: int, results_csv: Path, quit: Callable[[], None],
                  session_label: Callable[[str | None, tuple | None, int], None] = lambda *_: None):
         self.tracker, self.targets, self.ring, self.lid = tracker, targets, ring, lid

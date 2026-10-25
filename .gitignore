@@ -19,7 +19,7 @@ data/
 # Model weights (local only)
 /models/
 
-# gaze control
+# pupil control
 .env
 .logs/
 node_modules

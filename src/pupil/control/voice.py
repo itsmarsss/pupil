@@ -148,16 +148,19 @@ def pick_mic(preferred=None):
 
 
 class Voice(threading.Thread):
-    def __init__(self, on_utterance, on_state, on_device=lambda name: None, on_partial=lambda text: None, gate=None):
+    def __init__(self, on_utterance, on_state, on_device=lambda name: None, on_partial=lambda text: None, gate=None,
+                 stt_duck=None):
         """on_utterance(text, t_start, t_end) with unix timestamps; on_state("listening" | "transcribing" | "idle");
         on_device(name) whenever the microphone in use changes; on_partial(text) with words so far (Cartesia only).
-        gate: a lips.LipGate; speech only counts while it is open."""
+        gate: a lips.LipGate; speech only counts while it is open.
+        stt_duck: when True, send silence to the recognizer (mouse mode while TTS plays: no lip gate)."""
         super().__init__(daemon=True)
         self.on_utterance = on_utterance
         self.on_state = on_state
         self.on_device = on_device
         self.on_partial = on_partial
         self.gate = gate
+        self.stt_duck = stt_duck or (lambda: False)
         self.choice = config.MIC_NAME or None  # None: follow the system default input
         self.isolation = config.VOICE_PROCESSING  # Apple voice processing on the default input
         self._recent: deque = deque(maxlen=int(RECENT_S * audio.RATE / audio.CHUNK) + 8)  # (capture end, samples)
@@ -285,6 +288,12 @@ class Voice(threading.Thread):
         preroll = deque(maxlen=PREROLL_CHUNKS)
         speaking, voiced, silence, buf, started = False, 0, 0, [], 0.0
         for t_end, chunk in self._chunks(blocks, watch):
+            if self.stt_duck():
+                if speaking:
+                    speaking, voiced, silence, buf = False, 0, 0, []
+                    preroll.clear()
+                    self.on_state("idle")
+                continue
             p = vad(chunk)
             if not speaking:
                 preroll.append((t_end, chunk))
@@ -431,6 +440,14 @@ class CartesiaVoice(Voice):
                     block, pending = _pcm16(pending[:SEND_SAMPLES]), pending[SEND_SAMPLES:]
                     t_block = pending_end - len(pending) / audio.RATE
                     try:
+                        if self.stt_duck():
+                            if sending:
+                                models.streaming("stt", f"Cartesia {config.CARTESIA_MODEL}", False)
+                            sending = False
+                            preroll.clear()
+                            ws.send(SILENCE)
+                            last_sent = time.time()
+                            continue
                         # a turn in progress keeps going through pauses, but not once your face is gone or your lips
                         # have been still for TURN_LIPS_STILL_S: then it's someone else (a TV) keeping it open, and
                         # every second sent is billed
