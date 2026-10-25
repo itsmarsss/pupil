@@ -60,3 +60,7 @@ header { display: flex; align-items: center; gap: 16px; }
 .timeline .track input { width: 100%; position: relative; z-index: 1; }
 .timeline .marker { position: absolute; top: 0; width: 2px; height: 6px; }
 .timeline .pos { color: var(--muted); font-size: 12px; min-width: 140px; text-align: right; }
+.card { position: relative; }
+.corner-toggle { position: absolute; top: 6px; right: 8px; z-index: 2; background: #1c2230; color: var(--muted);
+                 border: 1px solid #2c3445; border-radius: 5px; padding: 1px 7px; font-size: 11px; cursor: pointer; }
+.corner-toggle:hover { color: var(--text); }
