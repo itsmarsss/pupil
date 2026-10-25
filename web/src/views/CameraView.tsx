@@ -33,7 +33,7 @@ export function CameraView() {
   };
 
   return (
-    <>
+    <div className="pane">
       <button className="corner-toggle" onClick={toggle}>{mirror ? "Mirrored" : "Not mirrored"}</button>
       <FitBox aspect={aspect} style={{ transform: mirror ? "scaleX(-1)" : undefined }}>
         {imageUrl ? <img src={imageUrl} alt="camera" /> : <div className="placeholder">no image</div>}
@@ -54,6 +54,6 @@ export function CameraView() {
           </svg>
         )}
       </FitBox>
-    </>
+    </div>
   );
 }

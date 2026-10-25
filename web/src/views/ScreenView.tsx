@@ -6,7 +6,7 @@ import type { Vec2 } from "../protocol";
 /** The display, in points: calibration dots, the current target and every model's estimate. */
 export function ScreenView() {
   const { scene, frame, calibration, trail } = useEngine();
-  if (!scene) return <div className="placeholder">waiting for the engine</div>;
+  if (!scene) return <div className="pane placeholder">waiting for the engine</div>;
   const { width_pt: W, height_pt: H } = scene.screen;
   const g = frame?.gaze;
   const r = W / 120;
@@ -18,6 +18,7 @@ export function ScreenView() {
       </g>
     );
   return (
+    <div className="pane">
     <FitBox aspect={W / H}>
       <svg viewBox={`0 0 ${W} ${H}`}>
         <rect x={0} y={0} width={W} height={H} fill="#151922" stroke={C.screen} strokeWidth={2} />
@@ -44,5 +45,6 @@ export function ScreenView() {
         )}
       </svg>
     </FitBox>
+    </div>
   );
 }
