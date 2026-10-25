@@ -15,7 +15,7 @@ from . import config
 @dataclass
 class Command:
     kind: str  # click | scroll | key | shortcut | type | cancel | confirm | calibrate | recentre | check | dictate_on |
-    # dictate_off | unknown
+    # dictate_off | relative | reference | unknown
     args: dict = field(default_factory=dict)
     text: str = ""
 
@@ -35,6 +35,10 @@ _PATTERNS = [
     (r"^(?:re)?calibrate$", lambda m: Command("calibrate")),
     (r"^re[ -]?cent(?:re|er)(?: (?:gaze|tracking))?$", lambda m: Command("recentre")),
     (r"^(?:check|test) (?:the )?(?:accuracy|tracking|gaze)$", lambda m: Command("check")),
+    (r"^(?:do )?(?:that|it) again$|^again$", lambda m: Command("reference", {"mode": "again"})),
+    (r"^(?:do )?(?:the )?same(?: thing)? here$", lambda m: Command("reference", {"mode": "same_here"})),
+    (r"^close (?:the )?(?:one|thing) i just (?:clicked|opened)$",
+     lambda m: Command("reference", {"mode": "close_last"})),
     # "no, the left one" / "the next one": the last target's neighbour (controller._relative)
     (r"^(?:no,? |not that,? )?(?:the )?(?:one )?(?:to the |on the )?(left|right)(?: one)?$|^(?:no,? )?(?:the )?(?:one )?(above|below)(?: it| that)?$",
      lambda m: Command("relative", {"direction": {"above": "up", "below": "down"}.get(m[1] or m[2], m[1] or m[2])})),

@@ -172,7 +172,9 @@ def replay(episodes: list[dict]) -> list[tuple[dict, str, str]]:
         elements = [Element(**{k: e[k] for k in ("role", "label", "x", "y", "w", "h", "kind", "parent", "parent_role", "subrole") if k in e})
                     for e in ep.get("elements", [])]
         try:
-            cloud = GazeCloud([tuple(p) for p in ep["cloud"]["points"]], ep["cloud"]["sigma"]) if ep.get("cloud") else None
+            cloud = (GazeCloud([tuple(p) for p in ep["cloud"]["points"]], ep["cloud"]["sigma"],
+                               list(ep["cloud"].get("weights", [])))
+                     if ep.get("cloud") else None)
             route, _, _ = _decide(_Answers(gate), elements, tuple(ep["gaze"]) if ep.get("gaze") else None, {},
                                   command=ep.get("text", ""), cloud=cloud, **gate.get("flags", {}))
         except KeyError as e:  # logged before a question existed

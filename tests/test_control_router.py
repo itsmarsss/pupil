@@ -24,3 +24,10 @@ def test_leaves_exact_phrases_chatter_and_requests_alone():
 def test_corrected_phrase_routes():
     assert route(correct("never mine"), wake=False).kind == "cancel"
     assert route(correct("go bag"), wake=False).kind == "shortcut"  # back, via the app's menu
+
+
+def test_short_action_references_route_without_the_agent():
+    assert route("again").args == {"mode": "again"}
+    assert route("do that again").kind == "reference"
+    assert route("do the same here").args == {"mode": "same_here"}
+    assert route("close the one I just clicked").args == {"mode": "close_last"}
