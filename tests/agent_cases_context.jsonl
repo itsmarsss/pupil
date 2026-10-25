@@ -1,0 +1,23 @@
+// commands Jev blocked in real use (.logs/episodes.jsonl, 2026-10-24/25): extra context, terse in-context follow-ups, chatter before the command. expect: anything but ignore/clarify, unless marked
+{"text": "Play the best move.", "expect": ["agent"], "app": "Google Chrome", "gaze": [700, 400]}
+{"text": "Pawn C 3.", "expect": ["agent", "click"], "app": "Google Chrome", "gaze": [700, 400], "recent": ["Play the best move."]}
+{"text": "Queen D 4.", "expect": ["agent", "click"], "app": "Google Chrome", "gaze": [700, 400], "recent": ["Play the best move.", "Pawn C 3."]}
+{"text": "Knight G 2.", "expect": ["agent", "click"], "app": "Google Chrome", "gaze": [700, 400], "recent": ["Queen D 4."]}
+{"text": "Bishop here.", "expect": ["agent", "click"], "app": "Google Chrome", "gaze": [700, 400], "recent": ["Knight G 2."]}
+{"text": "Pawn take.", "expect": ["agent", "click"], "app": "Google Chrome", "gaze": [700, 400], "recent": ["Bishop here."]}
+{"text": "is now beginning. Click join.", "expect": ["click", "agent"], "app": "Google Chrome", "gaze": [640, 300], "elements": [{"role": "AXButton", "label": "Join", "x": 600, "y": 290, "w": 80, "h": 30}]}
+{"text": "tournament work? matches at a time. Can you drag health from here to here?", "expect": ["agent"], "app": "Google Chrome", "gaze": [640, 300]}
+{"text": "Close this tab, I'm done with it and it's just using memory.", "expect": ["close", "shortcut", "click"], "app": "Google Chrome", "gaze": [120, 12], "elements": [{"role": "AXRadioButton", "label": "GitHub", "x": 60, "y": 0, "w": 180, "h": 28, "parent": "tab bar"}, {"role": "AXButton", "label": "Close tab", "x": 220, "y": 6, "w": 16, "h": 16, "parent": "GitHub"}]}
+{"text": "Can you make the font in this a little bigger, it's hard for me to read from here", "expect": ["agent", "shortcut"], "app": "Google Chrome", "gaze": [700, 400]}
+{"text": "So basically I want you to go through my unread emails and archive anything that's a newsletter", "expect": ["agent"], "app": "Mail", "gaze": [700, 400]}
+{"text": "Okay so the thing I'm looking at, the second one, open that", "expect": ["click", "agent", "choose"], "app": "Finder", "gaze": [300, 220], "elements": [{"role": "AXRow", "label": "Report.pdf", "x": 200, "y": 190, "w": 400, "h": 22}, {"role": "AXRow", "label": "Budget.xlsx", "x": 200, "y": 212, "w": 400, "h": 22}]}
+{"text": "Fix this.", "expect": ["agent"], "app": "Visual Studio Code", "gaze": [700, 400]}
+{"text": "Reply to her.", "expect": ["agent", "clarify"], "app": "Messages", "gaze": [700, 400]}
+{"text": "Do the thing we did before but in this window", "expect": ["agent"], "app": "Google Chrome", "gaze": [700, 400], "recent": ["open a new incognito window"]}
+{"text": "write a message", "expect": "clarify", "app": "Messages", "gaze": [700, 400]}
+{"text": "send it to", "expect": "clarify", "app": "Mail", "gaze": [700, 400]}
+{"text": "hmm I wonder what's for lunch", "expect": "ignore", "app": "Safari", "gaze": [700, 400]}
+{"text": "bot elimination tournament.", "expect": "ignore", "app": "Google Chrome", "gaze": [700, 400]}
+{"text": "These are all of our live matches.", "expect": "ignore", "app": "Google Chrome", "gaze": [700, 400]}
+{"text": "What if we get the agent to play Minecraft?  Mind that chair over there.", "expect": "ignore", "app": "Google Chrome", "gaze": [700, 400]}
+{"text": "Cartija credits down.", "expect": "ignore", "app": "Google Chrome", "gaze": [700, 400]}

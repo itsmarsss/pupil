@@ -129,6 +129,23 @@ def test_truth_table_clarify_and_compound():
     assert _decide(_answers(wants_scroll=0.95, wants_shortcut=0.8), [], None, {})[0] == "scroll_down"
 
 
+def test_truth_table_unsure_commands_and_follow_ups():
+    from gaze.control.controller import _last_sentence
+    from gaze.control.gate import _decide
+
+    # "play the best move": which move is for the screen to settle, not a question
+    assert _decide(_answers(enough_context=0.1, needs_agent=0.9, choices={"missing": "what"}), [], None, {})[0] == "agent"
+    assert _decide(_answers(enough_context=0.04, choices={"missing": "cut_off"}), [], None, {})[0] == "clarify"
+    assert _decide(_answers(is_command=0.5), [], None, {})[0] == "maybe"  # unsure, nothing direct: offer, don't drop
+    assert _decide(_answers(is_command=0.2), [], None, {})[0] == "ignore"
+    # "knight g2" after "play the best move": a follow-up, so a command
+    assert _decide(_answers(is_command=0.5, follows_up=0.9), [], None, {})[0] == "agent"
+    assert _decide(_answers(is_command=0.5), [], None, {}, assume_command=True)[0] == "agent"  # "do it"
+    assert _decide(_answers(enough_context=0.05, choices={"missing": "what"}), [], None, {}, command="open the")[0] == "clarify"
+    assert _last_sentence("is now beginning. Click join.") == "Click join."
+    assert _last_sentence("Click join.") is None and _last_sentence("stuff. Yeah.") is None
+
+
 def test_episodes_label_reactions_and_replay(tmp_path):
     from gaze.control import episodes
 
@@ -486,6 +503,7 @@ def test_gaze_indicator_shows_the_most_important_state(monkeypatch):
 
     c = ctl.VoiceController.__new__(ctl.VoiceController)
     c.enabled, c._flash, c._busy_with, c.pending, c.choosing, c.clarifying, c.dictating = True, None, None, None, None, None, False
+    c.maybe = None
     c.speaker = _A(speaking=False)
     c.agent = _A(busy=False, paused=False, phase=None, doing="", _steps=0, tier="standard")
     c.hud = _A(mic="idle")

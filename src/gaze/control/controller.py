@@ -44,6 +44,7 @@ RECENT_CONTEXT_S = 60  # commands this recent are context for the next one
 FLASH_S = 0.9  # how long "✓ clicked" stays on the gaze indicator
 CHOOSE_WINDOW_S = 12.0  # how long "which one?" waits for an answer
 RELATIVE_WINDOW_S = 20.0  # "no, the left one" refers to the last target this recently
+MAYBE_WINDOW_S = 10.0  # how long "do it" runs something Jev wasn't sure was a command
 NUMBERS = ["one", "two", "three"]
 _ORDINALS = [("one", "1", "first"), ("two", "2", "second", "too", "to"), ("three", "3", "third")]  # as heard
 
@@ -57,6 +58,15 @@ class TargetReference:
     app: str
     window: str
     t: float
+
+
+BLOCKED = ("ignore", "maybe", "clarify")  # Jev's routes that don't act
+
+
+def _last_sentence(text):
+    """The last sentence of something said in several ("is now beginning. Click join." -> "Click join."), or None."""
+    parts = [p for p in re.split(r"(?<=[.?!])\s+", text.strip()) if p]
+    return parts[-1] if len(parts) > 1 and len(parts[-1].split()) >= 2 else None
 
 
 def pick_option(text, options):
@@ -99,6 +109,7 @@ class VoiceController:
         self.flash_until = 0.0
         self.pending = None  # direct action waiting for "confirm"
         self.clarifying = None  # (request, missing, deadline, episode): the gate asked a question
+        self.maybe = None  # (request, deadline, gaze, target, candidates, episode): maybe a command; "do it" runs it
         self._candidates: list = []  # elements near the gaze for the command being handled
         self.dictating = False  # dictation mode: every utterance is typed at the cursor
         self._recent: list = []  # (time, text) of recent commands, for Jev's context
@@ -316,7 +327,7 @@ class VoiceController:
                 self.hud.status = "Dictation off."
             self.agent.cancel()
             self._set_pending(None)
-            self._last_target = None
+            self._last_target = self.maybe = None
             if self.clarifying is not None:
                 self.episodes.label(self.clarifying[3], "declined")
                 self.clarifying = None
@@ -388,6 +399,8 @@ class VoiceController:
 
     def _handle(self, cmd, t0, t1):
         ep = self._ep
+        if cmd.kind != "confirm":
+            self.maybe = None  # said something else: whatever it was, it's moved on
         if cmd.kind == "dictation":
             with self._working("writing", "writing…"):
                 text = dictation.format(cmd.args["text"])
@@ -409,6 +422,12 @@ class VoiceController:
                     self._really_quit(**args)
                 else:
                     self._do(kind, args, gaze, target)
+            elif self.maybe is not None and time.time() < self.maybe[1]:
+                request, _, gaze, target, candidates, offered = self.maybe
+                self.maybe = None
+                ep["route"] = "maybe_confirmed"
+                self.episodes.label(offered, "confirmed")  # Jev doubted a real command: worth learning from
+                self._route_with_gate(request, gaze, target, candidates, allow_clarify=False, assume_command=True)
             else:
                 ep["route"] = "nothing_to_confirm"
                 self._status("Nothing to confirm.")
@@ -523,10 +542,11 @@ class VoiceController:
                          on_done=lambda text, steps, s: self.episodes.outcome(
                              ep, agent_result=text, agent_steps=steps, agent_s=round(s, 1)))
 
-    def _route_with_gate(self, request, gaze, target, candidates, allow_clarify=True):
+    def _route_with_gate(self, request, gaze, target, candidates, allow_clarify=True, assume_command=False):
         ep = self._ep
         self._agent_route = ("standard", "normal")  # until Jev says otherwise
-        self._remember_command(request)
+        if not assume_command:  # (a confirmed "maybe" is already remembered)
+            self._remember_command(request)
         app = macos.frontmost_app()
         ep["app"] = app
         if not self.gate.available:
@@ -535,7 +555,16 @@ class VoiceController:
             return
         try:
             with self._working("thinking", "thinking"):
-                d = self.gate.decide(request, gaze, candidates, app, allow_clarify=allow_clarify, cloud=self._cloud)
+                d = self.gate.decide(request, gaze, candidates, app, allow_clarify=allow_clarify, cloud=self._cloud,
+                                     assume_command=assume_command)
+                last = _last_sentence(request)
+                if d.route in BLOCKED and last and allow_clarify:
+                    # Talk before the command ("...matches at a time. Can you drag this here?") can sink the
+                    # whole thing: judge the last sentence on its own, and act on it if that's clearly a command.
+                    retry = self.gate.decide(last, gaze, candidates, app, allow_clarify=False, cloud=self._cloud)
+                    ep["last_sentence"] = {"text": last, "route": retry.route, "gate": retry.answers}
+                    if retry.route not in BLOCKED:
+                        d, request = retry, last
         except Exception as e:
             self._status(f"Jev unavailable ({e}); asking the agent...")
             ep["decision"] = "agent"
@@ -548,6 +577,10 @@ class VoiceController:
 
         if d.route == "ignore":
             self._status(f"Ignored: {d.summary()}")
+            return
+        if d.route == "maybe":  # not sure it was meant for the computer: offer it rather than act or drop it
+            self.maybe = (request, time.time() + MAYBE_WINDOW_S, gaze, target, candidates, ep)
+            self._status(f'Not sure that was for me: "{request[:60]}". Say "do it" to run it.')
             return
         if d.route == "choose":
             self._ask_which(d.options, d.action, {"clicks": 1, "button": "left"})
@@ -866,7 +899,8 @@ class VoiceController:
             if sub is not None and sub.kind == "unknown" and self.gate.available:
                 try:
                     with self._working("thinking", "thinking"):
-                        d = self.gate.decide(clause, gaze, candidates, app, allow_clarify=False, allow_compound=False)
+                        d = self.gate.decide(clause, gaze, candidates, app, allow_clarify=False, allow_compound=False,
+                                             assume_command=True)  # the whole request was one
                     self._candidates = candidates
                 except Exception as e:
                     step["error"] = str(e)
@@ -929,6 +963,8 @@ class VoiceController:
             return Status("waiting", "which one?")
         if self.clarifying is not None and now < self.clarifying[2]:
             return Status("waiting", "answer?")
+        if self.maybe is not None and now < self.maybe[1]:
+            return Status("waiting", 'for me? "do it"')
         if self._busy_with is not None:
             return self._busy_with
         if self.hud.mic == "listening":

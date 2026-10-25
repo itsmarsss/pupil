@@ -26,6 +26,7 @@ NAMED_ELEMENT = 0.85  # an element the command clearly names  # Noul thresholds:
 # Ask a question only below this: cut-off or missing-recipient commands score 0.03-0.05, terse but guessable
 # ones ("next", "make this bigger") 0.23-0.25 (tests/agent_cases.jsonl). A needless question costs more than a guess.
 CLARIFY_BELOW = 0.15
+ASK_ABOUT = {"cut_off", "who", "content"}  # what's missing that's worth a question (the screen can't supply it)
 MAX_CANDIDATES = 25  # nearest elements, one question each
 
 # --- Question wording (everything Jev reads lives here) ---
@@ -88,6 +89,15 @@ MISSING = Choice(
     criteria={"what": "which thing or item to act on", "who": "which person to send or share with",
               "content": "what text to write or say", "where": "where to go, or which app or place",
               "cut_off": "the sentence stops before it is finished"},
+)
+FOLLOWS_UP = Noul(
+    instructions="Does `command` carry on from `previous_commands`: the next move or step of the same thing, an answer, "
+                 "or a correction, rather than talk about something else?",
+    criteria=NoulCriteria(
+        true="e.g. after \"play the best move\": \"knight g2\", \"bishop here\"; after \"open my notes\": \"the "
+             "work one\"; after \"scroll down\": \"more\"",
+        false="A remark, a comment on what's happening, or a new topic (\"that bot is good\", \"the credits ran out\")",
+    ),
 )
 IS_COMPOUND = Noul(
     instructions="Does `command` ask for two or three separate actions, one after another?",
@@ -171,7 +181,7 @@ CLARIFY_PROMPTS = {"what": "Which one? Look at it and say what to do.", "who": "
 
 @dataclass
 class Decision:
-    route: str  # choose | click | close | double_click | right_click | scroll_down | scroll_up | open_app | shortcut | agent | ignore
+    route: str  # choose | click | close | double_click | right_click | scroll_down | scroll_up | open_app | shortcut | agent | ignore | maybe
     #             | clarify | compound
     why: str  # the judgment(s) that decided it, for the status line and logs
     ms: float
@@ -223,18 +233,33 @@ def _element_route(element_p, gaze, choices, why, cloud=None):
     return route, why, {"target": target}
 
 
-def _decide(a, elements, gaze, apps, allow_clarify=True, allow_compound=True, command="", cloud=None):
+DANGLING = {"the", "a", "an", "to", "into", "onto", "at", "for", "with", "of", "from", "my", "your",
+            "and", "or", "but"}  # a sentence ending on one of these was cut off (not "in"/"on": "zoom in", "turn it on")
+
+
+def _dangling(command):
+    words = re.findall(r"[a-z']+", command.lower())
+    return bool(words) and words[-1] in DANGLING and not re.search(r"[.?!]\s*$", command)
+
+
+def _decide(a, elements, gaze, apps, allow_clarify=True, allow_compound=True, command="", cloud=None,
+            assume_command=False):
     """The truth table. `a` = Jev's answers; returns (route, why, extras).
-    A clarified request never asks again, and a clause of a compound one is never split again."""
+    A clarified request never asks again, and a clause of a compound one is never split again. assume_command:
+    the user already said it's for the computer ("do it" after a "maybe"), or it's a clause of a command."""
     nouls, choices = a.nouls, a.choices
     p = lambda k: nouls[k].noul  # noqa: E731
     element_p = sorted(((p(f"el_{i}"), el) for i, el in enumerate(elements)), key=lambda x: -x[0])
 
-    if p("is_command") < NO:
+    if p("is_command") < NO and not assume_command:
         return "ignore", f"not a command {p('is_command'):.2f}", {}
-    # Ask only when it's clearly a command and clearly missing something: guessing wrong is worse than one question.
-    if allow_clarify and p("is_command") >= YES and p("enough_context") < CLARIFY_BELOW:
-        return "clarify", f"not enough to act on {p('enough_context'):.2f}", {"missing": choices["missing"].choice}
+    follow_up = "follows_up" in nouls and p("follows_up") >= YES  # "knight g2" after "play the best move"
+    sure = p("is_command") >= YES or follow_up or assume_command
+    # Ask only when it's clearly missing something the screen can't supply (a cut-off sentence, a person, text to
+    # write): which thing and where, the gaze and the screen settle, so those go on to be guessed or worked out.
+    missing = "cut_off" if _dangling(command) else choices["missing"].choice
+    if allow_clarify and sure and p("enough_context") < CLARIFY_BELOW and missing in ASK_ABOUT:
+        return "clarify", f"not enough to act on {p('enough_context'):.2f}", {"missing": missing}
     if allow_compound and p("is_compound") >= YES:
         return "compound", f"several actions {p('is_compound'):.2f}", {}
     if p("needs_agent") >= YES:
@@ -243,7 +268,7 @@ def _decide(a, elements, gaze, apps, allow_clarify=True, allow_compound=True, co
     # the command is clearly about some element, the best match only needs to be more likely than not. "This" /
     # "that" point at what's under the gaze too: Cmd+W for "close this" on a popup would close the window behind.
     deictic = bool(DEICTIC & set(re.findall(r"[a-z]+", command.lower())))
-    if (p("wants_element") >= YES or deictic and p("is_command") >= YES) and element_p and element_p[0][0] >= 0.5:
+    if (p("wants_element") >= YES or deictic and sure) and element_p and element_p[0][0] >= 0.5:
         return _element_route(element_p, gaze, choices, f"control {p('wants_element'):.2f}", cloud)
     # Clearly "close" something, but no one element clearly meant: close what's under the gaze (its own or its
     # dialog's close control, its tab, or its window), rather than a shortcut that may hit something else.
@@ -264,8 +289,9 @@ def _decide(a, elements, gaze, apps, allow_clarify=True, allow_compound=True, co
         return "shortcut", f"shortcut {p('wants_shortcut'):.2f}", {"shortcut": shortcut, "times": times}
     if element_p and element_p[0][0] >= YES:
         return _element_route(element_p, gaze, choices, "", cloud)
-    if p("is_command") < YES:
-        return "ignore", f"probably not a command {p('is_command'):.2f}", {}  # doing nothing is the safe default
+    # Unsure it was meant for the computer and nothing direct fits: offer it ("do it" runs it) rather than drop it.
+    if not sure:
+        return "maybe", f"maybe a command {p('is_command'):.2f}", {}
     return "agent", "a command, but no single direct action matched", {}
 
 
@@ -310,12 +336,13 @@ class Gate:
         }
 
     def decide(self, utterance, gaze, candidates, app_name, allow_clarify=True, allow_compound=True,
-               cloud=None) -> Decision:
+               cloud=None, assume_command=False) -> Decision:
         """All judgments for a free-form command in one request; `_decide` turns them into an action."""
         elements = candidates[:MAX_CANDIDATES]
         apps = commands.available_apps()
         questions = {
-            "is_command": IS_COMMAND, "enough_context": ENOUGH_CONTEXT, "missing": MISSING, "is_compound": IS_COMPOUND,
+            "is_command": IS_COMMAND, "enough_context": ENOUGH_CONTEXT,
+            **({"follows_up": FOLLOWS_UP} if self.recent else {}), "missing": MISSING, "is_compound": IS_COMPOUND,
             "needs_agent": NEEDS_AGENT, "wants_element": WANTS_ELEMENT, "wants_app": WANTS_APP,
             "wants_shortcut": WANTS_SHORTCUT, "wants_scroll": WANTS_SCROLL, "risky": RISKY,
             "app": _app_question(apps), "shortcut": _shortcut_question(), "times": TIMES,
@@ -324,7 +351,7 @@ class Gate:
             **_element_questions(gaze, elements),
         }
         result, ms = self._ask("decide", self._state(utterance, app_name, gaze, elements), questions)
-        flags = {"allow_clarify": allow_clarify, "allow_compound": allow_compound}
+        flags = {"allow_clarify": allow_clarify, "allow_compound": allow_compound, "assume_command": assume_command}
         route, why, extras = _decide(result, elements, gaze, apps, command=utterance, cloud=cloud, **flags)
         answers = {"route": route, "why": why, "ms": round(ms), "flags": flags,
                    "nouls": {k: round(v.noul, 4) for k, v in result.nouls.items()},

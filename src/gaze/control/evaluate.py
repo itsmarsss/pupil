@@ -61,6 +61,7 @@ def evaluate(path: Path = CASES, sigma: float | None = None) -> int:
         elements = [Element(**e) for e in case.get("elements", [])]
         gaze = tuple(case["gaze"]) if case.get("gaze") else None
         cloud = GazeCloud([(*gaze, 1.0)], sigma) if sigma and gaze else None  # gaze as a heat map
+        gate.recent = case.get("recent", [])  # the commands just before it, for follow-ups
         d = gate.decide(case["text"], gaze, elements, case.get("app", "Safari"), cloud=cloud, **case.get("flags", {}))
         ms.append(d.ms)
         expect = case["expect"] if isinstance(case["expect"], list) else [case["expect"]]
@@ -69,7 +70,7 @@ def evaluate(path: Path = CASES, sigma: float | None = None) -> int:
             print(f"? choose       (want {'/'.join(expect)})  \"{case['text']}\"  "
                   f"{[(round(sh, 2), el.label[:24]) for sh, el in d.options]}")
             continue
-        ok = d.route in expect
+        ok = d.route in expect or d.route == "maybe" and "ignore" in expect  # neither acts
         if not ok:
             wrong.append((case, d))
         print(f"{'✓' if ok else '✗'} {d.route:<12} (want {'/'.join(expect)})  \"{case['text']}\"  {d.why}")
