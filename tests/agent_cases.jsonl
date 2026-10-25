@@ -42,3 +42,4 @@
 {"text": "Can you build me a car?", "expect": "agent", "app": "Blender", "gaze": [600, 400], "elements": []}
 {"text": "previous tab", "expect": "shortcut", "app": "WezTerm", "gaze": [600, 400], "elements": []}
 {"text": "go to the next tab", "expect": "shortcut", "app": "Finder", "gaze": [600, 400], "elements": []}
+{"text": "switch to github", "expect": "click", "app": "Google Chrome", "gaze": [600, 57], "elements": [{"role": "AXRadioButton", "label": "Inbox (3) - Gmail", "x": 0, "y": 40, "w": 200, "h": 34, "kind": "tab", "parent_role": "AXTabGroup"}, {"role": "AXRadioButton", "label": "YouTube", "x": 200, "y": 40, "w": 200, "h": 34, "kind": "tab", "parent_role": "AXTabGroup"}, {"role": "AXRadioButton", "label": "Gaze dashboard", "x": 400, "y": 40, "w": 200, "h": 34, "kind": "tab", "parent_role": "AXTabGroup"}, {"role": "AXRadioButton", "label": "GitHub - itsmarsss/gaze", "x": 600, "y": 40, "w": 200, "h": 34, "kind": "tab", "parent_role": "AXTabGroup"}]}

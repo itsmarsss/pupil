@@ -1,6 +1,5 @@
 """Mouse/keyboard on the real Mac. Direct helpers for the fast path + an executor for Claude's computer toolset."""
 
-import subprocess
 import time
 
 import pyautogui

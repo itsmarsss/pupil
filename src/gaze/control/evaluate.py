@@ -45,9 +45,10 @@ def replay() -> int:
     return 0
 
 
-def evaluate(path: Path = CASES) -> int:
+def evaluate(path: Path = CASES, sigma: float | None = None) -> int:
     """Ask Jev about each labelled case (live, ~0.4 s each) and compare the route with the expected one."""
     from .gate import Gate
+    from .heat import GazeCloud
     from .snapping import Element
 
     gate = Gate()
@@ -55,16 +56,23 @@ def evaluate(path: Path = CASES) -> int:
         print(f"Jev unavailable: {gate.error}")
         return 1
     cases = [json.loads(line) for line in path.read_text().splitlines() if line.strip() and not line.startswith("//")]
-    wrong, ms = [], []
+    wrong, ms, asked = [], [], []
     for case in cases:
         elements = [Element(**e) for e in case.get("elements", [])]
         gaze = tuple(case["gaze"]) if case.get("gaze") else None
-        d = gate.decide(case["text"], gaze, elements, case.get("app", "Safari"), **case.get("flags", {}))
+        cloud = GazeCloud([(*gaze, 1.0)], sigma) if sigma and gaze else None  # gaze as a heat map
+        d = gate.decide(case["text"], gaze, elements, case.get("app", "Safari"), cloud=cloud, **case.get("flags", {}))
         ms.append(d.ms)
         expect = case["expect"] if isinstance(case["expect"], list) else [case["expect"]]
+        if d.route == "choose":  # asked "which one?" instead of guessing
+            asked.append(case["text"])
+            print(f"? choose       (want {'/'.join(expect)})  \"{case['text']}\"  "
+                  f"{[(round(sh, 2), el.label[:24]) for sh, el in d.options]}")
+            continue
         ok = d.route in expect
         if not ok:
             wrong.append((case, d))
         print(f"{'✓' if ok else '✗'} {d.route:<12} (want {'/'.join(expect)})  \"{case['text']}\"  {d.why}")
-    print(f"\n{len(cases) - len(wrong)}/{len(cases)} routed as expected · Jev p50 {statistics.median(ms):.0f} ms")
+    print(f"\n{len(cases) - len(wrong) - len(asked)}/{len(cases)} routed as expected, {len(asked)} asked which one "
+          f"· Jev p50 {statistics.median(ms):.0f} ms")
     return 0 if not wrong else 2

@@ -193,7 +193,7 @@ def cmd_episodes(args) -> int:
     from .control import evaluate
 
     if args.eval is not None:
-        return evaluate.evaluate(Path(args.eval)) if args.eval else evaluate.evaluate()
+        return evaluate.evaluate(Path(args.eval) if args.eval else evaluate.CASES, sigma=args.sigma)
     return evaluate.replay() if args.replay else evaluate.show(args.n)
 
 
@@ -296,6 +296,7 @@ def main(argv: list[str] | None = None) -> int:
     ep = sub.add_parser("episodes", help="logged voice commands: what was heard, decided and done")
     ep.add_argument("-n", type=int, default=20, help="how many recent episodes to show")
     ep.add_argument("--replay", action="store_true", help="re-run the routing rules on logged answers (offline)")
+    ep.add_argument("--sigma", type=float, help="with --eval: treat gaze as a heat map this wide (points)")
     ep.add_argument("--eval", nargs="?", const="", metavar="CASES",
                     help="score the gate live on labelled cases (default tests/agent_cases.jsonl)")
     rp = sub.add_parser("replay", help="score pipeline variants on a saved session")

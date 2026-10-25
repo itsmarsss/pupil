@@ -9,13 +9,14 @@ to the HUD. Every command is logged as an episode (episodes.py) so routing can b
 from __future__ import annotations
 
 import queue
+import re
 import threading
 import time
 
-from . import actions, apps, commands, config, dictation, macos, router, snapping, uitree
+from . import actions, apps, commands, config, dictation, heat, macos, router, snapping, uitree
 from .agent import Agent
 from .episodes import EpisodeLog, element_dict
-from .gate import CLARIFY_PROMPTS, MAX_CANDIDATES, NO, YES, Gate
+from .gate import CLARIFY_PROMPTS, MAX_CANDIDATES, NO, Gate
 from .hud import Hud
 from .lips import LipGate
 from .screen import Screen
@@ -34,6 +35,30 @@ CLARIFY_WINDOW_S = 10.0  # how long an answer to "Which one?" is taken as the an
 MAX_CLAUSES = 3  # longer chains go to the agent whole
 SETTLE_S = {"open_app": 1.5}  # wait after a compound step before deciding the next one; default below
 DEFAULT_SETTLE_S = 0.5
+CHOOSE_WINDOW_S = 12.0  # how long "which one?" waits for an answer
+RELATIVE_WINDOW_S = 20.0  # "no, the left one" refers to the last target this recently
+NUMBERS = ["one", "two", "three"]
+_ORDINALS = [("one", "1", "first"), ("two", "2", "second", "too", "to"), ("three", "3", "third")]  # as heard
+
+
+def pick_option(text, options):
+    """Which of `options` an answer means: a position ("the left one", "top"), a number ("two", "the first",
+    "number one"; "one" alone is a pronoun in "the left one"), or a name ("the YouTube one"). None if unclear."""
+    words = set(re.findall(r"[a-z0-9]+", text.lower()))
+    for side, key, sign in (("left", 0, 1), ("right", 0, -1), ("top", 1, 1), ("upper", 1, 1),
+                            ("bottom", 1, -1), ("lower", 1, -1)):
+        if side in words:
+            return min(options, key=lambda el: sign * el.center[key])
+    if "last" in words:
+        return options[-1]
+    number_only = words <= {"one", "number", "option", "the", "it", "s", "that"}
+    for i, names in enumerate(_ORDINALS[:len(options)]):
+        if words & set(names[1:]) or (names[0] in words and (names[0] != "one" or number_only)):
+            return options[i]
+    named = [el for el in options if el.label and any(w in el.label.lower() for w in words if len(w) > 3)]
+    return named[0] if len(named) == 1 else None
+
+
 CLIP_PAD_S = 0.3  # audio saved with each episode: the utterance plus this either side
 
 
@@ -58,6 +83,9 @@ class VoiceController:
         self.clarifying = None  # (request, missing, deadline, episode): the gate asked a question
         self._candidates: list = []  # elements near the gaze for the command being handled
         self.dictating = False  # dictation mode: every utterance is typed at the cursor
+        self.choosing = None  # "which one?" asked: options, action, deadline
+        self._cloud = None  # gaze heat for the command being handled
+        self._last_target = None  # what the last element action hit, for "no, the left one"
         self.snap = (None, [])  # (target, candidates) for the live gaze, refreshed by _snap_loop
         self.commands: queue.Queue = queue.Queue()  # commands run one at a time, off the UI thread
         self._typed = typed
@@ -218,6 +246,7 @@ class VoiceController:
         self.hud.heard = cmd.text
         if cmd.kind == "cancel":  # handled immediately, even while a command is running
             self.speaker.stop()
+            self.choosing, self.hud.badges = None, []
             if self.dictating:
                 self.dictating = False
                 self.hud.status = "Dictation off."
@@ -237,6 +266,14 @@ class VoiceController:
             ep["route"] = cmd.kind
             self.episodes.finish(ep)
             return
+        if cmd.kind == "relative" and (self._last_target is None
+                                       or time.time() - self._last_target["t"] > RELATIVE_WINDOW_S):
+            cmd = router.Command("unknown", {"request": text}, text)  # no recent target: "left" is just a command
+        if self.choosing is not None and cmd.kind != "cancel":
+            if time.time() < self.choosing["deadline"]:  # the answer to "which one?"
+                cmd = router.Command("choice", {"text": text}, text)
+            else:
+                self.choosing, self.hud.badges = None, []
         if self.dictating and cmd.kind not in ("cancel", "confirm"):  # say it, and it's typed where the cursor is
             cmd = router.Command("dictation", {"text": text}, text)
             ep["kind"] = "dictation"
@@ -332,12 +369,20 @@ class VoiceController:
             return
 
         gaze = self.gaze.point_during(t0, t1)  # where they looked while speaking, not now
+        cloud = self.gaze.cloud_during(t0, t1)  # ...and how sure that is: a heat map, not a point
         target, candidates = snapping.snap(*gaze, self.screen.w_pt, self.screen.h_pt) if gaze else (None, [])
         self._report_target(target)
         confidence = self.gaze.confidence_during(t0, t1)
+        self._cloud, self._candidates = cloud, candidates
         ep.update(gaze=[round(v, 1) for v in gaze] if gaze else None, confidence=round(confidence, 3),
-                  target=element_dict(target, gaze),
+                  target=element_dict(target, gaze), cloud=cloud.summary(),
                   elements=[element_dict(c, gaze) for c in candidates[:MAX_CANDIDATES]])
+        if cmd.kind == "choice":
+            self._resolve_choice(cmd.args["text"], cloud)
+            return
+        if cmd.kind == "relative":
+            self._relative(cmd.args["direction"])
+            return
 
         if cmd.kind == "unknown":
             ep["route"] = "gate"
@@ -353,15 +398,23 @@ class VoiceController:
         if cmd.kind == "shortcut":
             self._shortcut(cmd.args["shortcut"])
             return
-        # Exact phrase, but several elements are close together: let Jev pick which one "this" means.
-        close = [c for c in candidates if c.distance(*gaze) <= config.SNAP_RADIUS / 2] if gaze else []
-        if cmd.kind in ("click", "type") and len(close) > 1 and self.gate.available:
-            try:
-                picked, conf, _ = self.gate.pick_target(cmd.text, gaze, candidates)
-                if picked and conf >= YES:
-                    target = picked
-            except Exception:
-                pass  # fall back to the nearest element
+        # Exact phrase ("click this"): the element with the most gaze heat (x fit with the words, when Jev is
+        # there to judge it); if two are too close to call, ask.
+        if cmd.kind in ("click", "type") and cloud and len(candidates) > 1:
+            els = candidates[:MAX_CANDIDATES]
+            fit = None
+            if self.gate.available:
+                try:
+                    fit = self.gate.element_fit(cmd.text, gaze, els)
+                except Exception:
+                    pass  # heat alone
+            shares = heat.scores(els, cloud, fit)
+            ranked = sorted(zip(shares, els), key=lambda x: -x[0])
+            ep["shares"] = {el.describe(): round(s, 3) for s, el in ranked[:5]}
+            if heat.ambiguous(shares) and cmd.kind == "click":
+                self._ask_which([(s, el) for s, el in ranked[:3] if s >= 0.1], "click", cmd.args)
+                return
+            target = ranked[0][1]
         if cmd.kind in ("click", "type") and confidence < config.GAZE_MIN_CONFIDENCE:
             # The tracker wasn't sure (head turned past what calibration covered): ask instead of acting.
             where = target.describe() if target else "there"
@@ -393,7 +446,7 @@ class VoiceController:
             self._start_agent(request, gaze, target, candidates, app)
             return
         try:
-            d = self.gate.decide(request, gaze, candidates, app, allow_clarify=allow_clarify)
+            d = self.gate.decide(request, gaze, candidates, app, allow_clarify=allow_clarify, cloud=self._cloud)
         except Exception as e:
             self._status(f"Jev unavailable ({e}); asking Claude...")
             ep["decision"] = "agent"
@@ -405,6 +458,9 @@ class VoiceController:
 
         if d.route == "ignore":
             self._status(f"Ignored: {d.summary()}")
+            return
+        if d.route == "choose":
+            self._ask_which(d.options, d.action, {"clicks": 1, "button": "left"})
             return
         if d.route == "clarify":
             prompt = CLARIFY_PROMPTS.get(d.missing, "Can you say more?")
@@ -476,10 +532,67 @@ class VoiceController:
         self._acted("key", {"combo": combo, "shortcut": shortcut, "times": times, "via": how})
         self._status(f"{desc} ({how}{f' x{times}' if times > 1 else ''})")
 
+    # --- which one? (heat too close to call) and "no, the left one" ---
+
+    def _ask_which(self, options, action, args):
+        """Badges on the top candidates and a spoken question; the next utterance picks one (_resolve_choice)."""
+        if len(options) < 2:
+            if options:
+                self._act_on(action, args, options[0][1])
+            return
+        self.choosing = {"options": [el for _, el in options], "action": action, "args": args,
+                         "deadline": time.time() + CHOOSE_WINDOW_S}
+        self.hud.badges = [el for _, el in options]
+        self._ep["route"] = "choose"
+        self._ep["options"] = {el.describe(): s for s, el in options}
+        names = " or ".join(NUMBERS[i] for i in range(len(options)))
+        self._status(f"Which one? Say {names} (or look at it and say \"this one\").")
+        self.speaker.say(f"Which one? {names.capitalize()}?")
+
+    def _resolve_choice(self, text, cloud):
+        choosing, self.choosing = self.choosing, None
+        self.hud.badges = []
+        options = choosing["options"]
+        pick = pick_option(text, options)
+        if pick is None and cloud:  # "this one" / "that": wherever they're looking now, among the options
+            shares = heat.scores(options, cloud)
+            best = max(range(len(options)), key=shares.__getitem__)
+            pick = options[best] if shares[best] >= 0.5 else None
+        if pick is None:
+            self._status("Didn't catch which one: nothing done.")
+            return
+        self._ep["route"] = "choice"
+        self._act_on(choosing["action"], choosing["args"], pick)
+
+    def _act_on(self, action, args, target):
+        if action == "close":
+            self._close(target) or self._status(f"Couldn't find how to close {target.describe()}.")
+        else:
+            kind, extra = _ROUTE_ACTIONS.get(action, ("click", {"clicks": 1, "button": "left"}))
+            self._do(kind, {**extra, **(args if action == "click" else {})}, None, target)
+
+    def _relative(self, direction):
+        """ "No, the left one" / "the next one": redo the last action on the target's neighbour."""
+        last = self._last_target
+        if last is None or time.time() - last["t"] > RELATIVE_WINDOW_S:
+            self._status("Nothing recent to move from.")
+            return
+        target = last["target"]
+        other = heat.neighbour(target, last["candidates"], direction)
+        if other is None:
+            self._status(f"There's nothing {direction} of {target.describe()}.")
+            return
+        self._candidates = last["candidates"]
+        if last["action"] == "close":  # the wrong one is already closed: bring it back first
+            self._shortcut("reopen_tab")
+            time.sleep(0.4)
+        self._act_on(last["action"], last.get("args") or {}, other)
+
     def _close(self, target) -> bool:
         """Close what the user means, in any app: the target if it is a close control; its own close control; the
         close control of the dialog or panel it's in; or a tab by selecting it and pressing Cmd+W (closes the current
         tab in browsers, editors, Finder, terminals). False otherwise: the agent takes it."""
+        self._last_target = {"action": "close", "target": target, "candidates": self._candidates, "t": time.time()}
         if target.is_close:  # it is the close control
             self._do("click", {"clicks": 1, "button": "left"}, None, target)
             self._status(f"Closed ({target.describe()})")
@@ -578,6 +691,9 @@ class VoiceController:
         x, y = target.center if target else gaze
         where = target.describe() if target else "there"
         self._acted(kind, args, where)
+        if target is not None and kind == "click":
+            action = {(2, "left"): "double_click", (1, "right"): "right_click"}.get((args.get("clicks"), args.get("button")), "click")
+            self._last_target = {"action": action, "target": target, "candidates": self._candidates, "args": args, "t": time.time()}
         if kind == "click":
             actions.click(x, y, args["clicks"], args["button"])
             self.events.put(("flash", (x, y)))

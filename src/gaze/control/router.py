@@ -35,6 +35,11 @@ _PATTERNS = [
     (r"^(?:re)?calibrate$", lambda m: Command("calibrate")),
     (r"^re[ -]?cent(?:re|er)(?: (?:gaze|tracking))?$", lambda m: Command("recentre")),
     (r"^(?:check|test) (?:the )?(?:accuracy|tracking|gaze)$", lambda m: Command("check")),
+    # "no, the left one" / "the next one": the last target's neighbour (controller._relative)
+    (r"^(?:no,? |not that,? )?(?:the )?(?:one )?(?:to the |on the )?(left|right)(?: one)?$|^(?:no,? )?(?:the )?(?:one )?(above|below)(?: it| that)?$",
+     lambda m: Command("relative", {"direction": {"above": "up", "below": "down"}.get(m[1] or m[2], m[1] or m[2])})),
+    (r"^(?:no,? )?(?:the )?(next|previous) one$",
+     lambda m: Command("relative", {"direction": "right" if m[1] == "next" else "left"})),
     (r"^(?:start )?(?:dictation|dictating)(?: mode)?$|^start dictating$|^dictate$", lambda m: Command("dictate_on")),
     (r"^(?:stop|end|finish|exit) (?:dictation|dictating)(?: mode)?$", lambda m: Command("dictate_off")),
 ]

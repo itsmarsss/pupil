@@ -31,6 +31,7 @@ FLASH = NSColor.colorWithCalibratedRed_green_blue_alpha_(0.31, 1.0, 0.47, 0.9)
 GAZE = NSColor.colorWithCalibratedRed_green_blue_alpha_(1.0, 0.24, 0.24, 0.63)
 PILL = NSColor.colorWithCalibratedRed_green_blue_alpha_(0.08, 0.08, 0.09, 0.8)
 TEXT = NSColor.colorWithCalibratedWhite_alpha_(0.94, 1.0)
+BADGE = NSColor.colorWithCalibratedRed_green_blue_alpha_(1.0, 0.62, 0.1, 0.95)
 
 
 class _HudView(NSView):
@@ -45,6 +46,17 @@ class _HudView(NSView):
                 p = NSBezierPath.bezierPathWithRoundedRect_xRadius_yRadius_(NSMakeRect(c.x, c.y, c.w, c.h), 4, 4)
                 p.setLineWidth_(1)
                 p.stroke()
+        for i, b in enumerate(hud.badges):  # "which one?": outline + number on each option
+            BADGE.set()
+            box = NSBezierPath.bezierPathWithRoundedRect_xRadius_yRadius_(NSMakeRect(b.x - 2, b.y - 2, b.w + 4, b.h + 4), 6, 6)
+            box.setLineWidth_(3)
+            box.stroke()
+            dot = NSMakeRect(b.x - 12, b.y - 12, 24, 24)
+            NSBezierPath.bezierPathWithOvalInRect_(dot).fill()
+            label = NSString.stringWithString_(str(i + 1))
+            attrs = {NSFontAttributeName: NSFont.boldSystemFontOfSize_(15), NSForegroundColorAttributeName: TEXT}
+            size = label.sizeWithAttributes_(attrs)
+            label.drawAtPoint_withAttributes_((dot.origin.x + (24 - size.width) / 2, dot.origin.y + (24 - size.height) / 2), attrs)
         if hud.target is not None:
             t = hud.target
             TARGET.set()
@@ -96,6 +108,7 @@ class Hud:
         self.mic, self.mic_device = "off", ""
         self.gate = ""  # lip gate state, when it's on
         self.speaking = False  # replies being read aloud
+        self.badges: list = []  # "which one?": numbered elements to choose between
         self._drawn = None
 
     def show(self) -> None:
@@ -112,7 +125,8 @@ class Hud:
         return "   |   ".join(p for p in parts if p)
 
     def update(self) -> None:
-        state = (self.line(), self.target, tuple(self.candidates), self.flash, self.gaze if self.draw_gaze else None)
+        state = (self.line(), self.target, tuple(self.candidates), self.flash, self.gaze if self.draw_gaze else None,
+                 tuple(self.badges))
         if state != self._drawn:
             self._drawn = state
             self._view.setNeedsDisplay_(True)

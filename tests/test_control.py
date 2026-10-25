@@ -421,3 +421,36 @@ def test_agent_hears_interruptions_and_redirects_when_paused(monkeypatch):
     assert [b.get("tool_use_id") for b in sent[:2]] == ["t1", "t2"] and all(b["is_error"] for b in sent[:2])
     assert sent[2]["text"] == 'The user just said: "no, just archive them"' and spawned[0][1] is None
     assert a._paused is None
+
+
+def test_answers_to_which_one():
+    from gaze.control.controller import pick_option
+    from gaze.control.snapping import Element
+
+    a = Element("AXRadioButton", "YouTube", 0, 0, 100, 30)
+    b = Element("AXRadioButton", "Gaze dashboard", 100, 0, 100, 30)
+    assert pick_option("two", [a, b]) is b and pick_option("the first one", [a, b]) is a
+    assert pick_option("the left one", [b, a]) is a and pick_option("right", [a, b]) is b
+    assert pick_option("the youtube one", [a, b]) is a
+    assert pick_option("hmm", [a, b]) is None
+    assert pick_option("one", [a, b]) is a and pick_option("number two", [a, b]) is b and pick_option("this one", [a, b]) is None
+
+
+def test_relative_correction_redoes_the_action_on_the_neighbour(monkeypatch):
+    from gaze.control import controller as ctl
+    from gaze.control.snapping import Element
+
+    tabs = [Element("AXRadioButton", f"t{i}", 100 * i, 0, 100, 30, parent_role="AXTabGroup") for i in range(3)]
+    done, shortcuts = [], []
+    c = ctl.VoiceController.__new__(ctl.VoiceController)
+    c._ep, c._status, c._candidates = {}, lambda text: None, []
+    c._do = lambda kind, args, gaze, target: done.append((kind, target.label))
+    c._close = lambda target: done.append(("close", target.label)) or True
+    c._shortcut = lambda name, times=1: shortcuts.append(name)
+    monkeypatch.setattr(ctl.time, "sleep", lambda s: None)
+    c._last_target = {"action": "click", "target": tabs[1], "candidates": tabs, "args": {}, "t": ctl.time.time()}
+    c._relative("left")
+    assert done[-1] == ("click", "t0")
+    c._last_target = {"action": "close", "target": tabs[1], "candidates": tabs, "t": ctl.time.time()}
+    c._relative("right")  # closed the wrong tab: reopen it, then close the right one
+    assert shortcuts == ["reopen_tab"] and done[-1] == ("close", "t2")

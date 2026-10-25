@@ -12,7 +12,7 @@ import re
 import time
 from dataclasses import dataclass
 
-from . import commands, config
+from . import commands, config, heat
 from .router import DEICTIC
 from .snapping import Element
 
@@ -21,7 +21,8 @@ try:
 except ImportError:  # gate is optional; without it everything unmatched goes to the agent
     TypeSafeClient = None
 
-YES, NO = 0.7, 0.3  # Noul thresholds: above YES reads as yes, below NO as no, between is unsettled
+YES, NO = 0.7, 0.3
+NAMED_ELEMENT = 0.85  # an element the command clearly names  # Noul thresholds: above YES reads as yes, below NO as no, between is unsettled
 # Ask a question only below this: cut-off or missing-recipient commands score 0.03-0.05, terse but guessable
 # ones ("next", "make this bigger") 0.23-0.25 (tests/agent_cases.jsonl). A needless question costs more than a guess.
 CLARIFY_BELOW = 0.15
@@ -147,7 +148,7 @@ CLARIFY_PROMPTS = {"what": "Which one? Look at it and say what to do.", "who": "
 
 @dataclass
 class Decision:
-    route: str  # click | close | double_click | right_click | scroll_down | scroll_up | open_app | shortcut | agent | ignore
+    route: str  # choose | click | close | double_click | right_click | scroll_down | scroll_up | open_app | shortcut | agent | ignore
     #             | clarify | compound
     why: str  # the judgment(s) that decided it, for the status line and logs
     ms: float
@@ -159,6 +160,8 @@ class Decision:
     risky: float = 0.0
     missing: str | None = None  # clarify: what the command leaves out (a MISSING choice)
     answers: dict | None = None  # every judgment, for the episode log and offline replay
+    options: list | None = None  # "choose": [(share, element)] to ask between
+    action: str | None = None  # "choose": what to do to the one picked
 
     def summary(self):
         what = {"open_app": self.app, "shortcut": self.shortcut}.get(self.route) or \
@@ -166,17 +169,36 @@ class Decision:
         return f"Jev: {self.route}{' -> ' + what if what else ''} ({self.why}), {self.ms:.0f} ms"
 
 
-def _element_route(element_p, gaze, choices, why):
+CHOICES_SHOWN = 3
+
+
+def _element_route(element_p, gaze, choices, why, cloud=None):
+    """The element and what to do to it. With a gaze cloud, the target is the element with the most gaze heat x
+    fit with the words (heat.scores); if the top two are too close to call, route "choose" with them instead."""
     best_p = element_p[0][0]
+    route = {"activate": "click", "close": "close", "double_click": "double_click", "context_menu": "right_click"}[
+        choices["element_action"].choice]
+    why = f"{why + ', ' if why else ''}element {best_p:.2f}"
+    if cloud:
+        els = [el for _, el in element_p]
+        shares = heat.scores(els, cloud, fit=[p for p, _ in element_p])
+        ranked = sorted(zip(shares, els), key=lambda x: -x[0])
+        if route == "close":  # closing a field or the close button of the same popup closes the same popup
+            groups: dict = {}
+            for share, el in ranked:
+                groups[el.parent or el.label] = groups.get(el.parent or el.label, 0.0) + share
+            shares = list(groups.values())
+        if heat.ambiguous(shares):
+            options = [(round(s, 3), el) for s, el in ranked[:CHOICES_SHOWN] if s >= 0.1]
+            return "choose", f"{why}, too close to call", {"target": ranked[0][1], "options": options, "action": route}
+        return route, f"{why}, heat {ranked[0][0]:.2f}", {"target": ranked[0][1]}
     # Several near-equal matches (e.g. two "Search" buttons): take the one nearest the pointer.
     close = [el for q, el in element_p if q >= best_p - 0.05]
     target = min(close, key=lambda el: el.distance(*gaze)) if gaze else close[0]
-    route = {"activate": "click", "close": "close", "double_click": "double_click", "context_menu": "right_click"}[
-        choices["element_action"].choice]
-    return route, f"{why + ', ' if why else ''}element {best_p:.2f}", {"target": target}
+    return route, why, {"target": target}
 
 
-def _decide(a, elements, gaze, apps, allow_clarify=True, allow_compound=True, command=""):
+def _decide(a, elements, gaze, apps, allow_clarify=True, allow_compound=True, command="", cloud=None):
     """The truth table. `a` = Jev's answers; returns (route, why, extras).
     A clarified request never asks again, and a clause of a compound one is never split again."""
     nouls, choices = a.nouls, a.choices
@@ -197,11 +219,15 @@ def _decide(a, elements, gaze, apps, allow_clarify=True, allow_compound=True, co
     # "that" point at what's under the gaze too: Cmd+W for "close this" on a popup would close the window behind.
     deictic = bool(DEICTIC & set(re.findall(r"[a-z]+", command.lower())))
     if (p("wants_element") >= YES or deictic and p("is_command") >= YES) and element_p and element_p[0][0] >= 0.5:
-        return _element_route(element_p, gaze, choices, f"control {p('wants_element'):.2f}")
+        return _element_route(element_p, gaze, choices, f"control {p('wants_element'):.2f}", cloud)
     # Clearly "close" something, but no one element clearly meant: close what's under the gaze (its own or its
     # dialog's close control, its tab, or its window), rather than a shortcut that may hit something else.
     if p("wants_element") >= YES and elements and choices["element_action"].choice == "close":
         return "close", f"close what's under the gaze {p('wants_element'):.2f}", {"target": elements[0]}
+    # A control on screen that the command clearly names beats a generic app/shortcut reading ("switch to github"
+    # with a GitHub tab in view is that tab, not "next tab").
+    if element_p and element_p[0][0] >= NAMED_ELEMENT and p("wants_element") >= 0.5:
+        return _element_route(element_p, gaze, choices, f"names it {element_p[0][0]:.2f}", cloud)
     if p("wants_app") >= YES:
         app = choices["app"].choice
         return "open_app", f"open app {p('wants_app'):.2f}", {"app": app, "app_path": apps.get(app)}
@@ -212,7 +238,7 @@ def _decide(a, elements, gaze, apps, allow_clarify=True, allow_compound=True, co
         times = TIMES_COUNT.get(choices["times"].choice, 1) if shortcut in commands.REPEATABLE and "times" in choices else 1
         return "shortcut", f"shortcut {p('wants_shortcut'):.2f}", {"shortcut": shortcut, "times": times}
     if element_p and element_p[0][0] >= YES:
-        return _element_route(element_p, gaze, choices, "")
+        return _element_route(element_p, gaze, choices, "", cloud)
     if p("is_command") < YES:
         return "ignore", f"probably not a command {p('is_command'):.2f}", {}  # doing nothing is the safe default
     return "agent", "a command, but no single direct action matched", {}
@@ -257,7 +283,8 @@ class Gate:
             "elements_near_pointer": [_element_info(el, gaze) for el in elements],
         }
 
-    def decide(self, utterance, gaze, candidates, app_name, allow_clarify=True, allow_compound=True) -> Decision:
+    def decide(self, utterance, gaze, candidates, app_name, allow_clarify=True, allow_compound=True,
+               cloud=None) -> Decision:
         """All judgments for a free-form command in one request; `_decide` turns them into an action."""
         elements = candidates[:MAX_CANDIDATES]
         apps = commands.available_apps()
@@ -271,7 +298,7 @@ class Gate:
         }
         result, ms = self._ask("decide", self._state(utterance, app_name, gaze, elements), questions)
         flags = {"allow_clarify": allow_clarify, "allow_compound": allow_compound}
-        route, why, extras = _decide(result, elements, gaze, apps, command=utterance, **flags)
+        route, why, extras = _decide(result, elements, gaze, apps, command=utterance, cloud=cloud, **flags)
         answers = {"route": route, "why": why, "ms": round(ms), "flags": flags,
                    "nouls": {k: round(v.noul, 4) for k, v in result.nouls.items()},
                    "choices": {k: v.choice for k, v in result.choices.items()}}
@@ -295,13 +322,13 @@ class Gate:
                               false="talking to someone else, thinking aloud, filler, or words unrelated to the task"))})
         return result.nouls["steer"].noul, ms
 
-    def pick_target(self, utterance, gaze, candidates):
-        """Which of several nearby elements a bare command ("click this") means: (element, probability, ms)."""
+    def element_fit(self, utterance, gaze, candidates):
+        """How well each nearby element fits a bare command ("click this", "click the blue one"): one probability
+        per element of candidates[:MAX_CANDIDATES], to multiply with gaze heat (heat.scores)."""
         elements = candidates[:MAX_CANDIDATES]
         result, ms = self._ask("target", self._state(utterance, "", gaze, elements),
                                _element_questions(gaze, elements))
-        scored = sorted(((result.nouls[f"el_{i}"].noul, el) for i, el in enumerate(elements)), key=lambda x: -x[0])
-        return (scored[0][1], scored[0][0], ms) if scored else (None, 0.0, ms)
+        return [result.nouls[f"el_{i}"].noul for i in range(len(elements))]
 
     def risk_of(self, request, planned_actions):
         """Probability that the agent's next actions do something irreversible the user didn't ask for."""

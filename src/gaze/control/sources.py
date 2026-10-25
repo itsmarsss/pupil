@@ -13,6 +13,7 @@ from typing import Callable
 
 from ..core.types import Sample
 from . import config
+from .heat import GazeCloud
 
 
 class TrackerGaze:
@@ -21,8 +22,9 @@ class TrackerGaze:
     calibratable = True
 
     def __init__(self, busy: Callable[[], bool], commands: dict[str, Callable[[], None]],
-                 report: Callable[[dict], None] = lambda msg: None):
-        self._busy, self._commands, self._report = busy, commands, report
+                 report: Callable[[dict], None] = lambda msg: None, sigma: Callable[[], float] = lambda: 60.0):
+        """sigma(): the tracker's current accuracy as a Gaussian width in screen points (heat.GazeCloud)."""
+        self._busy, self._commands, self._report, self.sigma = busy, commands, report, sigma
         self._lock = threading.Lock()
         self._history: deque = deque(maxlen=900)  # (wall t, x, y, confidence), ~30 s at 30 Hz
         self.lips = None  # a lips.LipGate fed with every frame
@@ -69,6 +71,13 @@ class TrackerGaze:
         if not window:
             return self.point()
         return statistics.median(p[0] for p in window), statistics.median(p[1] for p in window)
+
+    def cloud_during(self, t0, t1) -> GazeCloud:
+        """Every gaze sample while the user spoke, as a heat map (heat.GazeCloud): what "this" could be."""
+        with self._lock:
+            points = [(x, y, c) for t, x, y, c in self._history if t0 <= t <= t1] or \
+                [(x, y, c) for _, x, y, c in list(self._history)[-5:]]
+        return GazeCloud(points, self.sigma())
 
     def confidence_during(self, t0, t1) -> float:
         """Median tracker confidence while speaking (lower = head turned past what calibration covered)."""
@@ -119,6 +128,13 @@ class MouseGaze(threading.Thread):
 
     def confidence_during(self, t0, t1) -> float:
         return 1.0
+
+    def cloud_during(self, t0, t1) -> GazeCloud:
+        """The pointer is exact: a tight cloud."""
+        with self._lock:
+            points = [(x, y, 1.0) for t, x, y in self._history if t0 <= t <= t1] or \
+                [(x, y, 1.0) for _, x, y in list(self._history)[-1:]]
+        return GazeCloud(points, 4.0)
 
     def send(self, cmd: dict) -> None:
         pass  # nothing to calibrate
