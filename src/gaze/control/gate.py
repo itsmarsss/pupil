@@ -99,6 +99,21 @@ IS_COMPOUND = Noul(
               "but keep one\"",
     ),
 )
+AGENT_TIER = Choice(
+    instructions="If `command` goes to the agent, which kind of model should do it?",
+    criteria={"fast": "quick: a question about the screen, one or two steps, or real-time play where speed matters "
+                      "(a game)",
+              "standard": "most multi-step tasks in one app",
+              "deep": "long or careful work: writing something substantial, building or designing, several apps, or "
+                      "anything where a mistake is costly"},
+)
+AGENT_BUDGET = Choice(
+    instructions="How long should the agent keep going on `command`?",
+    criteria={"quick": "a few steps and done",
+              "normal": "a task that takes a while but ends",
+              "ongoing": "an activity that continues until told to stop: playing a game, keep doing something, "
+                         "watching for something"},
+)
 TIMES = Choice(instructions="How many times does `command` want it done?",
                criteria={"once": "once, or it doesn't say", "few": "a few times or a little: \"a bit\", \"two or "
                                                                       "three\", \"a couple\"",
@@ -168,6 +183,8 @@ class Decision:
     risky: float = 0.0
     missing: str | None = None  # clarify: what the command leaves out (a MISSING choice)
     answers: dict | None = None  # every judgment, for the episode log and offline replay
+    tier: str = "standard"  # agent routes: which model tier (config.AGENT_TIERS)
+    budget: str = "normal"  # agent routes: how many steps (config.AGENT_BUDGETS)
     options: list | None = None  # "choose": [(share, element)] to ask between
     action: str | None = None  # "choose": what to do to the one picked
 
@@ -302,6 +319,7 @@ class Gate:
             "needs_agent": NEEDS_AGENT, "wants_element": WANTS_ELEMENT, "wants_app": WANTS_APP,
             "wants_shortcut": WANTS_SHORTCUT, "wants_scroll": WANTS_SCROLL, "risky": RISKY,
             "app": _app_question(apps), "shortcut": _shortcut_question(), "times": TIMES,
+            "agent_tier": AGENT_TIER, "agent_budget": AGENT_BUDGET,
             "scroll_direction": SCROLL_DIRECTION, "element_action": ELEMENT_ACTION,
             **_element_questions(gaze, elements),
         }
@@ -311,7 +329,8 @@ class Gate:
         answers = {"route": route, "why": why, "ms": round(ms), "flags": flags,
                    "nouls": {k: round(v.noul, 4) for k, v in result.nouls.items()},
                    "choices": {k: v.choice for k, v in result.choices.items()}}
-        decision = Decision(route, why, ms, risky=result.nouls["risky"].noul, answers=answers, **extras)
+        decision = Decision(route, why, ms, risky=result.nouls["risky"].noul, answers=answers,
+                            tier=result.choices["agent_tier"].choice, budget=result.choices["agent_budget"].choice, **extras)
         _log({"tier": "gate", "kind": "decision", "utterance": utterance, "route": route, "why": why,
               "target": decision.target.describe() if decision.target else None, "app": decision.app,
               "shortcut": decision.shortcut, "risky": round(decision.risky, 3),

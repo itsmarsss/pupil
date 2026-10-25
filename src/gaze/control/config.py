@@ -23,6 +23,14 @@ _load_dotenv()
 MODEL = os.environ.get("GAZE_MODEL", "claude-sonnet-5-5")
 EFFORT = os.environ.get("GAZE_EFFORT", "low")  # low = fewer, faster steps
 MAX_AGENT_STEPS = int(os.environ.get("GAZE_MAX_STEPS", "30"))  # room for bigger multi-step tasks
+# Jev routes each agent task to a tier (gate.AGENT_TIER) and a step budget (gate.AGENT_BUDGET). A tier is a model and
+# an effort; the model must support the computer toolset (Haiku 4.5 doesn't; Sonnet 5.5 and Opus 5.5 do).
+AGENT_TIERS = {
+    "fast": (os.environ.get("GAZE_MODEL_FAST", MODEL), "low"),
+    "standard": (os.environ.get("GAZE_MODEL_STANDARD", MODEL), "medium"),
+    "deep": (os.environ.get("GAZE_MODEL_DEEP", "claude-opus-5-5"), "medium"),
+}
+AGENT_BUDGETS = {"quick": 10, "normal": MAX_AGENT_STEPS, "ongoing": int(os.environ.get("GAZE_MAX_STEPS_ONGOING", "300"))}
 
 # Fast tier: a Jev-style decision model (TypeSafe System One API; any compatible base URL works)
 GATE_MODEL = os.environ.get("GAZE_GATE_MODEL", "jev-1.14.0")  # pinned: aliases move and deprecations are short

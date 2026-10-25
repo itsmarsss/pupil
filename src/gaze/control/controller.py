@@ -90,6 +90,7 @@ class VoiceController:
         self._candidates: list = []  # elements near the gaze for the command being handled
         self.dictating = False  # dictation mode: every utterance is typed at the cursor
         self._recent: list = []  # (time, text) of recent commands, for Jev's context
+        self._agent_route = ("standard", "normal")  # Jev's model tier and step budget for the agent
         self.choosing = None  # "which one?" asked: options, action, deadline
         self._cloud = None  # gaze heat for the command being handled
         self._last_target = None  # what the last element action hit, for "no, the left one"
@@ -461,11 +462,15 @@ class VoiceController:
         ep = self._ep
         ep["acted"] = True
         ep.setdefault("agent_request", request)
-        self.agent.start(request, gaze, target, candidates, app, on_done=lambda text, steps, s: self.episodes.outcome(
-            ep, agent_result=text, agent_steps=steps, agent_s=round(s, 1)))
+        tier, budget = getattr(self, "_agent_route", ("standard", "normal"))
+        ep.update(agent_tier=tier, agent_budget=budget)
+        self.agent.start(request, gaze, target, candidates, app, tier=tier, budget=budget,
+                         on_done=lambda text, steps, s: self.episodes.outcome(
+                             ep, agent_result=text, agent_steps=steps, agent_s=round(s, 1)))
 
     def _route_with_gate(self, request, gaze, target, candidates, allow_clarify=True):
         ep = self._ep
+        self._agent_route = ("standard", "normal")  # until Jev says otherwise
         self._remember_command(request)
         app = macos.frontmost_app()
         ep["app"] = app
@@ -482,6 +487,7 @@ class VoiceController:
             self._start_agent(request, gaze, target, candidates, app)
             return
         ep["gate"], ep["decision"] = d.answers, d.route
+        self._agent_route = (d.tier, d.budget)  # which model and how long, if this goes to the agent
         self._candidates = candidates  # for _close: the close button that belongs to the target
         self._status(d.summary())
 
@@ -801,7 +807,8 @@ class VoiceController:
         if self.agent.busy:
             if self.agent.phase == "acting":
                 return Status("acting", f"Agent: {self.agent.doing}")
-            return Status("agent", f"Agent · step {max(self.agent._steps, 1)}")
+            tier = "" if self.agent.tier == "standard" else f" · {self.agent.tier}"
+            return Status("agent", f"Agent · step {max(self.agent._steps, 1)}{tier}")
         if self.agent.paused or self.pending:
             return Status("waiting", 'say "confirm"')
         if self.choosing is not None:

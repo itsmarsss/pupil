@@ -463,7 +463,7 @@ def test_gaze_indicator_shows_the_most_important_state(monkeypatch):
     c = ctl.VoiceController.__new__(ctl.VoiceController)
     c.enabled, c._flash, c._busy_with, c.pending, c.choosing, c.clarifying, c.dictating = True, None, None, None, None, None, False
     c.speaker = _A(speaking=False)
-    c.agent = _A(busy=False, paused=False, phase=None, doing="", _steps=0)
+    c.agent = _A(busy=False, paused=False, phase=None, doing="", _steps=0, tier="standard")
     c.hud = _A(mic="idle")
     assert c._indicator_status() is None  # nothing happening: hidden
     c.hud.mic = "listening"
