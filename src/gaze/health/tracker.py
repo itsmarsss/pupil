@@ -136,6 +136,9 @@ class HealthTracker:
             "breaks": breaks,
             "fatigue": score,
             "level": level,
+            # what drives the score: each signal 0 (fine) .. 1 (strong sign of tiredness), None if not measured yet
+            "signals": {k: None if v is None else round(v, 2) for k, (v, _) in parts.items()},
+            "break_every_min": TWENTY_MIN // 60,
         }
 
     def status_line(self) -> str:

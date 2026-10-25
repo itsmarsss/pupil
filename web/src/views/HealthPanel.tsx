@@ -1,39 +1,136 @@
-import { useEngine } from "../engine";
+import { engine, useEngine } from "../engine";
+import type { HealthState } from "../protocol";
 
-const LEVEL = { low: "#3ddc84", moderate: "#ffc43d", high: "#ff6b6b" } as const;
+// Colours by how strongly a value suggests tiredness (0 fine .. 1 strong)
+const GOOD = "#3ddc84";
+const MID = "#ffc43d";
+const BAD = "#ff6b6b";
+const MUTED = "#8b93a1";
+const severity = (v: number) => (v < 0.35 ? GOOD : v < 0.65 ? MID : BAD);
+const LEVEL_COLOR = { low: GOOD, moderate: MID, high: BAD } as const;
 
-function Tile({ label, value, hint, color }: { label: string; value: string; hint?: string; color?: string }) {
+const SIGNALS: { key: keyof NonNullable<HealthState["signals"]>; label: string; value: (h: HealthState) => string }[] = [
+  { key: "blink_rate", label: "Blink rate", value: (h) => (h.blink_rate == null ? "–" : `${h.blink_rate.toFixed(0)} / min`) },
+  { key: "perclos", label: "Eyes closed", value: (h) => (h.perclos == null ? "–" : `${(h.perclos * 100).toFixed(1)}%`) },
+  { key: "blink_duration", label: "Blink length", value: (h) => (h.blink_duration_ms == null ? "–" : `${h.blink_duration_ms} ms`) },
+  { key: "droop", label: "Lids vs start", value: (h) => (h.openness_vs_start == null ? "–" : `${Math.round(h.openness_vs_start * 100)}%`) },
+  { key: "screen_time", label: "Screen time", value: (h) => `${(h.minutes_on_screen ?? 0).toFixed(0)} min` },
+];
+const NAMES: Record<string, string> = {
+  blink_rate: "low blink rate", perclos: "heavy eyelids", blink_duration: "slow blinks", droop: "drooping lids",
+  screen_time: "long screen time",
+};
+
+/** Fatigue as an arc from green through amber to red, with the score in the middle. */
+function Gauge({ score, level }: { score: number | null | undefined; level: HealthState["level"] }) {
+  const r = 64, cx = 80, cy = 78, len = Math.PI * r;
+  const shown = score == null ? 0 : score / 100;
   return (
-    <div className="health-tile">
-      <div className="health-value" style={color ? { color } : undefined}>{value}</div>
-      <div className="health-label">{label}</div>
-      {hint && <div className="health-hint">{hint}</div>}
-    </div>
+    <svg className="gauge" viewBox="0 0 160 92" role="img" aria-label={`fatigue ${score ?? "not measured"}`}>
+      <defs>
+        <linearGradient id="gauge-fill" x1="0" x2="1" y1="0" y2="0">
+          <stop offset="0" stopColor={GOOD} /><stop offset="0.5" stopColor={MID} /><stop offset="1" stopColor={BAD} />
+        </linearGradient>
+      </defs>
+      <path d={`M ${cx - r} ${cy} A ${r} ${r} 0 0 1 ${cx + r} ${cy}`} fill="none" stroke="#232833" strokeWidth={12} strokeLinecap="round" />
+      <path d={`M ${cx - r} ${cy} A ${r} ${r} 0 0 1 ${cx + r} ${cy}`} fill="none" stroke="url(#gauge-fill)" strokeWidth={12}
+            strokeLinecap="round" strokeDasharray={`${len * shown} ${len}`} className="gauge-arc" />
+      <text x={cx} y={cy - 14} textAnchor="middle" className="gauge-score">{score ?? "–"}</text>
+      <text x={cx} y={cy + 4} textAnchor="middle" className="gauge-level" fill={level ? LEVEL_COLOR[level] : MUTED}>
+        {level ? `${level} fatigue` : "measuring…"}
+      </text>
+    </svg>
   );
 }
 
-/** Eye health: blink rate, fatigue and its signals, screen time since a break (health/tracker.py). Heuristics for
- *  nudges, not a medical measurement. */
+/** Blink rate over the last couple of minutes, with the relaxed 15-20 band shaded. */
+function Sparkline({ values }: { values: number[] }) {
+  const w = 140, h = 40, max = 30;
+  const y = (v: number) => h - (Math.min(v, max) / max) * h;
+  const pts = values.map((v, i) => `${(i / Math.max(values.length - 1, 1)) * w},${y(v)}`).join(" ");
+  return (
+    <svg className="spark" viewBox={`0 0 ${w} ${h}`} preserveAspectRatio="none">
+      <rect x={0} y={y(20)} width={w} height={y(15) - y(20)} fill={GOOD} opacity={0.12} />
+      {values.length > 1 && <polyline points={pts} fill="none" stroke="#4dabf7" strokeWidth={2} vectorEffect="non-scaling-stroke" />}
+    </svg>
+  );
+}
+
+/** Progress toward the next 20-20-20 break. */
+function BreakRing({ minutes, every }: { minutes: number; every: number }) {
+  const r = 26, c = 2 * Math.PI * r, due = minutes >= every;
+  const frac = Math.min(minutes / every, 1);
+  return (
+    <svg className={`ring${due ? " due" : ""}`} viewBox="0 0 64 64">
+      <circle cx={32} cy={32} r={r} fill="none" stroke="#232833" strokeWidth={6} />
+      <circle cx={32} cy={32} r={r} fill="none" stroke={due ? MID : "#4dabf7"} strokeWidth={6} strokeLinecap="round"
+              strokeDasharray={`${c * frac} ${c}`} transform="rotate(-90 32 32)" />
+      <text x={32} y={36} textAnchor="middle" className="ring-text">{Math.floor(minutes)}m</text>
+    </svg>
+  );
+}
+
+/** Eye health: fatigue and what drives it, blinking, and breaks (health/tracker.py). Heuristic nudges, not a
+ *  medical measurement. */
 export function HealthPanel() {
   const { frame } = useEngine();
   const h = frame?.health;
-  if (!h) return <div className="pane placeholder">no health data yet</div>;
-  const dash = "–";
+  if (!h || h.minutes_on_screen === undefined) return <div className="pane placeholder">no health data yet</div>;
+  const signals = h.signals ?? {};
+  const top = Object.entries(signals).filter(([, v]) => v != null && v >= 0.35).sort((a, b) => (b[1] as number) - (a[1] as number))[0];
   const rate = h.blink_rate;
+  const every = h.break_every_min ?? 20;
+  const minutes = h.minutes_on_screen ?? 0;
+  const blinkSeries = engine.series.blink_rate.filter((v): v is number => v != null);
   return (
     <div className="pane scroll health">
-      <div className="health-grid">
-        <Tile label="fatigue" value={h.fatigue == null ? dash : `${h.fatigue}`} hint={h.level ?? "measuring…"}
-              color={h.level ? LEVEL[h.level] : undefined} />
-        <Tile label="blinks / min" value={rate == null ? dash : rate.toFixed(0)} hint="relaxed 15–20"
-              color={rate == null ? undefined : rate < 8 ? LEVEL.high : rate < 12 ? LEVEL.moderate : LEVEL.low} />
-        <Tile label="on screen" value={`${(h.minutes_on_screen ?? 0).toFixed(0)} min`} hint="break every 20"
-              color={(h.minutes_on_screen ?? 0) >= 20 ? LEVEL.moderate : undefined} />
-        <Tile label="breaks" value={`${h.breaks ?? 0}`} hint="20 s away" />
-        <Tile label="blink length" value={h.blink_duration_ms == null ? dash : `${h.blink_duration_ms} ms`} hint="slower: tired" />
-        <Tile label="eyes closed" value={h.perclos == null ? dash : `${(h.perclos * 100).toFixed(1)}%`} hint="last minute" />
-        <Tile label="lids vs start" value={h.openness_vs_start == null ? dash : `${Math.round(h.openness_vs_start * 100)}%`} hint="lower: droopy" />
-      </div>
+      <section className="health-hero">
+        <Gauge score={h.fatigue} level={h.level} />
+        <div className="health-why">
+          {h.fatigue == null ? "Needs half a minute of your face in view." :
+            top ? <>Mostly from <b>{NAMES[top[0]]}</b></> : "Eyes look rested."}
+        </div>
+      </section>
+
+      <section className="health-cards">
+        <div className="health-card">
+          <div className="card-head">Blinks</div>
+          <div className="card-main">
+            <span className="big" style={{ color: rate == null ? MUTED : rate < 8 ? BAD : rate < 12 ? MID : GOOD }}>
+              {rate == null ? "–" : rate.toFixed(0)}
+            </span>
+            <span className="unit">/ min</span>
+          </div>
+          <Sparkline values={blinkSeries} />
+          <div className="card-foot">relaxed: 15–20</div>
+        </div>
+        <div className="health-card">
+          <div className="card-head">Break</div>
+          <div className="card-main ring-row">
+            <BreakRing minutes={minutes} every={every} />
+            <div className="ring-copy">
+              {minutes >= every ? <b className="due-text">Look away 20 s</b> : <>Next in <b>{Math.ceil(every - minutes)} min</b></>}
+              <div className="card-foot">{h.breaks ?? 0} break{h.breaks === 1 ? "" : "s"} so far</div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section className="health-signals">
+        {SIGNALS.map((s) => {
+          const v = signals[s.key];
+          return (
+            <div key={s.key} className="signal">
+              <span className="signal-label">{s.label}</span>
+              <span className="signal-bar">
+                <span style={{ width: `${v == null ? 0 : Math.max(v * 100, 4)}%`, background: v == null ? MUTED : severity(v) }} />
+              </span>
+              <span className="signal-value">{s.value(h)}</span>
+            </div>
+          );
+        })}
+      </section>
+      <div className="health-note">Nudges from your blinking and screen time, not a medical measurement.</div>
     </div>
   );
 }

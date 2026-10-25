@@ -97,6 +97,8 @@ export interface HealthState {
   breaks?: number;
   fatigue?: number | null; // 0-100
   level?: "low" | "moderate" | "high" | null;
+  signals?: Partial<Record<"blink_rate" | "blink_duration" | "perclos" | "droop" | "screen_time", number | null>>;
+  break_every_min?: number;
 }
 
 /** What the voice controller (gaze control) heard, decided and is doing. */

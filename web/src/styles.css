@@ -86,8 +86,38 @@ code { background: #1c2230; padding: 1px 4px; border-radius: 4px; }
 .lips .lips-head i { display: inline-block; width: 10px; height: 2px; margin-right: 5px; vertical-align: middle; }
 .lips .plot { flex: 1; min-height: 0; }
 
-.health-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(96px, 1fr)); gap: 8px; }
-.health-tile { background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; }
-.health-value { font-size: 20px; font-weight: 600; font-variant-numeric: tabular-nums; }
-.health-label { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .05em; margin-top: 2px; }
-.health-hint { font-size: 11px; color: var(--muted); opacity: .7; }
+/* Health */
+.health { display: flex; flex-direction: column; gap: 12px; }
+.health section { display: block; }
+.health-hero { display: flex; flex-direction: column; align-items: center; padding: 4px 0 2px; }
+.gauge { width: min(220px, 100%); height: auto; }
+.gauge-arc { transition: stroke-dasharray .6s ease; }
+.gauge-score { font-size: 30px; font-weight: 700; fill: var(--text); font-variant-numeric: tabular-nums; }
+.gauge-level { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .08em; }
+.health-why { font-size: 12px; color: var(--muted); margin-top: -2px; }
+.health-why b { color: var(--text); font-weight: 600; }
+.health-cards { display: grid !important; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; }
+.health-card { background: linear-gradient(180deg, #161a22, #12151c); border: 1px solid var(--line); border-radius: 12px;
+  padding: 10px 12px; display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.card-head { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); }
+.card-main { display: flex; align-items: baseline; gap: 6px; }
+.card-main .big { font-size: 30px; font-weight: 700; line-height: 1; font-variant-numeric: tabular-nums; transition: color .4s; }
+.card-main .unit { font-size: 12px; color: var(--muted); }
+.card-foot { font-size: 11px; color: var(--muted); opacity: .8; }
+.spark { width: 100%; height: 40px; display: block; }
+.ring-row { align-items: center; gap: 10px; }
+.ring { width: 58px; height: 58px; flex: none; }
+.ring circle { transition: stroke-dasharray .6s ease; }
+.ring-text { font-size: 13px; font-weight: 700; fill: var(--text); font-variant-numeric: tabular-nums; }
+.ring.due { animation: breathe 2.4s ease-in-out infinite; }
+@keyframes breathe { 50% { opacity: .55; } }
+.ring-copy { font-size: 13px; color: var(--text); }
+.ring-copy b { font-weight: 700; }
+.due-text { color: #ffc43d; }
+.health-signals { display: grid !important; gap: 7px; background: #12151c; border: 1px solid var(--line); border-radius: 12px; padding: 10px 12px; }
+.signal { display: grid; grid-template-columns: 92px 1fr 70px; align-items: center; gap: 10px; font-size: 12px; }
+.signal-label { color: var(--muted); }
+.signal-bar { height: 6px; border-radius: 3px; background: #232833; overflow: hidden; }
+.signal-bar span { display: block; height: 100%; border-radius: 3px; transition: width .6s ease, background .4s; }
+.signal-value { text-align: right; font-variant-numeric: tabular-nums; color: var(--text); }
+.health-note { font-size: 11px; color: var(--muted); opacity: .7; text-align: center; }
