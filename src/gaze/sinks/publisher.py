@@ -46,18 +46,23 @@ class GazePublisher:
         except OSError:
             pass  # nobody listening is fine
 
-    def listen(self, handlers: dict[str, Callable[[], None]], port: int = CMD_PORT) -> None:
-        """Run `handlers[cmd]` for each {"cmd": ...} received, on a background thread."""
+    def listen(self, handlers: dict[str, Callable[[], None]], port: int = CMD_PORT,
+               on_event: Callable[[dict], None] | None = None) -> None:
+        """On a background thread: run `handlers[cmd]` for each {"cmd": ...} received, and pass each
+        {"event": ...} (what the controller heard, decided or is doing) to `on_event`."""
         sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         sock.bind(("127.0.0.1", port))
 
         def loop():
             while True:
                 try:
-                    cmd = json.loads(sock.recv(4096)).get("cmd")
+                    msg = json.loads(sock.recv(65536))
+                    cmd = msg.get("cmd")
                 except (OSError, ValueError, AttributeError):
                     continue
-                if cmd in handlers:
+                if "event" in msg and on_event is not None:
+                    on_event(msg)
+                elif cmd in handlers:
                     log.info("remote command: %s", cmd)
                     handlers[cmd]()
 

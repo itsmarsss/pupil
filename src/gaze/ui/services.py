@@ -5,6 +5,7 @@ Each is a small object with explicit dependencies, called from the AppKit main t
 """
 from __future__ import annotations
 
+import collections
 import logging
 import threading
 import time
@@ -134,3 +135,34 @@ class Recording:
     def click(self, click_pt: tuple[float, float]) -> None:
         if self.recorder is not None:
             self.recorder.event("click", *click_pt)
+
+
+class VoiceLog:
+    """Events from the voice controller (gaze.control): mic state, what it heard, what it decided.
+    Written from the publisher's thread, read by the dashboard."""
+
+    def __init__(self, keep: int = 30):
+        self._lock = threading.Lock()
+        self._log: collections.deque = collections.deque(maxlen=keep)
+        self._state: dict = {}
+
+    def add(self, msg: dict) -> None:
+        kind, text = msg.get("event"), msg.get("text", "")
+        with self._lock:
+            if kind in ("mic", "pending"):
+                self._state[kind] = text or None
+            elif kind == "target":
+                self._state["target"] = msg.get("target")
+            else:  # heard / status / tier
+                if kind == "heard":
+                    self._state["heard"] = text
+                    self._state.pop("pending", None)
+                self._log.append({"t": round(time.time(), 2), "kind": kind, "text": text})
+            self._state["seen"] = time.time()
+
+    def snapshot(self) -> dict | None:
+        with self._lock:
+            if not self._state:
+                return None  # no controller connected
+            return {**self._state, "log": list(self._log)[-12:],
+                    "connected": time.time() - self._state["seen"] < 30}

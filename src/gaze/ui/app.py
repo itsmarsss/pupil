@@ -24,7 +24,7 @@ from ..tracker import Tracker
 from .flows import MOTION_TIMING, Flows
 from .menu import MenuBar
 from .overlay import GazeRing
-from .services import ClickLearner, Recording, SnapService
+from .services import ClickLearner, Recording, SnapService, VoiceLog
 from .target_screen import TargetScreen
 
 log = logging.getLogger(__name__)
@@ -60,6 +60,7 @@ class GazeApp:
         self.clicks = ClickLearner(tracker, learn_from_clicks)
         self.snapping = SnapService(tracker)
         self.recording = Recording(tracker)
+        self.voice = VoiceLog()  # what the voice controller heard and did, for the dashboard
         self.session: SessionWriter | None = None
         self.dashboard = None
         self.flows: Flows | None = None
@@ -185,7 +186,7 @@ class GazeApp:
     def _dashboard_context(self) -> dict:
         phase, target = self.flows.phase
         return {"phase": phase, "target": target, "busy": self.flows.busy, "lid_deg": self.lid.angle,
-                "smoothing": self.tracker.smoothing, "overlay": self.overlay_on}
+                "smoothing": self.tracker.smoothing, "overlay": self.overlay_on, "voice": self.voice.snapshot()}
 
     def _start_publisher(self) -> None:
         from ..sinks.publisher import GazePublisher
@@ -193,7 +194,7 @@ class GazeApp:
         publisher = GazePublisher(busy=lambda: self.flows.busy)
         self.tracker.add_listener(publisher.on_sample)
         commands = self._remote_commands()
-        publisher.listen({k: commands[k] for k in ("recalibrate", "validate")})
+        publisher.listen({k: commands[k] for k in ("recalibrate", "recentre", "validate")}, on_event=self.voice.add)
         log.info("publishing gaze to the controller over UDP")
 
     # ---- per frame ------------------------------------------------------------------------
