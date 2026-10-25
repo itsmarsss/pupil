@@ -1,9 +1,12 @@
-"""Voice-control overlay (AppKit): status pill, snapped target and nearby candidates, click flash.
+"""Voice-control overlay (AppKit): snapped target and nearby candidates, "which one?" badges, click flash.
 
-A transparent, click-through window over everything, kept out of screenshots so the Claude agent never sees
-it. Redrawn only when something changes.
+A transparent, click-through window over everything, kept out of screenshots so the agent never sees it.
+Redrawn only when something changes. The status bar it used to show at the bottom (mic, heard, status) is the
+notch's job now (ui/notch.py); GAZE_HUD_BAR=1 brings it back for debugging.
 """
 from __future__ import annotations
+
+import os
 
 from AppKit import (
     NSBackingStoreBuffered,
@@ -32,6 +35,7 @@ GAZE = NSColor.colorWithCalibratedRed_green_blue_alpha_(1.0, 0.24, 0.24, 0.63)
 PILL = NSColor.colorWithCalibratedRed_green_blue_alpha_(0.08, 0.08, 0.09, 0.8)
 TEXT = NSColor.colorWithCalibratedWhite_alpha_(0.94, 1.0)
 BADGE = NSColor.colorWithCalibratedRed_green_blue_alpha_(1.0, 0.62, 0.1, 0.95)
+SHOW_BAR = os.environ.get("GAZE_HUD_BAR") == "1"  # the old bottom status bar, for debugging
 
 
 class _HudView(NSView):
@@ -69,7 +73,7 @@ class _HudView(NSView):
                 p = NSBezierPath.bezierPathWithOvalInRect_(NSMakeRect(point[0] - radius, point[1] - radius, 2 * radius, 2 * radius))
                 p.setLineWidth_(3)
                 p.stroke()
-        text = hud.line()
+        text = hud.line() if SHOW_BAR else ""
         if text:
             attrs = {NSFontAttributeName: NSFont.systemFontOfSize_(14), NSForegroundColorAttributeName: TEXT}
             s = NSString.stringWithString_(text)
@@ -125,7 +129,7 @@ class Hud:
         return "   |   ".join(p for p in parts if p)
 
     def update(self) -> None:
-        state = (self.line(), self.target, tuple(self.candidates), self.flash, self.gaze if self.draw_gaze else None,
+        state = (self.line() if SHOW_BAR else "", self.target, tuple(self.candidates), self.flash, self.gaze if self.draw_gaze else None,
                  tuple(self.badges))
         if state != self._drawn:
             self._drawn = state

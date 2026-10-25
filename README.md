@@ -183,8 +183,8 @@ fillers and self-corrections ("at 5, no wait, 6" → "at 6"). Password fields ar
 
 "This" means where you looked *while speaking*, snapped to the nearest Accessibility element
 (`snapping.py`). If the tracker wasn't confident then (head turned past what calibration covered),
-"click" and "type" ask you to confirm instead of acting. A pill at the bottom of the screen shows the mic,
-what was heard and what happened; the dashboard's "Voice & agent" panel logs it, outlines the target and
+"click" and "type" ask you to confirm instead of acting. The notch shows what was heard and what happened
+(`GAZE_HUD_BAR=1` brings back the old status bar at the bottom); the dashboard's "Voice & agent" panel logs it, outlines the target and
 lists which model each part calls (speech in, Jev, extraction, dictation, agent tier, speech out), lit
 while a call is open.
 Say "stop" to cancel, "confirm" to approve. All settings are in `.env.example`. This drives your real
