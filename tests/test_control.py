@@ -634,3 +634,28 @@ def test_same_here_reuses_action_with_current_heat():
     c._ask_which = lambda *args: None
     c._reference("same_here", (440, 115), GazeCloud([(440.0, 115.0, 1.0)], 25), [left, right])
     assert done == [("double_click", "Right")]
+
+
+def test_conversation_reaches_jev_and_the_agent():
+    from gaze.control import controller as ctl
+    c = ctl.VoiceController.__new__(ctl.VoiceController)
+    c.gate = _A(recent=[], last_reply=None)
+    c._ep = {"id": "e1", "text": "the quarterly report"}
+    c._remember_command("the quarterly report")  # ignored by Jev, but it's what "open that" will mean
+    c._ep = {"id": "e2", "text": "click this"}
+    c._remember_command("click this")
+    c._note_activity("Clicked Pull requests")
+    c._converse("assistant", "Which one? One or two?")
+    c._remember_command("open that")
+    assert c.gate.recent == ["the quarterly report", "click this"]
+    assert c.gate.last_reply == "Which one? One or two?"
+    context = c._conversation_context("open that")
+    assert '- user (just now): "the quarterly report"' in context and "- done: Clicked Pull requests" in context
+    assert '- you said: "Which one? One or two?"' in context and "open that" not in context  # this request itself
+
+    # "maybe" waits quietly for "do it": no prompt at the gaze
+    c.enabled, c._flash, c._busy_with, c.pending, c.choosing, c.clarifying, c.dictating = True, None, None, None, None, None, False
+    c.speaker, c.hud = _A(speaking=False), _A(mic="idle")
+    c.agent = _A(busy=False, paused=False, phase=None, doing="", _steps=0, tier="standard")
+    c.maybe = ("open the report", ctl.time.time() + 10, None, None, [], {})
+    assert c._indicator_status() is None

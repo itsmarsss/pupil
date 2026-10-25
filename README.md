@@ -147,7 +147,7 @@ as well as Camera.
 | Tier | | Examples |
 |---|---|---|
 | 0 · `router.py` | only what must work instantly and offline, matched by rules | "stop", "confirm" / "do it", "start/stop dictation", "calibrate", "re-centre", "check accuracy" |
-| 1 · `gate.py` | Jev answers small yes/no and pick-one questions about the command and the elements near your gaze; a truth table picks the action. No keyword lists: clicks, scrolling, shortcuts (via the app's own menu command, which Jev picks from its real menus), websites and searches, typing, quitting apps, "again" / "no, the left one" and answers to "which one?" are all its reading. A fast model (`extract.py`) pulls out the text Jev can't carry: what to type, the URL or search, the steps of a multi-step request. It asks a question only when something the screen can't supply is missing, offers commands it isn't sure were meant for it ("do it" runs them), and runs a few actions in a row itself, handing the rest to the agent if a step needs it | "click this", "scroll down a little", "go to github.com", "type hello world", "quit Games", "open Safari", "close this tab" (asks to confirm risky ones), "select all and copy", "send it to…" → "Who to?" |
+| 1 · `gate.py` | Jev answers small yes/no and pick-one questions about the command and the elements near your gaze; a truth table picks the action. No keyword lists: clicks, scrolling, shortcuts (via the app's own menu command, which Jev picks from its real menus), websites and searches, typing, quitting apps, "again" / "no, the left one" and answers to "which one?" are all its reading. A fast model (`extract.py`) pulls out the text Jev can't carry: what to type, the URL or search, the steps of a multi-step request. It asks a question only when something the screen can't supply is missing, holds commands it isn't sure were meant for it without interrupting ("do it" runs them), and runs a few actions in a row itself, handing the rest to the agent if a step needs it | "click this", "scroll down a little", "go to github.com", "type hello world", "quit Games", "open Safari", "close this tab" (asks to confirm risky ones), "select all and copy", "send it to…" → "Who to?" |
 | 2 · `agent.py` | Claude computer-use loop, told where you were looking while you spoke, with app-agnostic tools beside the screenshot/mouse/keyboard ones (`uitree.py`): any app's menu bar (`menu`), its controls by id (`ui_elements`, `press_element`, `set_value`), AppleScript/JXA, `drag` with any button and modifiers, `open_app`; plus app adapters where an app has its own scripting (`apps/`: Blender via `blender_python`) | "open this in a new tab and summarize it", "export this as PDF", "build me a car in Blender" |
 
 Listening: the default mic (AirPods included), raw; Apple's voice processing (noise suppression, echo
@@ -171,7 +171,10 @@ follows your gaze (colour-coded: listening, thinking, agent working, waiting on 
 speech off. Start talking and it stops: barge-in is
 detected from your lips moving, not sound, so the Mac's own speaker doesn't cut itself off. Speaking while
 Claude is working reaches it at its next step ("actually, make it blue"); saying something other than
-"confirm" when it's waiting to confirm skips that step and follows the new instruction; "stop" cancels.
+"confirm" when it's waiting to confirm skips that step and follows the new instruction; "stop" cancels. Each
+new task starts with the last few minutes of the conversation (what you said, even what Jev let pass, what was
+done and what it answered), and Jev reads your last few sentences and its last question, so "that one", "the
+other one" and answers to its questions make sense.
 
 Typing: "type …" and dictation mode ("start dictation" … "stop dictation") type what you meant, not the
 raw transcript: a fast model (Claude Haiku) uses the app and the text before the cursor to turn "slash btw"

@@ -40,7 +40,8 @@ CLARIFY_WINDOW_S = 10.0  # how long an answer to "Which one?" is taken as the an
 MAX_CLAUSES = 3  # longer chains go to the agent whole
 SETTLE_S = {"open_app": 1.5}  # wait after a compound step before deciding the next one; default below
 DEFAULT_SETTLE_S = 0.5
-RECENT_CONTEXT_S = 60  # commands this recent are context for the next one
+RECENT_CONTEXT_S = 120  # what you said this recently is context for Jev's next decision
+CONVERSATION_S = 300  # and this much of the conversation (said, done, replied) goes to the agent
 FLASH_S = 0.9  # how long "✓ clicked" stays on the gaze indicator
 CHOOSE_WINDOW_S = 12.0  # how long "which one?" waits for an answer
 RELATIVE_WINDOW_S = 20.0  # "no, the left one" refers to the last target this recently
@@ -112,11 +113,11 @@ class VoiceController:
         self.pending = None  # direct action waiting for "confirm"
         self.pending_text = None  # what it is, in words
         self.activity: deque = deque(maxlen=4)  # recent {t, said, did}, newest last: the notch's "recent"
+        self.conversation: deque = deque(maxlen=24)  # (t, who, text): user / done / assistant, for context
         self.clarifying = None  # (request, missing, deadline, episode): the gate asked a question
         self.maybe = None  # (request, deadline, gaze, target, candidates, episode): maybe a command; "do it" runs it
         self._candidates: list = []  # elements near the gaze for the command being handled
         self.dictating = False  # dictation mode: every utterance is typed at the cursor
-        self._recent: list = []  # (time, text) of recent commands, for Jev's context
         self._agent_route = ("standard", "normal")  # Jev's model tier and step budget for the agent
         self.choosing = None  # "which one?" asked: options, action, deadline
         self._cloud = None  # gaze heat for the command being handled
@@ -468,6 +469,7 @@ class VoiceController:
                     self._status(f'Not for the agent: "{cmd.text}"')
                     return
             ep["route"] = "steer"
+            self._converse("user", cmd.text)
             self.agent.steer(cmd.text)
             self._status(f'Telling the agent: "{cmd.text}"')
             return
@@ -512,6 +514,7 @@ class VoiceController:
         tier, budget = getattr(self, "_agent_route", ("standard", "normal"))
         ep.update(agent_tier=tier, agent_budget=budget)
         self.agent.start(request, gaze, target, candidates, app, tier=tier, budget=budget,
+                         context=self._conversation_context(request),
                          on_done=lambda text, steps, s: (
                              self.episodes.outcome(ep, agent_result=text, agent_steps=steps, agent_s=round(s, 1)),
                              self._note_activity(text or "Agent finished", ep, agent=True)))
@@ -555,9 +558,9 @@ class VoiceController:
         if d.route == "ignore":
             self._status(f"Ignored: {d.summary()}")
             return
-        if d.route == "maybe":  # not sure it was meant for the computer: offer it rather than act or drop it
+        if d.route == "maybe":  # not sure it was meant for the computer: hold it quietly; "do it" runs it
             self.maybe = (request, time.time() + MAYBE_WINDOW_S, gaze, target, candidates, ep)
-            self._status(f'Not sure that was for me: "{request[:60]}". Say "do it" to run it.')
+            self._status(f'Heard "{request[:60]}" (not acting; "do it" runs it)')
             return
         if d.route == "choose":
             self._ask_which(d.options, d.action, {"clicks": 1, "button": "left"})
@@ -713,10 +716,35 @@ class VoiceController:
         return f"{last.action.replace('_', ' ')} on {last.target.describe()}, {time.time() - last.t:.0f} s ago"
 
     def _remember_command(self, text):
-        """Recent commands, as context for Jev's next decision (follow-ups, clarifications)."""
+        """What was just said, as context for Jev's next decision (follow-ups, answers, corrections) and the agent's.
+        Everything heard counts, even what Jev ignored: "the report" said a moment ago is what "open that" means."""
         now = time.time()
-        self._recent = [(t, s) for t, s in self._recent if now - t < RECENT_CONTEXT_S][-3:] + [(now, text)]
-        self.gate.recent = [s for _, s in self._recent[:-1]]  # before this one
+        said = [s for t, who, s in self._converse_log() if who == "user" and now - t < RECENT_CONTEXT_S]
+        self.gate.recent = said[-4:]  # before this one
+        replies = [s for t, who, s in self._converse_log() if who == "assistant" and now - t < RECENT_CONTEXT_S / 2]
+        self.gate.last_reply = replies[-1] if replies else None
+        self._converse("user", text)
+
+    def _converse_log(self):
+        return list(self.__dict__.setdefault("conversation", deque(maxlen=24)))  # (tests build controllers bare)
+
+    def _converse(self, who, text):
+        if text:
+            self.__dict__.setdefault("conversation", deque(maxlen=24)).append((time.time(), who, text))
+
+    def _conversation_context(self, request):
+        """The last few minutes, oldest first, for the agent: what was said, done and answered before `request`."""
+        now = time.time()
+        lines = []
+        for t, who, text in self._converse_log():
+            if now - t > CONVERSATION_S:
+                continue
+            ago = "just now" if now - t < 60 else f"{int((now - t) // 60)} min ago"
+            lines.append({"user": f'- user ({ago}): "{text}"', "done": f"- done: {text}",
+                          "assistant": f'- you said: "{text}"'}[who])
+        if lines and lines[-1].endswith(f'"{request}"'):
+            lines.pop()  # that's this request
+        return "\n".join(lines[-12:])
 
     def _menu_for(self, shortcut):
         """The frontmost app's own menu command for a standard action, chosen by Jev from its real menus once per
@@ -969,6 +997,7 @@ class VoiceController:
 
     def _say(self, text):
         """Speak `text` and run it as a faint caption under the gaze pill (shown for a reading time if speech is off)."""
+        self._converse("assistant", text)
         self.indicator.say(text)
         if self.speaker.available:
             self.speaker.say(text)
@@ -1004,8 +1033,6 @@ class VoiceController:
             return Status("waiting", "which one?")
         if self.clarifying is not None and now < self.clarifying[2]:
             return Status("waiting", "answer?")
-        if self.maybe is not None and now < self.maybe[1]:
-            return Status("waiting", 'for me? "do it"')
         if self._busy_with is not None:
             return self._busy_with
         if self.hud.mic == "listening":
@@ -1030,6 +1057,8 @@ class VoiceController:
         ep = ep or self._ep
         said = (ep or {}).get("text", "")
         key = (ep or {}).get("id")
+        if not agent:  # (the agent's reply is logged by _say)
+            self._converse("done", did)
         activity = self.__dict__.setdefault("activity", deque(maxlen=4))  # (tests build controllers bare)
         if activity and key is not None and activity[-1].get("id") == key:
             activity[-1].update(did=did, t=time.time(), agent=agent)

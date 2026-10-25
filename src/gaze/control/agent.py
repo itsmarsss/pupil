@@ -129,8 +129,10 @@ class Agent:
         self._cancel.set()
         self._paused = None
 
-    def start(self, request, gaze, target, candidates, app_name, on_done=None, tier="standard", budget="normal"):
-        """on_done(result text, steps, seconds) when the run ends (not when it pauses for "confirm")."""
+    def start(self, request, gaze, target, candidates, app_name, on_done=None, tier="standard", budget="normal",
+              context=""):
+        """on_done(result text, steps, seconds) when the run ends (not when it pauses for "confirm"). context: the
+        conversation just before this request, so "that", "the other one" and answers make sense."""
         if not (os.environ.get("ANTHROPIC_API_KEY") or os.environ.get("ANTHROPIC_AUTH_TOKEN")):
             self.on_status("This needs the agent, but ANTHROPIC_API_KEY isn't set (add it to .env).")
             return
@@ -144,7 +146,7 @@ class Agent:
         self._model, self._effort = config.AGENT_TIERS.get(tier, config.AGENT_TIERS["standard"])
         self._max_steps = config.AGENT_BUDGETS.get(budget, config.MAX_AGENT_STEPS)
         self._tools = [*TOOLS, *apps.tools_for(request)]  # app adapters only when their app is in play
-        messages = [self._first_message(request, gaze, target, candidates, app_name)]
+        messages = [self._first_message(request, gaze, target, candidates, app_name, context)]
         self._spawn(messages, request, None)
 
     def resume(self):
@@ -203,8 +205,12 @@ class Agent:
         if self._on_done is not None and not self.paused:
             self._on_done(result, self._steps, time.time() - self._started)
 
-    def _first_message(self, request, gaze, target, candidates, app_name):
-        lines = [f'The user said: "{request}"', f"Frontmost app: {app_name}"]
+    def _first_message(self, request, gaze, target, candidates, app_name, context=""):
+        lines = []
+        if context:
+            lines += ["Conversation just before this, oldest first (\"done\" is what the app did; what the user says "
+                      "now may refer to it):", context, ""]
+        lines += [f'The user said: "{request}"', f"Frontmost app: {app_name}"]
         if gaze:
             gx, gy = self.screen.to_shot(*gaze)
             lines.append(f"They were looking at ({round(gx)}, {round(gy)}) - the red ring.")

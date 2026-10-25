@@ -373,7 +373,8 @@ def _decide(a, elements, gaze, apps, allow_clarify=True, allow_compound=True, co
 
 class Gate:
     def __init__(self):
-        self.recent: list[str] = []  # the user's last few commands (the controller keeps it): for follow-ups
+        self.recent: list[str] = []  # what the user said just before (the controller keeps it): for follow-ups
+        self.last_reply: str | None = None  # what the assistant last said aloud, if just now (a question it asked)
         self.error = None
         self._client = None
         if TypeSafeClient is None:
@@ -406,7 +407,8 @@ class Gate:
     def _state(self, utterance, app_name, gaze, elements, last=None):
         return {
             "command": utterance,
-            **({"previous_commands": self.recent[-3:]} if self.recent else {}),
+            **({"previous_commands": self.recent[-4:]} if self.recent else {}),
+            **({"assistant_just_said": self.last_reply} if self.last_reply else {}),
             **({"last_action": last} if last else {}),
             "frontmost_app": app_name,
             "pointer": "The user is pointing at (looking at) a spot on screen; distances are measured from it.",
