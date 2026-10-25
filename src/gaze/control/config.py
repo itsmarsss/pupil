@@ -35,6 +35,12 @@ GATE_RISKY_MIN = 0.65  # ask to confirm at or above this (measured: harmless cli
 GAZE_STALE_S = 1.0  # no point for this long = tracker lost you
 GAZE_MIN_CONFIDENCE = 0.5  # below this (head outside its calibrated range) clicks and typing ask to confirm
 
+# Dictation ("type ...", dictation mode): a fast model turns the transcript into what was meant ("slash btw" ->
+# "/btw" in a chat box), from the app and the text before the cursor. Off: typed as heard.
+DICTATION_FORMAT = os.environ.get("GAZE_DICTATION_FORMAT", "1") != "0"
+DICTATION_MODEL = os.environ.get("GAZE_DICTATION_MODEL", "claude-haiku-4-5-20251001")
+DICTATION_TIMEOUT_S = 4.0  # then type it as heard
+
 # Voice: Cartesia Ink-2 streaming speech-to-text when CARTESIA_API_KEY is set; on-device Whisper otherwise or offline
 CARTESIA_API_KEY = os.environ.get("CARTESIA_API_KEY", "")
 STT = os.environ.get("GAZE_STT", "cartesia" if CARTESIA_API_KEY else "whisper")  # cartesia | whisper

@@ -319,6 +319,7 @@ KEYTERMS = [
     "a little", "go back", "go forward", "new tab", "close tab", "reopen tab", "next tab", "previous tab",
     "new window", "full screen", "zoom in", "zoom out", "select all", "undo", "redo", "copy", "paste", "refresh",
     "minimize", "Spotlight", "Mission Control", "stop", "cancel", "never mind", "confirm", "calibrate", "type",
+    "start dictation", "stop dictation", "slash", "new line",
 ]
 
 

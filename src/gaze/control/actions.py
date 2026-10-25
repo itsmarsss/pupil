@@ -32,11 +32,21 @@ def press(combo, repeat=1):
 
 
 def type_text(text):
-    if text.isascii():
-        pyautogui.write(text, interval=0.004)
-        return
-    subprocess.run(["pbcopy"], input=text.encode(), check=True)  # pyautogui can't type non-ASCII
-    press("command+v")
+    """Type `text` at the focus. Line breaks are Shift+Return (a new line in chat boxes and editors, where a plain
+    Return would send); non-ASCII goes through the clipboard, which is put back afterwards."""
+    for i, line in enumerate(text.split("\n")):
+        if i:
+            pyautogui.hotkey("shift", "enter")
+        if not line:
+            continue
+        if line.isascii():
+            pyautogui.write(line, interval=0.004)
+            continue
+        saved = subprocess.run(["pbpaste"], capture_output=True).stdout  # pyautogui can't type non-ASCII
+        subprocess.run(["pbcopy"], input=line.encode(), check=True)
+        press("command+v")
+        time.sleep(0.15)  # let the paste read the clipboard before restoring it
+        subprocess.run(["pbcopy"], input=saved, check=False)
 
 
 def click(x, y, clicks=1, button="left", modifiers=()):

@@ -12,7 +12,7 @@ import queue
 import threading
 import time
 
-from . import actions, apps, commands, config, macos, router, snapping
+from . import actions, apps, commands, config, dictation, macos, router, snapping
 from .agent import Agent
 from .episodes import EpisodeLog, element_dict
 from .gate import CLARIFY_PROMPTS, MAX_CANDIDATES, YES, Gate
@@ -54,6 +54,7 @@ class VoiceController:
         self.pending = None  # direct action waiting for "confirm"
         self.clarifying = None  # (request, missing, deadline, episode): the gate asked a question
         self._candidates: list = []  # elements near the gaze for the command being handled
+        self.dictating = False  # dictation mode: every utterance is typed at the cursor
         self.snap = (None, [])  # (target, candidates) for the live gaze, refreshed by _snap_loop
         self.commands: queue.Queue = queue.Queue()  # commands run one at a time, off the UI thread
         self._typed = typed
@@ -204,6 +205,9 @@ class VoiceController:
             ep["heard_as"] = text
         self.hud.heard = cmd.text
         if cmd.kind == "cancel":  # handled immediately, even while a command is running
+            if self.dictating:
+                self.dictating = False
+                self.hud.status = "Dictation off."
             self.agent.cancel()
             self._set_pending(None)
             if self.clarifying is not None:
@@ -213,6 +217,16 @@ class VoiceController:
             ep["route"] = "cancel"
             self.episodes.finish(ep)
             return
+        if cmd.kind in ("dictate_on", "dictate_off"):
+            self.dictating = cmd.kind == "dictate_on"
+            self.hud.status = ('Dictating: everything you say is typed. Say "stop dictation" to finish.'
+                               if self.dictating else "Dictation off.")
+            ep["route"] = cmd.kind
+            self.episodes.finish(ep)
+            return
+        if self.dictating and cmd.kind not in ("cancel", "confirm"):  # say it, and it's typed where the cursor is
+            cmd = router.Command("dictation", {"text": text}, text)
+            ep["kind"] = "dictation"
         if cmd.kind in ("calibrate", "recentre", "check"):
             self._tracker_command(cmd.kind)
             ep["route"] = cmd.kind
@@ -257,6 +271,12 @@ class VoiceController:
 
     def _handle(self, cmd, t0, t1):
         ep = self._ep
+        if cmd.kind == "dictation":
+            text = dictation.format(cmd.args["text"])
+            actions.type_text(text)
+            ep.update(route="dictation", typed=text, acted=True)
+            self._status(f"Typed: {text[:60]}")
+            return
         if cmd.kind == "confirm":
             if self.agent.resume():
                 ep["route"] = "agent_resume"
@@ -509,6 +529,10 @@ class VoiceController:
             self._status(f"Pressed {args['combo']}")
         elif kind == "type":
             actions.click(x, y)
-            actions.type_text(args["text"])
+            time.sleep(0.1)  # focus lands before reading the field for context
+            text = dictation.format(args["text"])
+            actions.type_text(text)
+            if self._ep is not None:
+                self._ep["typed"] = text
             self.events.put(("flash", (x, y)))
             self._status(f"Typed into {where}")
