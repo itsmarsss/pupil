@@ -1,13 +1,6 @@
 from gaze.ui import notch_content as nc
 
 
-def _health(**kw):
-    base = {"fatigue": 42, "level": "moderate", "blink_rate": 7.0, "minutes_on_screen": 12.0, "breaks": 2,
-            "break_every_min": 20, "signals": {"blink_rate": 0.7, "screen_time": 0.0, "perclos": 0.1}}
-    base.update(kw)
-    return base
-
-
 def test_collapsed_ear_says_little():
     assert nc.ear_label(nc.NotchModel()) == ""  # idle: no words
     assert nc.ear_label(nc.NotchModel(state="listening", label="listening")) == "Listening"
@@ -17,13 +10,12 @@ def test_collapsed_ear_says_little():
 
 def test_peek_shows_what_needs_reading_most_urgent_first():
     now = 100.0
-    m = nc.NotchModel(caption=("Done. 3 results.", 99.0, None), reminder=("Blink a few times.", 105.0))
+    m = nc.NotchModel(caption=("Done. 3 results.", 99.0, None))
     assert nc.peek_line(m, now) == ("speech", "Done. 3 results.")
-    m.pending = "Quit Chrome"
+    m.pending = "quit Chrome"
     assert nc.peek_line(m, now) == ("confirm", "Quit Chrome?")
     m.pending, m.caption = None, ("old", 90.0, 95.0)  # said a while ago: gone
-    assert nc.peek_line(m, now) == ("reminder", "Blink a few times.")
-    assert nc.peek_line(m, 106.0) is None
+    assert nc.peek_line(m, now) is None
 
 
 def test_headline_reads_like_a_sentence():
@@ -34,17 +26,19 @@ def test_headline_reads_like_a_sentence():
     assert nc.headline(nc.NotchModel(voice_on=True, tracking="tracking"))[0] == "Ready"
 
 
-def test_health_tiles_explain_the_score():
-    fatigue, blinks, brk = nc.tiles(nc.NotchModel(health=_health()))
-    assert (fatigue.value, fatigue.unit, fatigue.detail, fatigue.tone) == ("42", "", "few blinks", "warn")
-    assert (blinks.value, blinks.tone) == ("7", "bad")
-    assert (brk.value, brk.unit, brk.tone) == ("8", "min", "ok") and abs(brk.progress - 0.6) < 1e-9
-    _, _, due = nc.tiles(nc.NotchModel(health=_health(minutes_on_screen=21.0)))
-    assert due.value == "Now" and due.tone == "warn"
-    fatigue, _, _ = nc.tiles(nc.NotchModel(health={}))
-    assert fatigue.value == "–" and fatigue.detail == "measuring…"
+def test_recent_commands_newest_first_and_only_recent():
+    m = nc.NotchModel(activity=[{"said": "open notes", "did": "Opened Notes", "t": 0.0},
+                                {"said": "click this", "did": "Clicked Pull requests", "t": 900.0},
+                                {"said": "summarize this", "did": "3 key points", "t": 990.0, "agent": True}])
+    assert nc.recent(m, now=1000.0) == [("summarize this", "3 key points", "now", True),
+                                        ("click this", "Clicked Pull requests", "1m", False)]  # 16 min old: gone
 
 
-def test_sparkline_keeps_the_last_half_hour():
-    pts = nc.sparkline([(0.0, 50), (1000.0, 20), (2000.0, 80)], now=2000.0)  # the first is 33 min old
-    assert len(pts) == 2 and pts[-1] == (1.0, 0.8) and pts[0][1] == 0.2
+def test_actions_are_described_for_people():
+    from gaze.control.controller import _describe_action
+
+    assert _describe_action("click", {"clicks": 1, "button": "left"}, "'Pull requests' link") == \
+        "Clicked 'Pull requests' link"
+    assert _describe_action("open_app", {"app": "Notes"}) == "Opened Notes"
+    assert _describe_action("key", {"combo": "command+t", "shortcut": "new_tab"}) == "Open a new tab"
+    assert _describe_action("scroll", {"direction": "down", "amount": 4}) == "Scrolled down"

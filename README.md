@@ -108,10 +108,10 @@ separately. Profiles, recordings, the device file and the accuracy log live in
 ## The notch
 
 What the app is doing lives in the notch (or hangs from the top centre on screens without one), in the spirit of
-[Notchy](https://notchy.dev): small ears show tracking and, while voice control works, what it's doing
-("Listening", "Agent · 3"); it grows a line for things to read (the agent's reply, "say confirm", an eye-health
-nudge) and opens when you hover it or look at it: status, fatigue with its last 30 minutes, blinks, the next
-break, gaze accuracy, and voice / reminder toggles. Never in screenshots, so the agent can't see it; ◉ → View →
+[Notchy](https://notchy.dev), and only about the happy path: small ears show whether it sees you and is
+listening, and while a command runs, what it's doing ("Listening", "Agent · 3"); it grows a line for things to
+read (the agent's reply, "say confirm") and opens when you hover it or look at it: what it's doing, your last few
+commands and what they did (or what to try, at first), gaze accuracy, and a mic toggle. Never in screenshots, so the agent can't see it; ◉ → View →
 Notch or `GAZE_NOTCH=0` turns it off. The web dashboard is for debugging.
 
 ## Eye health

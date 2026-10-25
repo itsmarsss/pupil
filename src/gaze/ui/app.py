@@ -5,7 +5,6 @@ reads its latest point from a 60 Hz timer instead of calling into AppKit from th
 """
 from __future__ import annotations
 
-import collections
 import json
 import logging
 import os
@@ -77,8 +76,6 @@ class GazeApp:
         self.health = HealthTracker(log_dir=APP_SUPPORT / "health",  # blinks, eye fatigue, breaks
                                     pt_per_deg=lambda: self.tracker.pt_per_deg)
         self._health_now: dict = {}
-        self._fatigue_series: collections.deque = collections.deque(maxlen=1800)  # (t, score), 30 min at 1 Hz
-        self._reminder: tuple[str, float] | None = None  # the last health nudge, until when the notch shows it
         self.notch = None  # the user-facing status (ui/notch.py)
         self.session: SessionWriter | None = None
         self.dashboard = None
@@ -106,9 +103,7 @@ class GazeApp:
         if os.environ.get("GAZE_NOTCH", "1") != "0":
             from .notch import Notch
 
-            self.notch = Notch(on_toggle_voice=self._toggle_voice if not o["voice_typed"] else None,
-                               on_toggle_reminders=lambda: setattr(self.health, "reminders_on",
-                                                                   not self.health.reminders_on))
+            self.notch = Notch(on_toggle_voice=self._toggle_voice if not o["voice_typed"] else None)
             NSTimer.scheduledTimerWithTimeInterval_repeats_block_(1 / 30, True, self._notch_tick)
         if o["snap"]:
             self.snapping.toggle()
@@ -320,11 +315,8 @@ class GazeApp:
     def _health_tick(self, _timer) -> None:
         """Once a second: eye-health reminders, as a notification and (with voice control) a caption at the gaze."""
         self._health_now = self.health.snapshot()  # for the dashboard (every frame) without recomputing it
-        if self._health_now.get("fatigue") is not None:
-            self._fatigue_series.append((time.time(), self._health_now["fatigue"]))
         for message in self.health.due_reminders():
             log.info("health: %s", message)
-            self._reminder = (message, time.time() + 8)
             subprocess.Popen(["osascript", "-e", f'display notification "{message}" with title "Eyes"'])
             if self.controller is not None:
                 self.controller.indicator.say(message)
@@ -356,8 +348,7 @@ class GazeApp:
         m = NotchModel(tracking=tracking,
                        accuracy_deg=float(last.accuracy_deg) if last is not None and np.isfinite(last.accuracy_deg) else None,
                        distance_cm=self.tracker.distance_mm / 10 if self.tracker.distance_mm else None,
-                       fps=self.tracker.fps, health=self._health_now, fatigue_series=list(self._fatigue_series),
-                       reminders_on=self.health.reminders_on, reminder=self._reminder)
+                       fps=self.tracker.fps)
         c = self.controller
         if c is not None:
             status = c._indicator_status()
@@ -368,6 +359,7 @@ class GazeApp:
             m.caption = (ind._caption, ind._caption_start, ind._caption_end) if ind._caption else None
             m.pending = c.pending_text or ("let the agent continue" if c.agent.paused else None)
             m.mic = c.hud.mic_device or ""
+            m.activity = list(c.activity)
             active = next((r for r in models.snapshot() if r.get("active") and r["role"] != "stt"), None)
             m.model = None if active is None else "Jev" if active["role"] == "jev" else active["model"]
         return m

@@ -15,6 +15,7 @@ import subprocess
 import urllib.parse
 import threading
 import time
+from collections import deque
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -61,6 +62,27 @@ class TargetReference:
 BLOCKED = ("ignore", "maybe", "clarify")  # Jev's routes that don't act
 
 
+def _describe_action(kind, args, where=None):
+    """One action in words, for people ("Clicked Pull requests", "Opened Notes")."""
+    if kind == "click":
+        verb = {(2, "left"): "Double-clicked", (1, "right"): "Right-clicked"}.get(
+            (args.get("clicks"), args.get("button")), "Clicked")
+        return f"{verb} {where}" if where and where != "there" else verb
+    if kind == "scroll":
+        return f"Scrolled {args.get('direction', '')}".strip()
+    if kind == "type":
+        text = args.get("text", "")
+        return f"Typed “{text[:40]}{'…' if len(text) > 40 else ''}”"
+    if kind == "key":
+        shortcut = args.get("shortcut")
+        return commands.SHORTCUTS[shortcut][0] if shortcut in commands.SHORTCUTS else f"Pressed {args.get('combo', '')}"
+    if kind == "open_app":
+        if args.get("quit"):
+            return f"{'Force quit' if args.get('force') else 'Quit'} {args['quit']}"
+        return f"Opened {args.get('app') or args.get('url', '')}".strip()
+    return "Done"
+
+
 def _last_sentence(text):
     """The last sentence of something said in several ("is now beginning. Click join." -> "Click join."), or None."""
     parts = [p for p in re.split(r"(?<=[.?!])\s+", text.strip()) if p]
@@ -89,6 +111,7 @@ class VoiceController:
         self.flash_until = 0.0
         self.pending = None  # direct action waiting for "confirm"
         self.pending_text = None  # what it is, in words
+        self.activity: deque = deque(maxlen=4)  # recent {t, said, did}, newest last: the notch's "recent"
         self.clarifying = None  # (request, missing, deadline, episode): the gate asked a question
         self.maybe = None  # (request, deadline, gaze, target, candidates, episode): maybe a command; "do it" runs it
         self._candidates: list = []  # elements near the gaze for the command being handled
@@ -489,8 +512,9 @@ class VoiceController:
         tier, budget = getattr(self, "_agent_route", ("standard", "normal"))
         ep.update(agent_tier=tier, agent_budget=budget)
         self.agent.start(request, gaze, target, candidates, app, tier=tier, budget=budget,
-                         on_done=lambda text, steps, s: self.episodes.outcome(
-                             ep, agent_result=text, agent_steps=steps, agent_s=round(s, 1)))
+                         on_done=lambda text, steps, s: (
+                             self.episodes.outcome(ep, agent_result=text, agent_steps=steps, agent_s=round(s, 1)),
+                             self._note_activity(text or "Agent finished", ep, agent=True)))
 
     def _route_with_gate(self, request, gaze, target, candidates, allow_clarify=True, assume_command=False):
         ep = self._ep
@@ -996,9 +1020,21 @@ class VoiceController:
         what = {"click": "clicked", "scroll": "scrolled", "key": "pressed", "type": "typed",
                 "open_app": "opened"}.get(kind, "done")
         self._flash = (Status("done", f"✓ {what}"), time.time() + FLASH_S)
+        self._note_activity(_describe_action(kind, args, where))
         if self._ep is not None:
             self._ep["acted"] = True
             self._ep.setdefault("actions", []).append({"kind": kind, **args, **({"where": where} if where else {})})
+
+    def _note_activity(self, did, ep=None, agent=False):
+        """What a command did, under what was said; several actions of one command share a line."""
+        ep = ep or self._ep
+        said = (ep or {}).get("text", "")
+        key = (ep or {}).get("id")
+        activity = self.__dict__.setdefault("activity", deque(maxlen=4))  # (tests build controllers bare)
+        if activity and key is not None and activity[-1].get("id") == key:
+            activity[-1].update(did=did, t=time.time(), agent=agent)
+        else:
+            activity.append({"id": key, "said": said, "did": did, "t": time.time(), "agent": agent})
 
     def _do(self, kind, args, gaze, target):
         if gaze is None and target is None:
