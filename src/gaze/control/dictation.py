@@ -87,21 +87,35 @@ def _prompt(raw: str, ctx: dict) -> str:
 _client = None
 
 
+def _get_client():
+    global _client
+    if _client is None:
+        import anthropic
+
+        _client = anthropic.Anthropic(timeout=config.DICTATION_TIMEOUT_S, max_retries=0)
+    return _client
+
+
+def warm() -> None:
+    """Open the API connection ahead of the first dictation (its TLS setup cost ~1 s); no model call."""
+    if not config.DICTATION_FORMAT or not (os.environ.get("ANTHROPIC_API_KEY") or os.environ.get("ANTHROPIC_AUTH_TOKEN")):
+        return
+    try:
+        _get_client().models.list(limit=1)
+    except Exception:
+        pass
+
+
 def format(raw: str, ctx: dict | None = None) -> str:
     """The text to type for transcript `raw`; `raw` itself if formatting is off, slow or fails."""
-    global _client
     raw = raw.strip()
     if not raw or not config.DICTATION_FORMAT or not (os.environ.get("ANTHROPIC_API_KEY")
                                                        or os.environ.get("ANTHROPIC_AUTH_TOKEN")):
         return raw
     try:
-        import anthropic
-
-        if _client is None:
-            _client = anthropic.Anthropic(timeout=config.DICTATION_TIMEOUT_S, max_retries=0)
         ctx = focus_context() if ctx is None else ctx
         t0 = time.perf_counter()
-        response = _client.messages.create(model=config.DICTATION_MODEL, max_tokens=1024, system=SYSTEM,
+        response = _get_client().messages.create(model=config.DICTATION_MODEL, max_tokens=1024, system=SYSTEM,
                                            messages=[{"role": "user", "content": _prompt(raw, ctx)}])
         text = "".join(b.text for b in response.content if b.type == "text").strip(" ")
         print(f"[dictation] {raw!r} -> {text!r} ({(time.perf_counter() - t0) * 1000:.0f} ms)", flush=True)

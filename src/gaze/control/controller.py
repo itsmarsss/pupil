@@ -67,6 +67,7 @@ class VoiceController:
     def start(self) -> None:
         threading.Thread(target=self._snap_loop, name="snap", daemon=True).start()
         threading.Thread(target=self._command_loop, name="voice-commands", daemon=True).start()
+        threading.Thread(target=dictation.warm, name="warm-dictation", daemon=True).start()
         if self._typed:
             TypedInput(self._on_utterance).start()
             self.hud.mic = "typing in terminal"
