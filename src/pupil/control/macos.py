@@ -8,10 +8,11 @@ from AppKit import (
     NSWindowCollectionBehaviorCanJoinAllSpaces,
     NSWindowCollectionBehaviorFullScreenAuxiliary,
     NSWindowCollectionBehaviorStationary,
-    NSWindowSharingNone,
     NSWorkspace,
 )
 from ApplicationServices import AXIsProcessTrusted
+
+from ..core.sharing import overlay_sharing
 
 
 def run_as_accessory():
@@ -32,7 +33,7 @@ def float_overlay(widget):
         | NSWindowCollectionBehaviorStationary
         | NSWindowCollectionBehaviorFullScreenAuxiliary
     )
-    window.setSharingType_(NSWindowSharingNone)  # keeps the overlay out of what Claude sees
+    window.setSharingType_(overlay_sharing())  # recordings see it; the agent's screenshots leave it out (screen.py)
     window.setIgnoresMouseEvents_(True)
 
 

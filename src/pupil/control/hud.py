@@ -22,11 +22,11 @@ from AppKit import (
     NSWindowCollectionBehaviorCanJoinAllSpaces,
     NSWindowCollectionBehaviorFullScreenAuxiliary,
     NSWindowCollectionBehaviorStationary,
-    NSWindowSharingNone,
     NSWindowStyleMaskBorderless,
 )
 
 from ..core.env import env
+from ..core.sharing import overlay_sharing
 
 TARGET = NSColor.colorWithCalibratedRed_green_blue_alpha_(0.0, 0.78, 1.0, 0.86)
 CANDIDATE = NSColor.colorWithCalibratedRed_green_blue_alpha_(0.0, 0.78, 1.0, 0.28)
@@ -98,7 +98,7 @@ class Hud:
         win.setLevel_(NSStatusWindowLevel)
         win.setCollectionBehavior_(NSWindowCollectionBehaviorCanJoinAllSpaces | NSWindowCollectionBehaviorStationary
                                    | NSWindowCollectionBehaviorFullScreenAuxiliary)
-        win.setSharingType_(NSWindowSharingNone)  # keeps the overlay out of what Claude sees
+        win.setSharingType_(overlay_sharing())  # recordings see it; the agent's screenshots leave it out (screen.py)
         view = _HudView.alloc().initWithFrame_(NSMakeRect(0, 0, frame.size.width, frame.size.height))
         view.hud = self
         win.setContentView_(view)

@@ -39,11 +39,11 @@ from AppKit import (
     NSWindowCollectionBehaviorFullScreenAuxiliary,
     NSWindowCollectionBehaviorIgnoresCycle,
     NSWindowCollectionBehaviorStationary,
-    NSWindowSharingNone,
     NSWindowStyleMaskBorderless,
     NSWindowStyleMaskNonactivatingPanel,
 )
 
+from ..core.sharing import overlay_sharing
 from . import notch_content as content
 
 # ---- geometry (points) ----
@@ -288,7 +288,7 @@ class Notch:
         panel.setBackgroundColor_(NSColor.clearColor())
         panel.setHasShadow_(False)
         panel.setIgnoresMouseEvents_(True)
-        panel.setSharingType_(NSWindowSharingNone)  # never in screenshots: the agent doesn't see it
+        panel.setSharingType_(overlay_sharing())  # recordings see it; the agent's screenshots leave it out (screen.py)
         panel.setHidesOnDeactivate_(False)
         # over the menu bar and the gaze blob (overlay.py, screen-saver level), so the blob slides under it; set
         # after anything that resets the level

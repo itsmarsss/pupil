@@ -20,11 +20,11 @@ from AppKit import (
     NSWindowCollectionBehaviorFullScreenAuxiliary,
     NSWindowCollectionBehaviorIgnoresCycle,
     NSWindowCollectionBehaviorStationary,
-    NSWindowSharingNone,
     NSWindowStyleMaskBorderless,
 )
 
 from ..core.screen import Screen
+from ..core.sharing import overlay_sharing
 
 RING = 56  # diameter, points
 LINE = 4.5
@@ -78,7 +78,7 @@ class PupilRing:
         win.setBackgroundColor_(NSColor.clearColor())
         win.setHasShadow_(False)
         win.setIgnoresMouseEvents_(True)
-        win.setSharingType_(NSWindowSharingNone)  # not in screenshots: the voice agent marks gaze itself
+        win.setSharingType_(overlay_sharing())  # recordings see it; the agent's screenshots leave it out (screen.py)
         win.setLevel_(NSScreenSaverWindowLevel)
         win.setCollectionBehavior_(
             NSWindowCollectionBehaviorCanJoinAllSpaces

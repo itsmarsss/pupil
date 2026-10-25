@@ -31,9 +31,10 @@ from AppKit import (
     NSWindowCollectionBehaviorFullScreenAuxiliary,
     NSWindowCollectionBehaviorIgnoresCycle,
     NSWindowCollectionBehaviorStationary,
-    NSWindowSharingNone,
     NSWindowStyleMaskBorderless,
 )
+
+from ..core.sharing import overlay_sharing
 
 OFFSET = 30  # points below the gaze to the pill (centred under it)
 EASE = 0.22  # per tick, toward the gaze (smooths eye jitter)
@@ -129,7 +130,7 @@ class Indicator:
         win.setBackgroundColor_(NSColor.clearColor())
         win.setHasShadow_(False)
         win.setIgnoresMouseEvents_(True)
-        win.setSharingType_(NSWindowSharingNone)
+        win.setSharingType_(overlay_sharing())
         win.setLevel_(NSStatusWindowLevel + 1)
         win.setCollectionBehavior_(NSWindowCollectionBehaviorCanJoinAllSpaces | NSWindowCollectionBehaviorStationary
                                    | NSWindowCollectionBehaviorFullScreenAuxiliary

@@ -111,7 +111,7 @@ What the app is doing lives in the notch (or hangs from the top centre on screen
 [Notchy](https://notchy.dev), and only about the happy path: small ears show whether it sees you and is
 listening, and while a command runs, what it's doing ("Listening", "Agent · 3"); it grows a line for things to
 read (the agent's reply, "say confirm") and opens when you hover it or look at it: what it's doing, your last few
-commands and what they did (or what to try, at first), gaze accuracy, and a mic toggle. Never in screenshots, so the agent can't see it; ◉ → View →
+commands and what they did (or what to try, at first), gaze accuracy, and a mic toggle. Screen recordings (QuickTime, OBS) show it and the gaze overlays, so demos can be recorded; the agent's own screenshots leave Pupil's windows out (`PUPIL_HIDE_FROM_RECORDINGS=1` hides them from every capture); ◉ → View →
 Notch or `PUPIL_NOTCH=0` turns it off. The web dashboard is for debugging.
 
 ## Eye health

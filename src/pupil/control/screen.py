@@ -2,11 +2,11 @@
 
 import base64
 import io
+import os
+import threading
 import time
 from collections import deque
 from dataclasses import dataclass
-
-import threading
 
 import Quartz
 from PIL import Image, ImageDraw
@@ -69,10 +69,16 @@ class Screen:
         return result["image"]
 
     def _capture(self):
-        """Quartz directly (~70 ms when healthy)."""
+        """Quartz directly (~70 ms when healthy): every on-screen window except Pupil's own, so the agent never sees
+        the notch, gaze blob or status pill (which screen recordings do show: core/sharing.py)."""
         bounds = Quartz.CGDisplayBounds(Quartz.CGMainDisplayID())
-        image = Quartz.CGWindowListCreateImage(bounds, Quartz.kCGWindowListOptionOnScreenOnly,
-                                               Quartz.kCGNullWindowID, Quartz.kCGWindowImageDefault)
+        own = os.getpid()
+        windows = Quartz.CGWindowListCopyWindowInfo(Quartz.kCGWindowListOptionOnScreenOnly, Quartz.kCGNullWindowID)
+        ids = [int(w["kCGWindowNumber"]) for w in windows or [] if int(w.get("kCGWindowOwnerPID", -1)) != own]
+        image = Quartz.CGWindowListCreateImageFromArray(bounds, ids, Quartz.kCGWindowImageDefault) if ids else None
+        if image is None:  # fall back to the whole screen (overlays included)
+            image = Quartz.CGWindowListCreateImage(bounds, Quartz.kCGWindowListOptionOnScreenOnly,
+                                                   Quartz.kCGNullWindowID, Quartz.kCGWindowImageDefault)
         if image is None:
             raise RuntimeError("screen capture failed: allow Screen Recording for your terminal")
         w, h = Quartz.CGImageGetWidth(image), Quartz.CGImageGetHeight(image)
