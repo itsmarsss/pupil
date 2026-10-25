@@ -201,6 +201,20 @@ class _Spring:
         return self.x == self.target and self.v == 0.0
 
 
+class _NotchPanel(NSPanel):
+    """A panel macOS lets sit over the menu bar and the notch: AppKit pushes windows below the menu bar
+    (constrainFrameRect:toScreen:) unless they opt out, and it must never take focus from the app you're in."""
+
+    def constrainFrameRect_toScreen_(self, rect, screen):
+        return rect
+
+    def canBecomeKeyWindow(self):
+        return False
+
+    def canBecomeMainWindow(self):
+        return False
+
+
 class _NotchView(NSView):
     def isFlipped(self):
         return True
@@ -227,7 +241,7 @@ class Notch:
         self._notch_w, self._notch_h, self.real_notch = notch_geometry(screen)
         frame = screen.frame()
         self._screen = frame
-        panel = NSPanel.alloc().initWithContentRect_styleMask_backing_defer_(
+        panel = _NotchPanel.alloc().initWithContentRect_styleMask_backing_defer_(
             NSMakeRect(frame.origin.x + (frame.size.width - MAX_W) / 2, frame.origin.y + frame.size.height - MAX_H,
                        MAX_W, MAX_H),
             NSWindowStyleMaskBorderless | NSWindowStyleMaskNonactivatingPanel, NSBackingStoreBuffered, False)
@@ -236,9 +250,9 @@ class Notch:
         panel.setHasShadow_(False)
         panel.setIgnoresMouseEvents_(True)
         panel.setSharingType_(NSWindowSharingNone)  # never in screenshots: the agent doesn't see it
-        panel.setLevel_(NSMainMenuWindowLevel + 3)  # over the menu bar
         panel.setHidesOnDeactivate_(False)
-        panel.setFloatingPanel_(True)
+        panel.setLevel_(NSMainMenuWindowLevel + 3)  # over the menu bar (after anything that resets the level)
+        panel.setMovable_(False)
         panel.setCollectionBehavior_(NSWindowCollectionBehaviorCanJoinAllSpaces | NSWindowCollectionBehaviorStationary
                                      | NSWindowCollectionBehaviorFullScreenAuxiliary
                                      | NSWindowCollectionBehaviorIgnoresCycle)
@@ -246,6 +260,7 @@ class Notch:
         view.owner, view.buttons = self, []
         panel.setContentView_(view)
         self._panel, self._view = panel, view
+        self._place()
         self.model = content.NotchModel()
         self._w, self._h = _Spring(self._collapsed_w(0)), _Spring(self._notch_h)
         self._radius = _Spring(RADIUS)
@@ -255,6 +270,11 @@ class Notch:
         self._last_tick = time.time()
         self._drawn_key = None
         self.enabled = True
+
+    def _place(self):
+        """Pin the panel's top edge to the screen's top edge, centred on the notch."""
+        f = self._screen
+        self._panel.setFrameOrigin_((f.origin.x + (f.size.width - MAX_W) / 2, f.origin.y + f.size.height - MAX_H))
 
     # ---- per tick (main thread, ~30 Hz) ----
 
@@ -283,6 +303,7 @@ class Notch:
             self._drawn_key = key
             self._view.setNeedsDisplay_(True)
         if not self._panel.isVisible():
+            self._place()
             self._panel.orderFrontRegardless()
 
     def _collapsed_w(self, ear):
