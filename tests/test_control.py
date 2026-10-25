@@ -193,3 +193,4 @@ def test_lip_gate():
     assert gaze_with([0.02, 0.025, 0.02, 0.03] * 8).lips(*window)[0] is False  # still: someone else talking
     assert gaze_with([0.02, 0.2, 0.35, 0.1, 0.0, 0.25] * 6).lips(*window)[0] is True  # talking
     assert gaze_with([None] * 20 + [0.02] * 4).lips(*window)[0] is None  # face mostly unseen: can't tell
+    assert gaze_with([None] * 20).lips(*window)[0] is False  # nobody at the computer

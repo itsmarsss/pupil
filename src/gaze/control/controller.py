@@ -140,7 +140,8 @@ class VoiceController:
                 ep = self.episodes.begin("", t0, t1, "rejected")
                 ep.update(route="lip_gate", lips=info)
                 self.episodes.finish(ep)
-                self.hud.status = "Ignored speech: your lips weren't moving."
+                self.hud.status = ("Ignored speech: no one in front of the camera." if info.get("why") == "no face"
+                                   else "Ignored speech: your lips weren't moving.")
             elif kind == "mic":
                 self.hud.mic = payload
             elif kind == "mic_device":

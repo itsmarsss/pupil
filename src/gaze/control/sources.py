@@ -72,11 +72,14 @@ class TrackerGaze:
         return statistics.median(window) if window else 0.0
 
     def lips(self, t0, t1) -> tuple[bool | None, dict]:
-        """Were the user's lips moving between t0 and t1? None when the camera didn't see the face enough to say."""
+        """Were the user's lips moving between t0 and t1? False too when the camera saw no face at all (nobody at the
+        computer: a TV or someone else); None when it saw the face only part of the time, so it can't say."""
         with self._lock:
             window = [m for t, m in self._mouth if t0 <= t <= t1]
         seen = [m for m in window if m is not None]
         info = {"frames": len(window), "face_frames": len(seen)}
+        if len(window) >= 3 and not seen:
+            return False, {**info, "why": "no face"}
         if len(window) < 3 or len(seen) < 0.7 * len(window):
             return None, info
         lo, hi = np.percentile(seen, [10, 90])
