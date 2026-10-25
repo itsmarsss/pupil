@@ -1,8 +1,0 @@
-.venv/
-__pycache__/
-# personal / machine-specific: recorded face landmarks, your calibration, probed device geometry
-runs/
-user.json
-device.json
-# MediaPipe model (download command in README)
-models/
