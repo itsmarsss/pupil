@@ -1,4 +1,5 @@
-"""Always-on mic -> energy-based utterance detection -> on-device Whisper transcript (with start/end times)."""
+"""Always-on mic (Apple voice processing when possible) -> Silero speech detection -> optional lip gate ->
+on-device Whisper transcript, with start/end times."""
 
 import ctypes
 import ctypes.util
@@ -10,10 +11,12 @@ from collections import deque
 import numpy as np
 import sounddevice as sd
 
-from . import config
+from . import audio, config
 
-RATE = 16000
-BLOCK_S = 0.03
+CHUNK_S = audio.CHUNK / audio.RATE
+SPEECH_START, SPEECH_END = 0.5, 0.35  # Silero probability to start / keep an utterance (hysteresis)
+START_CHUNKS = 3  # ~100 ms of speech starts one: a click or a cough doesn't
+PREROLL_CHUNKS = 10  # ~320 ms kept from before the start, so the first syllable isn't cut
 END_SILENCE_S = 0.6
 MAX_UTTERANCE_S = 15
 HALLUCINATIONS = {"", "you", "thank you", "thanks for watching", "bye"}  # Whisper's favorite outputs on noise
@@ -80,13 +83,16 @@ def pick_mic(preferred=None):
 
 
 class Voice(threading.Thread):
-    def __init__(self, on_utterance, on_state, on_device=lambda name: None):
+    def __init__(self, on_utterance, on_state, on_device=lambda name: None, accept=None, on_rejected=None):
         """on_utterance(text, t_start, t_end) with unix timestamps; on_state("listening" | "transcribing" | "idle");
-        on_device(name) whenever the microphone in use changes."""
+        on_device(name) whenever the microphone in use changes. accept(t_start, t_end) -> (bool, info) runs before
+        transcription (the lip gate); rejected speech goes to on_rejected(t_start, t_end, info) untranscribed."""
         super().__init__(daemon=True)
         self.on_utterance = on_utterance
         self.on_state = on_state
         self.on_device = on_device
+        self.accept = accept
+        self.on_rejected = on_rejected or (lambda *a: None)
         self.choice = config.MIC_NAME or None  # None: follow the system default input
         self.device = ""  # name of the mic in use
         self._restart = threading.Event()  # reopen the stream (another mic chosen, or turned on/off)
@@ -103,10 +109,29 @@ class Voice(threading.Thread):
         (self._enabled.set if on else self._enabled.clear)()
         self._restart.set()
 
+    def _open(self):
+        """(input, name): Apple's voice processing when following the system default, else the raw device."""
+        mic, name = pick_mic(self.choice)
+        try:
+            is_default = self.choice is None and mic == sd.query_devices(kind="input")["index"]
+        except sd.PortAudioError:
+            is_default = False
+        if config.VOICE_PROCESSING and is_default:
+            source = audio.AppleVoiceInput()
+            try:
+                source.start()
+                return source, f"{name} · {source.label}"
+            except Exception as e:
+                print(f"Voice isolation off ({e}); using the raw mic.", flush=True)
+        source = audio.PortAudioInput(mic)
+        source.start()
+        return source, name
+
     def run(self):
         from faster_whisper import WhisperModel  # slow import; keep it off the UI thread
 
         model = WhisperModel(config.WHISPER_MODEL, device="cpu", compute_type="int8")
+        vad = audio.SpeechDetector()
         while True:
             if not self._enabled.is_set():
                 self.device = ""
@@ -117,62 +142,77 @@ class Voice(threading.Thread):
             # PortAudio caches the device list at startup; re-initialize so newly connected devices show up.
             sd._terminate()
             sd._initialize()
-            mic, name = pick_mic(self.choice)
             watched = default_input_id() if self.choice is None else None  # only follow the default when unset
+            try:
+                source, name = self._open()
+            except Exception as e:  # no usable input right now (e.g. AirPods mid-connect)
+                print(f"Microphone error ({e}); retrying...", flush=True)
+                time.sleep(1)
+                continue
             print(f"Microphone: {name}", flush=True)
             self.device = name
             self.on_device(name)
-            blocks = queue.Queue()
             try:
-                with sd.InputStream(device=mic, samplerate=RATE, channels=1, dtype="float32",
-                                    blocksize=int(RATE * BLOCK_S),
-                                    callback=lambda data, *_: blocks.put(data[:, 0].copy())):
-                    self.on_state("idle")
-                    self._listen(model, blocks, watched)
+                self.on_state("idle")
+                vad.reset()
+                self._listen(model, vad, source.blocks, watched)
             except sd.PortAudioError as e:  # device vanished mid-stream (e.g. AirPods taken out)
                 print(f"Microphone error ({e}); switching...", flush=True)
                 time.sleep(1)
+            finally:
+                try:
+                    source.stop()
+                except Exception:
+                    pass
 
-    def _listen(self, model, blocks, watched):
-        """Detect utterances until the system default input changes or a restart is asked for (then return so
-        run() switches mics)."""
-        noise = 0.01
-        preroll = deque(maxlen=10)
-        speaking, voiced, silence, buf, started = False, 0, 0, [], 0.0
+    def _chunks(self, blocks, watched):
+        """32 ms chunks from the input, until a restart is asked for or the system default input changes."""
+        pending = np.zeros(0, np.float32)
         last_check = time.time()
-        while True:
-            if self._restart.is_set():
-                return
-            if watched is not None and not speaking and time.time() - last_check > 1.0:
+        while not self._restart.is_set():
+            if watched is not None and time.time() - last_check > 1.0:
                 last_check = time.time()
                 if default_input_id() != watched:
                     return
             try:
-                block = blocks.get(timeout=0.5)
+                pending = np.concatenate([pending, blocks.get(timeout=0.5)])
             except queue.Empty:
-                continue  # stream stalled (device switching); the default-input check above handles it
-            rms = float(np.sqrt(np.mean(block ** 2)))
-            threshold = max(0.015, noise * 3)
+                continue  # stream stalled (device switching); the checks above handle it
+            while len(pending) >= audio.CHUNK:
+                yield pending[:audio.CHUNK]
+                pending = pending[audio.CHUNK:]
+
+    def _listen(self, model, vad, blocks, watched):
+        """Speech (by Silero, not loudness) starts an utterance; END_SILENCE_S without it ends one."""
+        preroll = deque(maxlen=PREROLL_CHUNKS)
+        speaking, voiced, silence, buf, started = False, 0, 0, [], 0.0
+        for chunk in self._chunks(blocks, watched):
+            p = vad(chunk)
             if not speaking:
-                if rms < threshold:
-                    noise = 0.95 * noise + 0.05 * rms
-                preroll.append(block)
-                voiced = voiced + 1 if rms > threshold else 0
-                if voiced >= 3:
+                preroll.append(chunk)
+                voiced = voiced + 1 if p >= SPEECH_START else 0
+                if voiced >= START_CHUNKS:
                     speaking, buf, silence = True, list(preroll), 0
-                    started = time.time() - len(preroll) * BLOCK_S
+                    started = time.time() - len(preroll) * CHUNK_S
                     self.on_state("listening")
                 continue
 
-            buf.append(block)
-            silence = silence + 1 if rms < threshold * 0.8 else 0
-            if silence * BLOCK_S < END_SILENCE_S and len(buf) * BLOCK_S < MAX_UTTERANCE_S:
+            buf.append(chunk)
+            silence = silence + 1 if p < SPEECH_END else 0
+            if silence * CHUNK_S < END_SILENCE_S and len(buf) * CHUNK_S < MAX_UTTERANCE_S:
                 continue
 
-            speaking, ended = False, time.time() - silence * BLOCK_S
-            audio = np.concatenate(buf)
+            speaking, ended = False, time.time() - silence * CHUNK_S
+            preroll.clear()
+            if self.accept is not None:
+                ok, info = self.accept(started, ended)
+                if not ok:  # e.g. your lips weren't moving: someone else, or the TV
+                    self.on_rejected(started, ended, info)
+                    self.on_state("idle")
+                    continue
+            audio_clip = np.concatenate(buf)
             self.on_state("transcribing")
-            segments, _ = model.transcribe(audio, language="en", beam_size=1, condition_on_previous_text=False)
+            segments, _ = model.transcribe(audio_clip, language="en", beam_size=1, condition_on_previous_text=False)
             text = " ".join(s.text for s in segments).strip()
             if text.lower().strip(" .!?,") not in HALLUCINATIONS:
                 self.on_utterance(text, started, ended)

@@ -149,3 +149,47 @@ def test_compound_hands_the_rest_to_the_agent(monkeypatch):
     assert started == ["open Notes and write a shopping list (Already done: open Notes. "
                        "Do the rest: write a shopping list.)"]
     assert [s["route"] for s in c._ep["clauses"]] == ["open_app", "agent"]
+
+
+def test_resampler_keeps_speech_band_and_blocks_aliasing():
+    import numpy as np
+
+    from gaze.control.audio import Resampler
+
+    for f, want in ((1000, 0.707), (11000, 0.0)):  # 11 kHz is above 16 kHz audio's Nyquist: must be removed
+        t = np.arange(48000) / 24000
+        x = np.sin(2 * np.pi * f * t).astype(np.float32)
+        r = Resampler(24000)
+        y = np.concatenate([r(x[i:i + 2400]) for i in range(0, len(x), 2400)])  # streamed in 100 ms blocks
+        assert abs(len(y) - 32000) <= 32
+        assert abs(np.sqrt(np.mean(y[500:-500] ** 2)) - want) < 0.01
+
+
+def test_speech_detector_ignores_silence_and_noise():
+    import numpy as np
+
+    from gaze.control.audio import CHUNK, SpeechDetector
+
+    vad = SpeechDetector()
+    rng = np.random.default_rng(0)
+    probs = [vad((rng.standard_normal(CHUNK) * 0.02).astype(np.float32)) for _ in range(30)]
+    assert max(probs) < 0.5
+
+
+def test_lip_gate():
+    from gaze.control.sources import TrackerGaze
+    from gaze.core.types import GazePoint, Sample, TrackingState
+
+    def gaze_with(mouths):
+        g = TrackerGaze(busy=lambda: False, commands={})
+        now_ns = time.monotonic_ns()
+        for i, m in enumerate(mouths):
+            face = _A(mouth_open=m) if m is not None else None
+            g.on_sample(Sample(now_ns + i * 33_000_000, None, face, GazePoint(now_ns, TrackingState.NO_FACE)))
+        return g
+
+    t = time.time()
+    window = (t - 5, t + 5)
+    assert gaze_with([0.02, 0.025, 0.02, 0.03] * 8).lips(*window)[0] is False  # still: someone else talking
+    assert gaze_with([0.02, 0.2, 0.35, 0.1, 0.0, 0.25] * 6).lips(*window)[0] is True  # talking
+    assert gaze_with([None] * 20 + [0.02] * 4).lips(*window)[0] is None  # face mostly unseen: can't tell

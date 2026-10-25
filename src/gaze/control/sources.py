@@ -11,6 +11,8 @@ import time
 from collections import deque
 from typing import Callable
 
+import numpy as np
+
 from ..core.types import Sample
 from . import config
 
@@ -25,12 +27,15 @@ class TrackerGaze:
         self._busy, self._commands, self._report = busy, commands, report
         self._lock = threading.Lock()
         self._history: deque = deque(maxlen=900)  # (wall t, x, y, confidence), ~30 s at 30 Hz
+        self._mouth: deque = deque(maxlen=900)  # (wall t, mouth openness or None when no face)
         self._last_seen = self._last_point = 0.0
         self._offset = time.time() - time.monotonic_ns() / 1e9  # speech is timestamped with time.time()
 
     def on_sample(self, s: Sample) -> None:
         now = time.time()
         self._last_seen = now
+        with self._lock:
+            self._mouth.append((self._offset + s.t_ns / 1e9, s.face.mouth_open if s.face is not None else None))
         p = s.point
         if p.valid:
             with self._lock:
@@ -65,6 +70,18 @@ class TrackerGaze:
         with self._lock:
             window = [c for t, _, _, c in self._history if t0 <= t <= t1] or [c for *_, c in list(self._history)[-5:]]
         return statistics.median(window) if window else 0.0
+
+    def lips(self, t0, t1) -> tuple[bool | None, dict]:
+        """Were the user's lips moving between t0 and t1? None when the camera didn't see the face enough to say."""
+        with self._lock:
+            window = [m for t, m in self._mouth if t0 <= t <= t1]
+        seen = [m for m in window if m is not None]
+        info = {"frames": len(window), "face_frames": len(seen)}
+        if len(window) < 3 or len(seen) < 0.7 * len(window):
+            return None, info
+        lo, hi = np.percentile(seen, [10, 90])
+        info["range"] = round(float(hi - lo), 3)
+        return bool(hi - lo >= config.LIP_MOVING), info
 
     def send(self, cmd: dict) -> None:
         fn = self._commands.get(cmd.get("cmd"))

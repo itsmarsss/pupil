@@ -56,6 +56,7 @@ class FaceObservation:
     distance_mm: float | None = None  # eye to camera, from iris size
     focal_px: float | None = None  # camera focal length for this frame size
     transform: np.ndarray | None = None  # MediaPipe facial transformation matrix (4x4), for the geometric model
+    mouth_open: float = 0.0  # inner-lip gap / mouth width: ~0 closed, moves while speaking (voice control's lip gate)
 
     @property
     def is_blinking(self) -> bool:

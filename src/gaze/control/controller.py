@@ -56,6 +56,7 @@ class VoiceController:
         self.voice: Voice | None = None  # the mic thread (None when typing)
         self.enabled = True
         self._ep: dict | None = None  # episode the worker is handling (one at a time)
+        self._lips: dict = {}  # lip-gate measurements for the utterance being transcribed
 
     def start(self) -> None:
         threading.Thread(target=self._snap_loop, name="snap", daemon=True).start()
@@ -64,7 +65,8 @@ class VoiceController:
             TypedInput(self._on_utterance).start()
             self.hud.mic = "typing in terminal"
         else:
-            self.voice = Voice(self._on_utterance, self._on_mic_state, lambda name: self.events.put(("mic_device", name)))
+            self.voice = Voice(self._on_utterance, self._on_mic_state, lambda name: self.events.put(("mic_device", name)),
+                               accept=self._accept_speech, on_rejected=self._on_rejected)
             self.voice.start()
             self.hud.mic = "loading"
         if not macos.has_accessibility():
@@ -86,12 +88,24 @@ class VoiceController:
 
     # --- callbacks from the voice threads ---
 
+    def _accept_speech(self, t0, t1):
+        """Lip gate, before transcription: speech while the camera sees your lips still isn't yours."""
+        if not config.LIP_GATE or not hasattr(self.gaze, "lips"):
+            self._lips = {}
+            return True, {}
+        moving, info = self.gaze.lips(t0, t1)
+        self._lips = {"moving": moving, **info}
+        return moving is not False, self._lips
+
+    def _on_rejected(self, t0, t1, info):
+        self.events.put(("rejected", (t0, t1, info)))
+
     def _on_utterance(self, text, t0, t1):
         if not self.enabled:
             return
         print(f"[{time.strftime('%H:%M:%S')}] heard: \"{text}\"", flush=True)
         self.gaze.report("heard", text)
-        self.events.put(("speech", (text, t0, t1)))
+        self.events.put(("speech", (text, t0, t1, self._lips)))
 
     def _on_mic_state(self, state):
         self.gaze.report("mic", state)
@@ -121,6 +135,12 @@ class VoiceController:
                 break
             if kind == "speech":
                 self._on_speech(*payload)
+            elif kind == "rejected":
+                t0, t1, info = payload
+                ep = self.episodes.begin("", t0, t1, "rejected")
+                ep.update(route="lip_gate", lips=info)
+                self.episodes.finish(ep)
+                self.hud.status = "Ignored speech: your lips weren't moving."
             elif kind == "mic":
                 self.hud.mic = payload
             elif kind == "mic_device":
@@ -149,11 +169,13 @@ class VoiceController:
             self.snap = snapping.snap(*point, self.screen.w_pt, self.screen.h_pt) if point else (None, [])
             time.sleep(0.15)
 
-    def _on_speech(self, text, t0, t1):
+    def _on_speech(self, text, t0, t1, lips=None):
         cmd = router.route(text)
         if cmd is None:
             return
         ep = self.episodes.begin(cmd.text, t0, t1, cmd.kind)
+        if lips:
+            ep["lips"] = lips
         self.hud.heard = cmd.text
         if cmd.kind == "cancel":  # handled immediately, even while a command is running
             self.agent.cancel()

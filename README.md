@@ -125,6 +125,12 @@ as well as Camera.
 | 1 · `gate.py` | Jev answers small yes/no questions about the command and the elements near your gaze; a truth table picks the action. It asks a question when something essential is missing, and runs a few actions in a row itself, handing the rest to Claude if a step needs it | "open Safari", "search repositories", "close this tab" (asks to confirm risky ones), "select all and copy", "send it to…" → "Who to?" |
 | 2 · `agent.py` | Claude computer-use loop, told where you were looking while you spoke | "open this in a new tab and summarize it" |
 
+Listening: the default mic goes through Apple's voice processing (noise suppression, and the Mac's own
+audio is cancelled out); a speech detector (Silero), not loudness, starts an utterance, so typing and
+clicks don't; and speech while the camera sees your lips still (someone else, a video) is ignored before
+it's transcribed. Whisper `base.en` transcribes on-device. `GAZE_VOICE_PROCESSING=0` / `GAZE_LIP_GATE=0`
+turn the first and last off.
+
 "This" means where you looked *while speaking*, snapped to the nearest Accessibility element
 (`snapping.py`). If the tracker wasn't confident then (head turned past what calibration covered),
 "click" and "type" ask you to confirm instead of acting. A pill at the bottom of the screen shows the mic,

@@ -17,6 +17,7 @@ R_INNER, R_OUTER, R_TOP, R_BOTTOM = 362, 263, 386, 374
 L_IRIS_H = (469, 471)
 R_IRIS_H = (474, 476)
 LIP = [61, 91, 14, 178, 402, 324, 95]
+MOUTH_CORNERS, MOUTH_INNER = (78, 308), (13, 14)  # inner-lip corners; inner upper / lower lip midpoints
 
 IRIS_DIAMETER_MM = 11.7
 
@@ -181,6 +182,7 @@ class FaceTracker:
             distance_mm=distance,
             focal_px=focal_px,
             transform=transform,
+            mouth_open=self._openness(raw, *MOUTH_CORNERS, *MOUTH_INNER),
         )
 
     @staticmethod
