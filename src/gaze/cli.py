@@ -9,6 +9,7 @@ from pathlib import Path
 
 def _build_tracker(args):
     from .capture.camera import CameraSource, FileSource
+    from .core.paths import GAZE_MODEL_FILE, model_path
     from .core.screen import main_screen
     from .face.tracker import FaceTracker
     from .models.mnn_face_eye import MNNFaceEyeModel
@@ -19,6 +20,9 @@ def _build_tracker(args):
     else:
         camera = int(args.camera) if args.camera.isdigit() else args.camera
         source = CameraSource(mode=args.mode, camera=camera)
+    if args.appearance == "network" and not args.model and not model_path(GAZE_MODEL_FILE).exists():
+        print("No models/gaze_base.mnn: tracking with per-person eye patches (--appearance patches).", flush=True)
+        args.appearance = "patches"
     if args.appearance == "patches":
         from .models.eye_patch import EyePatchModel
 
