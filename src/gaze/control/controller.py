@@ -18,7 +18,7 @@ from .episodes import EpisodeLog, element_dict
 from .gate import CLARIFY_PROMPTS, MAX_CANDIDATES, YES, Gate
 from .hud import Hud
 from .screen import Screen
-from .voice import TypedInput, Voice
+from .voice import CartesiaVoice, TypedInput, Voice
 
 # Gate routes -> the direct action they map to.
 _ROUTE_ACTIONS = {
@@ -65,7 +65,8 @@ class VoiceController:
             TypedInput(self._on_utterance).start()
             self.hud.mic = "typing in terminal"
         else:
-            self.voice = Voice(self._on_utterance, self._on_mic_state, lambda name: self.events.put(("mic_device", name)),
+            voice = CartesiaVoice if config.STT == "cartesia" else Voice
+            self.voice = voice(self._on_utterance, self._on_mic_state, lambda name: self.events.put(("mic_device", name)),
                                accept=self._accept_speech, on_rejected=self._on_rejected)
             self.voice.start()
             self.hud.mic = "loading"
