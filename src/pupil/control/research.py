@@ -37,6 +37,7 @@ class Job:
     ended: float | None = None
     charge_usd: float | None = None
     sources_text: str = ""  # what the run returned (bounded, untrusted web text), for the answer and the agent
+    url: str = ""  # a page to fetch and read ("scrape that Instagram link"), instead of a question to research
     cancel: threading.Event = field(default_factory=threading.Event, repr=False)
 
     @property
@@ -99,14 +100,15 @@ class Research:
                          + (f". Answer: {j.answer}" if j.answer else ""))
         return "\n".join(lines) or "No research yet."
 
-    def start(self, said: str, context: str = "") -> Job | None:
-        """Research `said` in the background; None if MAX_RUNNING are already going. context: the page the user is
-        on and the conversation, used only to work out what "this" and "it" are: it never goes to Apify (it's
-        private, and the research Actor would search with it)."""
+    def start(self, said: str, context: str = "", url: str = "") -> Job | None:
+        """Research `said` in the background, or with `url`, fetch that page and read it for what `said` asks;
+        None if MAX_RUNNING are already going. context: the page the user is on and the conversation, used only to
+        work out what "this" and "it" are: it never goes to Apify (it's private, and the research Actor would
+        search with it)."""
         with self._lock:
             if sum(j.running for j in self.jobs) >= MAX_RUNNING:
                 return None
-            job = Job(next(self._ids), said, said, time.time())
+            job = Job(next(self._ids), said, said, time.time(), url=url.strip())
             self.jobs.insert(0, job)
             del self.jobs[KEEP:]
         threading.Thread(target=self._run, args=(job, context), name=f"research-{job.id}", daemon=True).start()
@@ -129,8 +131,12 @@ class Research:
 
     def _run(self, job: Job, context: str) -> None:
         try:
-            asked = extract.research_question(job.said, context) or {}
-            job.question = asked.get("question") or job.said
+            if job.url:  # a page to read: no question to work out, just what they want from it
+                asked = {}
+                job.question = f"{job.said} ({job.url})" if job.url not in job.said else job.said
+            else:
+                asked = extract.research_question(job.said, context) or {}
+                job.question = asked.get("question") or job.said
             self._changed(job)
             if self._provider is None:
                 from .providers.apify import ApifyProvider
@@ -146,9 +152,13 @@ class Research:
                 self._changed(job)
                 self._on_provider_event({**state, "query": job.question})
 
-            result = self._provider.call("apify_web_research", {
-                "query": job.question, "constraints": asked.get("constraints", ""), "max_sources": 5,
-            }, job.cancel, lambda text: None, on_event)
+            if job.url:
+                result = self._provider.call("apify_fetch_page", {"url": job.url}, job.cancel, lambda text: None,
+                                             on_event)
+            else:
+                result = self._provider.call("apify_web_research", {
+                    "query": job.question, "constraints": asked.get("constraints", ""), "max_sources": 5,
+                }, job.cancel, lambda text: None, on_event)
             if job.cancel.is_set():
                 job.phase = "cancelled"
             elif result.is_error and not job.cards:

@@ -93,3 +93,33 @@ def test_the_agent_reads_and_starts_research_instead_of_guessing(monkeypatch):
     monkeypatch.setattr("pupil.control.agent.subprocess.Popen", lambda cmd: opened.append(cmd))
     assert agent._custom("open_urls", {"urls": ["https://example.com/w", "file:///etc/passwd"]}) == ("Opened 1 page.", False)
     assert opened == [["open", "https://example.com/w"]]
+
+
+def test_a_scrape_runs_in_the_background_and_its_findings_come_back(monkeypatch):
+    from pupil.control.agent import Agent
+
+    page = '{"items": [{"title": "WeRateDogs", "url": "https://www.instagram.com/weratedogs/", "markdown": "12 posts"}]}'
+
+    class Fetch(FakeProvider):
+        def call(self, name, inp, cancel, status, event):
+            self.calls.append((name, inp))
+            return ProviderResult(page, False, {}, {"cards": [{"title": "WeRateDogs",
+                                                               "url": "https://www.instagram.com/weratedogs/"}]})
+
+    asked = []
+    monkeypatch.setattr(R.extract, "research_question", lambda said, context: asked.append(said))
+    monkeypatch.setattr(R.extract, "research_answer", lambda q, sources: "12 recent posts, mostly dogs." if
+                        "12 posts" in sources else "nothing")
+    monkeypatch.setattr(R.config, "APIFY_TOKEN", "configured")
+    provider = Fetch([])
+    agent = Agent.__new__(Agent)
+    agent.research, agent.request, agent._cancel = R.Research(provider=provider), "", threading.Event()
+    text, error = agent._research_tool({"action": "start", "question": "what are they posting",
+                                        "url": "https://www.instagram.com/weratedogs/"})
+    assert not error and "in the background" in text  # the agent's turn goes on at once
+    text, _ = agent._research_tool({"action": "wait", "id": 1})
+    assert provider.calls[0] == ("apify_fetch_page", {"url": "https://www.instagram.com/weratedogs/"})
+    assert not asked  # a page to read: no question rewriting
+    assert "12 recent posts, mostly dogs." in text and "12 posts" in text
+    assert "12 recent posts" in agent._research_tool({"action": "status"})[0]  # status knows what it found
+    assert agent._research_tool({"action": "start", "url": "file:///etc/passwd"})[1] is True
