@@ -16,6 +16,7 @@ _KEYS = {
     "control": "ctrl", "alt": "option", "caps_lock": "capslock", "minus": "-", "equal": "=", "plus": "+",
     "comma": ",", "period": ".", "slash": "/", "backslash": "\\", "bracketleft": "[", "bracketright": "]",
     "semicolon": ";", "apostrophe": "'", "grave": "`",
+    **{f"kp_{i}": f"num{i}" for i in range(10)},  # numpad (Blender's view keys: KP_1 front, KP_3 side, KP_7 top)
 }
 
 
@@ -47,6 +48,60 @@ def click(x, y, clicks=1, button="left", modifiers=()):
     finally:
         for m in reversed(modifiers):
             pyautogui.keyUp(m)
+
+
+_BUTTONS = {  # button -> (down, dragged, up event types, CG button number)
+    "left": ("kCGEventLeftMouseDown", "kCGEventLeftMouseDragged", "kCGEventLeftMouseUp", 0),
+    "right": ("kCGEventRightMouseDown", "kCGEventRightMouseDragged", "kCGEventRightMouseUp", 1),
+    "middle": ("kCGEventOtherMouseDown", "kCGEventOtherMouseDragged", "kCGEventOtherMouseUp", 2),
+}
+_FLAGS = {"shift": "kCGEventFlagMaskShift", "ctrl": "kCGEventFlagMaskControl",
+          "option": "kCGEventFlagMaskAlternate", "command": "kCGEventFlagMaskCommand"}
+
+
+def _mouse_event(kind, x, y, button, flags):
+    import Quartz
+
+    event = Quartz.CGEventCreateMouseEvent(None, getattr(Quartz, kind), (x, y), button)
+    Quartz.CGEventSetIntegerValueField(event, Quartz.kCGMouseEventButtonNumber, button)
+    if flags:
+        Quartz.CGEventSetFlags(event, flags)
+    Quartz.CGEventPost(Quartz.kCGHIDEventTap, event)
+
+
+def drag(points, button="left", modifiers=(), duration=0.5):
+    """Press `button` at points[0], move through the rest with real drag events, release at the end, holding
+    `modifiers` throughout. Apps like Blender need this: middle-drag orbits, shift+middle pans, and a plain
+    "move with the button down" (mouse-moved events) does nothing there."""
+    import Quartz
+
+    down, dragged, up, number = _BUTTONS[button]
+    mods = [_key(m) for m in modifiers]
+    flags = 0
+    for m in mods:
+        flags |= getattr(Quartz, _FLAGS[m]) if m in _FLAGS else 0
+    pts = [(float(x), float(y)) for x, y in points]
+    steps = max(int(duration * 60), 2 * (len(pts) - 1))  # ~60 Hz, at least a couple per segment
+    per_segment = max(steps // max(len(pts) - 1, 1), 1)
+    pyautogui.moveTo(*pts[0])
+    for m in mods:
+        pyautogui.keyDown(m)
+    try:
+        _mouse_event(down, *pts[0], number, flags)
+        for (x0, y0), (x1, y1) in zip(pts, pts[1:]):
+            for i in range(1, per_segment + 1):
+                f = i / per_segment
+                _mouse_event(dragged, x0 + (x1 - x0) * f, y0 + (y1 - y0) * f, number, flags)
+                time.sleep(duration / steps)
+        _mouse_event(up, *pts[-1], number, flags)
+    finally:
+        for m in reversed(mods):
+            pyautogui.keyUp(m)
+
+
+def move_held(x, y, button="left"):
+    """Move with a mouse button held down (after left_mouse_down): a drag event, which apps track, not a move."""
+    _mouse_event(_BUTTONS[button][1], x, y, _BUTTONS[button][3], 0)
 
 
 SCROLL_PX = 100  # pixels per "amount" step: "scroll down" (4) moves 400 px, "a little" (1) 100, "a lot" (10) 1000
@@ -89,6 +144,7 @@ class ComputerExecutor:
 
     def __init__(self, screen):
         self.screen = screen
+        self.held = False  # left button down (left_mouse_down until left_mouse_up)
 
     def _pt(self, coordinate):
         return self.screen.to_points(*coordinate)
@@ -111,13 +167,18 @@ class ComputerExecutor:
             pyautogui.dragTo(*self._pt(inp["coordinate"]), duration=0.3, button="left")
             return ok
         if name == "mouse_move":
-            pyautogui.moveTo(*self._pt(inp["coordinate"]))
+            if self.held:  # moving with the button down is a drag: apps ignore plain moves then
+                move_held(*self._pt(inp["coordinate"]))
+            else:
+                pyautogui.moveTo(*self._pt(inp["coordinate"]))
             return ok
         if name == "left_mouse_down":
             pyautogui.mouseDown()
+            self.held = True
             return ok
         if name == "left_mouse_up":
             pyautogui.mouseUp()
+            self.held = False
             return ok
         if name == "cursor_position":
             sx, sy = self.screen.to_shot(*pyautogui.position())

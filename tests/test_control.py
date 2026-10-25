@@ -238,3 +238,58 @@ def test_scroll_direction_follows_natural_scrolling():
     assert scroll_delta("down", 4, natural=False) == (-4 * SCROLL_PX, 0)
     assert scroll_delta("up", 1, natural=True) == (-SCROLL_PX, 0)
     assert scroll_delta("right", 2, natural=True) == (0, 2 * SCROLL_PX)
+
+
+def test_drag_sends_down_drags_up_with_the_button_and_modifiers(monkeypatch):
+    from gaze.control import actions
+
+    events, keys = [], []
+    monkeypatch.setattr(actions, "_mouse_event", lambda kind, x, y, button, flags: events.append((kind, button, flags)))
+    monkeypatch.setattr(actions.pyautogui, "moveTo", lambda *a: None)
+    monkeypatch.setattr(actions.pyautogui, "keyDown", lambda k: keys.append(("down", k)))
+    monkeypatch.setattr(actions.pyautogui, "keyUp", lambda k: keys.append(("up", k)))
+    monkeypatch.setattr(actions.time, "sleep", lambda s: None)
+    actions.drag([(0, 0), (100, 0)], button="middle", modifiers=["shift"], duration=0.1)
+    kinds = [k for k, _, _ in events]
+    assert kinds[0] == "kCGEventOtherMouseDown" and kinds[-1] == "kCGEventOtherMouseUp"
+    assert set(kinds[1:-1]) == {"kCGEventOtherMouseDragged"} and len(kinds) > 3
+    assert all(b == 2 and f != 0 for _, b, f in events)  # middle button, shift flag on every event
+    assert keys == [("down", "shift"), ("up", "shift")]
+
+
+def test_moving_with_the_button_held_is_a_drag(monkeypatch):
+    from gaze.control import actions
+
+    moved, held = [], []
+    monkeypatch.setattr(actions.pyautogui, "moveTo", lambda *a: moved.append(a))
+    monkeypatch.setattr(actions.pyautogui, "mouseDown", lambda: None)
+    monkeypatch.setattr(actions.pyautogui, "mouseUp", lambda: None)
+    monkeypatch.setattr(actions, "move_held", lambda x, y: held.append((x, y)))
+    ex = actions.ComputerExecutor(_A(to_points=lambda x, y: (x, y)))
+    ex.run("mouse_move", {"coordinate": [1, 1]})
+    ex.run("left_mouse_down", {})
+    ex.run("mouse_move", {"coordinate": [5, 5]})
+    ex.run("left_mouse_up", {})
+    ex.run("mouse_move", {"coordinate": [9, 9]})
+    assert moved == [(1, 1), (9, 9)] and held == [(5, 5)]
+
+
+def test_open_app_by_approximate_name(monkeypatch):
+    from gaze.control import apps
+
+    opened = []
+    monkeypatch.setattr(apps.commands, "available_apps", lambda: {"Notes": "/N.app", "Blender": "/B.app"})
+    monkeypatch.setattr(apps, "open_path", lambda name, path: opened.append(path) or f"Opened {name}.")
+    assert apps.open_app("notes") == ("Opened Notes.", False) and opened == ["/N.app"]
+    assert apps.open_app("blend")[1] is False and opened[-1] == "/B.app"
+    assert apps.open_app("Photoshop")[1] is True
+
+
+def test_blender_python_without_a_bridge_explains_what_to_do(monkeypatch, tmp_path):
+    from gaze.control.apps import blender
+
+    monkeypatch.setattr(blender, "TOKEN_FILE", tmp_path / "token")  # no token file: nothing to connect with
+    monkeypatch.setattr(blender, "_running", lambda: True)
+    assert "wasn't started by voice control" in blender.run("1")["error"]
+    monkeypatch.setattr(blender, "_running", lambda: False)
+    assert "open_app" in blender.run("1")["error"]

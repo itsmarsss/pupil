@@ -123,7 +123,7 @@ as well as Camera.
 |---|---|---|
 | 0 · `router.py` | exact phrases, matched by rules | "click", "double click this", "scroll down a lot", "go back", "type hello", "stop", "calibrate", "re-centre", "check accuracy" |
 | 1 · `gate.py` | Jev answers small yes/no questions about the command and the elements near your gaze; a truth table picks the action. It asks a question when something essential is missing, and runs a few actions in a row itself, handing the rest to Claude if a step needs it | "open Safari", "search repositories", "close this tab" (asks to confirm risky ones), "select all and copy", "send it to…" → "Who to?" |
-| 2 · `agent.py` | Claude computer-use loop, told where you were looking while you spoke | "open this in a new tab and summarize it" |
+| 2 · `agent.py` | Claude computer-use loop, told where you were looking while you spoke, plus our own tools: `drag` (any button, with modifiers: Blender's middle-drag orbit), `open_app`, and `blender_python` (runs Python in a Blender opened by voice control, via `apps/blender_bridge.py`) | "open this in a new tab and summarize it", "build me a car in Blender" |
 
 Listening: the default mic (AirPods included), raw; Apple's voice processing (noise suppression, echo
 cancellation) is optional, ◉ → Voice isolation. The lip gate (`lips.py`) only lets speech through while
