@@ -49,7 +49,8 @@ PHRASES = [
 MATCH_MIN = 0.7  # measured: misheard commands 0.70-0.96 ("closed time" -> "close tab" 0.70), chatter <= 0.50
 MATCH_MARGIN = 0.08  # and closer than the runner-up ("scroll dawn a lot": down a lot 0.94, up a lot 0.84)
 MAX_WORDS = 5  # longer utterances are requests, not misheard commands
-VERBS = {"click", "tap", "press", "select", "open"}  # "click search repose" -> "click Search repositories"
+VERBS = {"click", "tap", "press", "select", "open"}
+DEICTIC = {"this", "that", "these", "those", "it", "here", "there", "them"}  # meaning comes from the gaze  # "click search repose" -> "click Search repositories"
 
 
 def correct(utterance: str, labels=()) -> str | None:
@@ -57,6 +58,11 @@ def correct(utterance: str, labels=()) -> str | None:
     of, or None if it is exact, too long, or not clearly close to one thing."""
     norm = _normalize(utterance)
     if not norm or len(norm.split()) > MAX_WORDS:
+        return None
+    words = norm.split()
+    if DEICTIC & set(words):  # "close this" means what you're looking at, not "close tab"
+        return None
+    if any(p.startswith(norm + " ") for p in PHRASES):  # "close" is a whole command, not a misheard "close tab"
         return None
     options = {p: p for p in PHRASES}
     verb = norm.split()[0] if norm.split()[0] in VERBS else ""

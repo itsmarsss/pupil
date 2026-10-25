@@ -8,10 +8,12 @@ and run in parallel; most are speculative, and code only reads the ones the tabl
 
 import json
 import os
+import re
 import time
 from dataclasses import dataclass
 
 from . import commands, config
+from .router import DEICTIC
 from .snapping import Element
 
 try:
@@ -53,7 +55,8 @@ NEEDS_AGENT = Noul(
                  "something, or steps that depend on what appears on screen?",
     criteria=NoulCriteria(
         true="e.g. \"summarize this page\", \"reply saying I'm running late\", \"send this to Sam\", "
-             "\"find a cheap flight to Boston\"",
+             "\"find a cheap flight to Boston\", or acting on several things or with a condition: \"close these "
+             "tabs but keep one\", \"delete all the empty ones\"",
         false="Clicking or pressing something it names or points at (\"press send\") (\"search repositories\" means press the "
               "search button), scrolling, opening an app, a keyboard command, or a few of these in a row",
     ),
@@ -80,7 +83,8 @@ IS_COMPOUND = Noul(
         true="e.g. \"open Safari and make a new tab\", \"copy this then switch to Notes\", "
              "\"select all and copy\"",
         false="One action, even if it mentions several things, e.g. \"search for salt and pepper\", "
-              "\"click black and white\"",
+              "\"click black and white\"; or one action with a condition or exception, e.g. \"close these "
+              "but keep one\"",
     ),
 )
 SCROLL_DIRECTION = Choice(instructions="Which way does `command` want to scroll?",
@@ -88,11 +92,14 @@ SCROLL_DIRECTION = Choice(instructions="Which way does `command` want to scroll?
 ELEMENT_ACTION = Choice(
     instructions="What does `command` want done to the on-screen element it is about?",
     criteria={"activate": "click it: open, press, select, go to, search with, play or check it",
+              "close": "close, dismiss or get rid of it: a tab, window, dialog, popup or panel",
               "double_click": "double-click it",
               "context_menu": "right-click it or show more options for it"},
 )
-REFERS_TO_ELEMENT = ("Is `command` about this element? Words like this, that, it and here mean the element at or "
-                     "nearest the pointer, unless the command names a different one.")
+REFERS_TO_ELEMENT = ("Is `command` about this element, or is this the control that does what the command asks "
+                     "(e.g. the close button of the popup or panel it's `inside`, to close or dismiss it)? Words "
+                     "like this, that, it and here mean what's at or nearest the pointer, unless the command names "
+                     "a different one.")
 RISKY = Noul(instructions="Could doing `command` lose data or do something hard to undo, such as sending a message, "
                           "submitting a form, paying, or deleting something? Opening, closing, resizing, scrolling "
                           "or switching windows, tabs and pages is not risky.")
@@ -108,18 +115,21 @@ def _shortcut_question():
                   criteria={k: desc for k, (desc, _) in commands.SHORTCUTS.items()})
 
 
+def _element_info(el, gaze):
+    """What Jev sees of an element: what kind of control, its label, what it sits inside, how far from the gaze."""
+    d = el.distance(*gaze) if gaze else None
+    info = {"kind": el.kind or el.role.removeprefix("AX"), "label": el.label or "(no label)",
+            "distance_from_pointer": "under the pointer" if d == 0 else
+            (f"{round(d)} pt away" if d is not None else "unknown")}
+    if el.parent:
+        info["inside"] = el.parent
+    return info
+
+
 def _element_questions(gaze, elements):
     """One yes/no per element, each carrying the element itself (not an index into a shared list)."""
-    questions = {}
-    for i, el in enumerate(elements):
-        d = el.distance(*gaze) if gaze else None
-        questions[f"el_{i}"] = Noul(instructions={
-            "element": {"kind": el.role.removeprefix("AX"), "label": el.label or "(no label)",
-                        "distance_from_pointer": "under the pointer" if d == 0 else
-                        (f"{round(d)} pt away" if d is not None else "unknown")},
-            "question": REFERS_TO_ELEMENT,
-        })
-    return questions
+    return {f"el_{i}": Noul(instructions={"element": _element_info(el, gaze), "question": REFERS_TO_ELEMENT})
+            for i, el in enumerate(elements)}
 
 
 CLARIFY_PROMPTS = {"what": "Which one? Look at it and say what to do.", "who": "Who to?", "content": "Saying what?",
@@ -129,7 +139,7 @@ CLARIFY_PROMPTS = {"what": "Which one? Look at it and say what to do.", "who": "
 
 @dataclass
 class Decision:
-    route: str  # click | double_click | right_click | scroll_down | scroll_up | open_app | shortcut | agent | ignore
+    route: str  # click | close | double_click | right_click | scroll_down | scroll_up | open_app | shortcut | agent | ignore
     #             | clarify | compound
     why: str  # the judgment(s) that decided it, for the status line and logs
     ms: float
@@ -152,12 +162,12 @@ def _element_route(element_p, gaze, choices, why):
     # Several near-equal matches (e.g. two "Search" buttons): take the one nearest the pointer.
     close = [el for q, el in element_p if q >= best_p - 0.05]
     target = min(close, key=lambda el: el.distance(*gaze)) if gaze else close[0]
-    route = {"activate": "click", "double_click": "double_click", "context_menu": "right_click"}[
+    route = {"activate": "click", "close": "close", "double_click": "double_click", "context_menu": "right_click"}[
         choices["element_action"].choice]
     return route, f"{why + ', ' if why else ''}element {best_p:.2f}", {"target": target}
 
 
-def _decide(a, elements, gaze, apps, allow_clarify=True, allow_compound=True):
+def _decide(a, elements, gaze, apps, allow_clarify=True, allow_compound=True, command=""):
     """The truth table. `a` = Jev's answers; returns (route, why, extras).
     A clarified request never asks again, and a clause of a compound one is never split again."""
     nouls, choices = a.nouls, a.choices
@@ -174,8 +184,10 @@ def _decide(a, elements, gaze, apps, allow_clarify=True, allow_compound=True):
     if p("needs_agent") >= YES:
         return "agent", f"needs steps/writing {p('needs_agent'):.2f}", {}
     # A specific on-screen control wins over apps/shortcuts ("close this" on a window's close button), and since
-    # the command is clearly about some element, the best match only needs to be more likely than not.
-    if p("wants_element") >= YES and element_p and element_p[0][0] >= 0.5:
+    # the command is clearly about some element, the best match only needs to be more likely than not. "This" /
+    # "that" point at what's under the gaze too: Cmd+W for "close this" on a popup would close the window behind.
+    deictic = bool(DEICTIC & set(re.findall(r"[a-z]+", command.lower())))
+    if (p("wants_element") >= YES or deictic and p("is_command") >= YES) and element_p and element_p[0][0] >= 0.5:
         return _element_route(element_p, gaze, choices, f"control {p('wants_element'):.2f}")
     if p("wants_app") >= YES:
         app = choices["app"].choice
@@ -227,9 +239,7 @@ class Gate:
             "command": utterance,
             "frontmost_app": app_name,
             "pointer": "The user is pointing at (looking at) a spot on screen; distances are measured from it.",
-            "elements_near_pointer": [
-                {"kind": el.role.removeprefix("AX"), "label": el.label or "(no label)",
-                 "distance_pt": round(el.distance(*gaze)) if gaze else None} for el in elements],
+            "elements_near_pointer": [_element_info(el, gaze) for el in elements],
         }
 
     def decide(self, utterance, gaze, candidates, app_name, allow_clarify=True, allow_compound=True) -> Decision:
@@ -246,7 +256,7 @@ class Gate:
         }
         result, ms = self._ask("decide", self._state(utterance, app_name, gaze, elements), questions)
         flags = {"allow_clarify": allow_clarify, "allow_compound": allow_compound}
-        route, why, extras = _decide(result, elements, gaze, apps, **flags)
+        route, why, extras = _decide(result, elements, gaze, apps, command=utterance, **flags)
         answers = {"route": route, "why": why, "ms": round(ms), "flags": flags,
                    "nouls": {k: round(v.noul, 4) for k, v in result.nouls.items()},
                    "choices": {k: v.choice for k, v in result.choices.items()}}

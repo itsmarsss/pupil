@@ -12,7 +12,7 @@ import queue
 import threading
 import time
 
-from . import actions, commands, config, macos, router, snapping
+from . import actions, apps, commands, config, macos, router, snapping
 from .agent import Agent
 from .episodes import EpisodeLog, element_dict
 from .gate import CLARIFY_PROMPTS, MAX_CANDIDATES, YES, Gate
@@ -53,6 +53,7 @@ class VoiceController:
         self.flash_until = 0.0
         self.pending = None  # direct action waiting for "confirm"
         self.clarifying = None  # (request, missing, deadline, episode): the gate asked a question
+        self._candidates: list = []  # elements near the gaze for the command being handled
         self.snap = (None, [])  # (target, candidates) for the live gaze, refreshed by _snap_loop
         self.commands: queue.Queue = queue.Queue()  # commands run one at a time, off the UI thread
         self._typed = typed
@@ -264,7 +265,10 @@ class VoiceController:
                 kind, args, gaze, target = self.pending
                 self._set_pending(None)
                 ep["route"] = "confirm"
-                self._do(kind, args, gaze, target)
+                if kind == "close":
+                    self._close(target) or self._status(f"Couldn't find how to close {target.describe()}.")
+                else:
+                    self._do(kind, args, gaze, target)
             else:
                 ep["route"] = "nothing_to_confirm"
                 self._status("Nothing to confirm.")
@@ -344,6 +348,7 @@ class VoiceController:
             self._start_agent(request, gaze, target, candidates, app)
             return
         ep["gate"], ep["decision"] = d.answers, d.route
+        self._candidates = candidates  # for _close: the close button that belongs to the target
         self._status(d.summary())
 
         if d.route == "ignore":
@@ -371,9 +376,9 @@ class VoiceController:
         """Carry out a direct decision (or hold it for "confirm" if risky). False if it isn't a direct one."""
         risky = d.risky >= config.GATE_RISKY_MIN
         if d.route == "open_app" and d.app_path:
-            commands.open_app(d.app_path)
-            self._acted("open_app", {"app": d.app})
             self._status(f"Opening {d.app}: {d.summary()}")
+            self._acted("open_app", {"app": d.app})
+            self._status(apps.open_path(d.app, d.app_path))  # Blender: with its scripting bridge
             return True
         if d.route == "shortcut" and d.shortcut:
             desc, combo = commands.SHORTCUTS[d.shortcut]
@@ -385,6 +390,12 @@ class VoiceController:
             self._acted("key", {"combo": combo, "shortcut": d.shortcut})
             self._status(f"{desc} ({combo}): {d.summary()}")
             return True
+        if d.route == "close" and d.target is not None:
+            if risky:
+                self._set_pending(("close", {}, gaze, d.target), f"close {d.target.describe()}")
+                self._status(f'Closing {d.target.describe()} might lose work. Say "confirm" to do it.')
+                return True
+            return self._close(d.target)
         if d.route in _ROUTE_ACTIONS:
             kind, args = _ROUTE_ACTIONS[d.route]
             if risky:
@@ -393,6 +404,30 @@ class VoiceController:
                 self._status(f'This might be irreversible ({kind} {where}). Say "confirm" to do it.')
                 return True
             self._do(kind, args, gaze, d.target)
+            return True
+        return False
+
+    def _close(self, target) -> bool:
+        """Close what the user means: the element's own close button if it has one, a tab by selecting it and
+        pressing Cmd+W (closes the current tab in browsers, editors, Finder, terminals), or its window's close
+        button. False if none applies (the agent takes it)."""
+        own = [c for c in self._candidates if c.parent and c.parent == target.label and c is not target
+               and "close" in f"{c.label} {c.kind}".lower()]
+        if own:
+            self._do("click", {"clicks": 1, "button": "left"}, None, own[0])
+            self._status(f"Closed {target.describe()}")
+            return True
+        if target.kind == "tab" or target.role == "AXTab":
+            self._do("click", {"clicks": 1, "button": "left"}, None, target)
+            time.sleep(0.15)  # let the tab become the current one
+            actions.press("command+w")
+            self._acted("key", {"combo": "command+w"})
+            self._status(f"Closed {target.describe()}")
+            return True
+        button = snapping.window_close_button(*target.center)
+        if button is not None:
+            self._do("click", {"clicks": 1, "button": "left"}, None, button)
+            self._status(f"Closed the window ({target.describe()})")
             return True
         return False
 
@@ -425,6 +460,7 @@ class VoiceController:
             if sub is not None and sub.kind == "unknown" and self.gate.available:
                 try:
                     d = self.gate.decide(clause, gaze, candidates, app, allow_clarify=False, allow_compound=False)
+                    self._candidates = candidates
                 except Exception as e:
                     step["error"] = str(e)
             if d is not None:

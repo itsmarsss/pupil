@@ -164,10 +164,11 @@ def replay(episodes: list[dict]) -> list[tuple[dict, str, str]]:
         gate = ep.get("gate")
         if not gate or "nouls" not in gate:
             continue
-        elements = [Element(**{k: e[k] for k in ("role", "label", "x", "y", "w", "h")}) for e in ep.get("elements", [])]
+        elements = [Element(**{k: e[k] for k in ("role", "label", "x", "y", "w", "h", "kind", "parent") if k in e})
+                    for e in ep.get("elements", [])]
         try:
             route, _, _ = _decide(_Answers(gate), elements, tuple(ep["gaze"]) if ep.get("gaze") else None, {},
-                                  **gate.get("flags", {}))
+                                  command=ep.get("text", ""), **gate.get("flags", {}))
         except KeyError as e:  # logged before a question existed
             route = f"? (missing {e})"
         out.append((ep, gate["route"], route))

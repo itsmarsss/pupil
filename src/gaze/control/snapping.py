@@ -45,6 +45,8 @@ class Element:
     y: float
     w: float
     h: float
+    kind: str = ""  # what macOS calls it: "tab", "close button", "text field"
+    parent: str = ""  # label of the actionable element it sits inside ("Close" inside tab "YouTube")
 
     @property
     def center(self):
@@ -138,6 +140,20 @@ def element_at(x, y):
     return None
 
 
+def window_close_button(x, y):
+    """The close button of the window at (x, y), as an Element, if it has one."""
+    element = _hit(x, y)
+    for _ in range(40):
+        if element is None:
+            return None
+        if (_attr(element, "AXRole") or "") == "AXWindow":
+            button = _attr(element, "AXCloseButton")
+            frame = _frame(button) if button is not None else None
+            return Element("AXButton", "Close window", *frame, kind="close button") if frame else None
+        element = _attr(element, "AXParent")
+    return None
+
+
 def _container(element):
     """The window / menu bar / list that holds the element under the gaze."""
     last = element
@@ -177,9 +193,9 @@ def candidates_near(x, y, screen_w, screen_h, radius=SEARCH_RADIUS):
         return []
     max_area = config.SNAP_MAX_AREA_FRACTION * screen_w * screen_h
     found = {}
-    queue, seen, deadline = [_container(hit)], 0, time.perf_counter() + MAX_WALK_S
+    queue, seen, deadline = [(_container(hit), "")], 0, time.perf_counter() + MAX_WALK_S
     while queue and seen < MAX_NODES and time.perf_counter() < deadline:
-        node = queue.pop()
+        node, parent = queue.pop()  # parent: label of the nearest actionable ancestor
         seen += 1
         role, frame, children = _walk_attrs(node)
         far = frame is not None and frame[2] * frame[3] > 0 and _rect_distance(frame, x, y) > radius
@@ -189,8 +205,10 @@ def candidates_near(x, y, screen_w, screen_h, radius=SEARCH_RADIUS):
         if role in ACTIONABLE and frame and 0 < frame[2] * frame[3] <= max_area:  # zero-size = not on screen
             key = (role, round(frame[0]), round(frame[1]), round(frame[2]), round(frame[3]))
             if key not in found:
-                found[key] = Element(role, _label(node), *frame)
-        queue.extend(children)
+                found[key] = Element(role, _label(node), *frame, kind=_text(node, "AXRoleDescription")[:40],
+                                     parent=parent)
+            parent = found[key].label or parent
+        queue.extend((child, parent) for child in children)
     direct = element_at(x, y)  # the element right under the gaze, even if the walk ran out of budget
     if direct:
         found.setdefault((direct.role, round(direct.x), round(direct.y), round(direct.w), round(direct.h)), direct)
