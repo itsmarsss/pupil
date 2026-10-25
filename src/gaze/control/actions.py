@@ -49,13 +49,33 @@ def click(x, y, clicks=1, button="left", modifiers=()):
             pyautogui.keyUp(m)
 
 
+SCROLL_PX = 100  # pixels per "amount" step: "scroll down" (4) moves 400 px, "a little" (1) 100, "a lot" (10) 1000
+
+
+def natural_scrolling():
+    """macOS "natural scrolling" (on by default). It flips synthetic scroll events too, so pyautogui's sign is
+    backwards with it on: "scroll down" scrolled up (or did nothing at the top of a page)."""
+    from Foundation import NSUserDefaults
+
+    value = NSUserDefaults.standardUserDefaults().objectForKey_("com.apple.swipescrolldirection")
+    return True if value is None else bool(value)
+
+
+def scroll_delta(direction, amount, natural):
+    """(vertical, horizontal) pixel deltas for a CGEvent that moves the *content* the way "scroll down" means:
+    down = show what's further down. Positive = down/right with natural scrolling, negative without."""
+    px = int(amount) * SCROLL_PX * (1 if natural else -1)
+    return {"down": (px, 0), "up": (-px, 0), "right": (0, px), "left": (0, -px)}[direction]
+
+
 def scroll(x, y, direction, amount):
-    pyautogui.moveTo(x, y)
-    step = amount * 4  # macOS "lines" are small
-    if direction in ("up", "down"):
-        pyautogui.scroll(step if direction == "up" else -step)
-    else:
-        pyautogui.hscroll(step if direction == "right" else -step)
+    import Quartz
+
+    pyautogui.moveTo(x, y)  # scroll events go to the window under the pointer
+    dy, dx = scroll_delta(direction, amount, natural_scrolling())
+    event = Quartz.CGEventCreateScrollWheelEvent(None, Quartz.kCGScrollEventUnitPixel, 2, dy, dx)
+    Quartz.CGEventSetLocation(event, (x, y))
+    Quartz.CGEventPost(Quartz.kCGHIDEventTap, event)
 
 
 _CLICKS = {

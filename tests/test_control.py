@@ -228,3 +228,13 @@ def test_episode_audio_is_saved_as_wav(tmp_path):
     log.save_audio(ep, np.zeros(16000, np.float32))
     with wave.open(str(tmp_path / ep["audio"])) as w:
         assert (w.getframerate(), w.getnframes(), w.getsampwidth()) == (16000, 16000, 2)
+
+
+def test_scroll_direction_follows_natural_scrolling():
+    from gaze.control.actions import SCROLL_PX, scroll_delta
+
+    # measured: with natural scrolling on, +300 px scrolled a window's content down by 300
+    assert scroll_delta("down", 4, natural=True) == (4 * SCROLL_PX, 0)
+    assert scroll_delta("down", 4, natural=False) == (-4 * SCROLL_PX, 0)
+    assert scroll_delta("up", 1, natural=True) == (-SCROLL_PX, 0)
+    assert scroll_delta("right", 2, natural=True) == (0, 2 * SCROLL_PX)
