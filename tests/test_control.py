@@ -503,3 +503,21 @@ def test_websites_and_searches_go_through_the_address_bar(monkeypatch):
     monkeypatch.setattr(ctl.uitree, "press_menu_command", lambda phrases: None)  # not a browser
     c._navigate(query="eye trackers")
     assert opened == [["open", "https://www.google.com/search?q=eye+trackers"]]
+
+
+def test_quitting_targets_the_named_app_and_always_asks(monkeypatch):
+    from gaze.control import commands, controller as ctl
+    from gaze.control.snapping import Element
+
+    monkeypatch.setattr(ctl.macos, "running_apps", lambda: [("Google Chrome", 0), ("Games", 1), ("WezTerm", 2)])
+    pending, said = [], []
+    c = ctl.VoiceController.__new__(ctl.VoiceController)
+    c._ep, c._status = {}, lambda text: None
+    c.speaker = _A(say=said.append)
+    c._set_pending = lambda p, text="": pending.append((p, text))
+    c._quit_app("games", force=True)
+    assert pending[-1][0][0] == "quit" and pending[-1][0][1]["pid"] == 1 and pending[-1][1] == "Force quit Games"
+    dock_icon = Element("AXDockItem", "WezTerm", 0, 0, 50, 50)
+    c._quit_app("that app", force=False, target=dock_icon)  # "quit that app" looking at its Dock icon
+    assert pending[-1][0][1]["name"] == "WezTerm" and pending[-1][1] == "Quit WezTerm"
+    assert "quit_app" in commands.ALWAYS_CONFIRM  # Jev's Cmd+Q asks too, whatever its risk score

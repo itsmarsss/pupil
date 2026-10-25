@@ -40,7 +40,7 @@ SHORTCUTS = {
     "minimize": ("Minimize the current window", "command+m"),
     "full_screen": ("Toggle full screen for the current window", "control+command+f"),
     "hide_app": ("Hide the current app", "command+h"),
-    "quit_app": ("Quit the current app", "command+q"),
+    "quit_app": ("Quit the app that's in front right now (not another app the command names)", "command+q"),
     "switch_app": ("Switch to the previously used app", "command+tab"),
     "spotlight": ("Open Spotlight search", "command+space"),
     "mission_control": ("Show Mission Control (all windows)", "control+up"),
@@ -61,6 +61,7 @@ SHORTCUTS = {
     "key_end": ("Press End: jump to the end of a line or document", "end"),
     "key_delete": ("Press Delete / Backspace (remove the character or selected item)", "backspace"),
 }
+ALWAYS_CONFIRM = {"quit_app"}  # loses everything the app had open: ask, whatever the risk score says
 REPEATABLE = {k for k in SHORTCUTS if k.startswith("key_")} | {"next_tab", "previous_tab", "back", "forward",
                                                                "undo", "redo", "zoom_in", "zoom_out"}
 

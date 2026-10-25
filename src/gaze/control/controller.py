@@ -350,6 +350,8 @@ class VoiceController:
                 ep["route"] = "confirm"
                 if kind == "close":
                     self._close(target) or self._status(f"Couldn't find how to close {target.describe()}.")
+                elif kind == "quit":
+                    self._really_quit(**args)
                 else:
                     self._do(kind, args, gaze, target)
             else:
@@ -414,6 +416,9 @@ class VoiceController:
             return
         if cmd.kind == "navigate":
             self._navigate(**cmd.args)
+            return
+        if cmd.kind == "quit_app":
+            self._quit_app(cmd.args["name"], cmd.args["force"], target)
             return
         # Exact phrase ("click this"): the element with the most gaze heat (x fit with the words, when Jev is
         # there to judge it); if two are too close to call, ask.
@@ -513,7 +518,7 @@ class VoiceController:
             return True
         if d.route == "shortcut" and d.shortcut:
             desc, combo = commands.SHORTCUTS[d.shortcut]
-            if risky:
+            if risky or d.shortcut in commands.ALWAYS_CONFIRM:
                 self._set_pending(("key", {"combo": combo}, gaze, None), desc)
                 self._status(f'"{desc}" might lose work. Say "confirm" to do it.')
                 return True
@@ -535,6 +540,35 @@ class VoiceController:
             self._do(kind, args, gaze, d.target)
             return True
         return False
+
+    def _quit_app(self, name, force, target=None):
+        """Quit (or force quit) the app the user names, or the one whose Dock icon they're looking at ("that app"):
+        never just whatever is in front. Always asks first: quitting loses whatever it had open."""
+        if name in ("that", "that app", "this app", "that one") and target is not None and target.label:
+            name = target.label  # e.g. the Dock icon under the gaze
+        running = macos.running_apps()
+        wanted = name.lower().strip()
+        match = next(((n, pid) for n, pid in running if n.lower() == wanted), None) or next(
+            ((n, pid) for n, pid in running if wanted in n.lower()), None)
+        if match is None:
+            self._status(f"No running app called {name!r}.")
+            self.speaker.say(f"I don't see {name} running.")
+            return
+        label, pid = match
+        verb = "Force quit" if force else "Quit"
+        self._set_pending(("quit", {"pid": pid, "force": force, "name": label}, None, None), f"{verb} {label}")
+        self._status(f'{verb} {label}? Say "confirm".')
+
+    def _really_quit(self, pid, force, name):
+        from AppKit import NSRunningApplication
+
+        app = NSRunningApplication.runningApplicationWithProcessIdentifier_(pid)
+        if app is None:
+            self._status(f"{name} isn't running any more.")
+            return
+        (app.forceTerminate if force else app.terminate)()
+        self._acted("open_app", {"quit": name, "force": force})
+        self._status(f"{'Force quit' if force else 'Quit'} {name}")
 
     def _navigate(self, url=None, query=None):
         """A website or a web search. In a browser: its own "Open Location" (the address bar, in any browser),

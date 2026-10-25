@@ -43,3 +43,15 @@ def frontmost_app():
 
 def has_accessibility():
     return bool(AXIsProcessTrusted())
+
+
+def running_apps():
+    """(name, pid) of the apps in the Dock (regular apps), frontmost first."""
+    from AppKit import NSApplicationActivationPolicyRegular, NSWorkspace
+
+    workspace = NSWorkspace.sharedWorkspace()
+    front = workspace.frontmostApplication()
+    apps = [a for a in workspace.runningApplications()
+            if a.activationPolicy() == NSApplicationActivationPolicyRegular and a.localizedName()]
+    apps.sort(key=lambda a: a != front)
+    return [(str(a.localizedName()), a.processIdentifier()) for a in apps]

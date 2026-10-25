@@ -105,12 +105,26 @@ def route(utterance: str, wake: bool = True) -> Command | None:
         norm = norm[len(config.WAKE_WORD):].strip()
         text = text[text.lower().find(config.WAKE_WORD) + len(config.WAKE_WORD):].lstrip(" ,.:")
 
+    # "can you scroll down?" is "scroll down": politeness doesn't change the command
+    polite = re.compile(r"^(?:(?:hey|ok|okay|so|um|uh)\s+)?(?:(?:can|could|would|will) you\s+(?:please\s+)?|please\s+)",
+                        re.IGNORECASE)
+    norm = polite.sub("", norm).strip()
+    text = polite.sub("", text.strip()).strip()
+
     for pattern, build in _PATTERNS:
         m = re.match(pattern, norm)
         if m:
             cmd = build(m)
             cmd.text = text
             return cmd
+
+    # Quitting a named app ("force quit games", "quit that app"): the controller finds it and always confirms.
+    # Only "quit": "close X" stays a close (a popup, a tab).
+    m = re.match(r"^(force )?quit (?:the )?(?:app |application )?(.+)$", norm)
+    if m:
+        name = re.split(r"\s+(?:that|this|the) app(?:lication)?\b|\s+(?:at the bottom|in the dock|down there|for me)\b",
+                        m[2])[0].strip() or "that"
+        return Command("quit_app", {"name": name, "force": bool(m[1])}, text)
 
     # A website ("go to github.com"): matched on the original text, since normalising drops the dots.
     m = re.match(r"^(?:go to|open|visit|navigate to|load|pull up) (?:the )?(?:website |site |page )?"
