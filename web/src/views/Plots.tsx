@@ -48,7 +48,7 @@ export function Plot({ spec }: { spec: PlotSpec }) {
     const opts: uPlot.Options = {
       width: el.clientWidth, height: Math.max(el.clientHeight, 60), legend: { show: false },
       axes: [
-        { stroke: "#8b93a1", grid: { stroke: "#232833" }, values: (_u, vals) => vals.map((v) => (unit === "min" ? `${+(v / 60).toFixed(1)}m` : `${v}s`)) },
+        { stroke: "#8b93a1", grid: { stroke: "#232833" }, values: (_u, vals) => vals.map((v) => (unit === "min" && Math.abs(v) >= 60 ? `${Math.round(v / 60)}m` : `${Math.round(v)}s`)) },
         { stroke: "#8b93a1", grid: { stroke: "#232833" }, size: 46, values: (_u, vals) => vals.map(compact) },
       ],
       series: [{}, ...spec.series.map((s) => ({ label: s.label, stroke: s.color, width: 1.5 }))],
