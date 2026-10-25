@@ -9,6 +9,7 @@ import json
 import logging
 import os
 import signal
+import subprocess
 import threading
 import time
 from pathlib import Path
@@ -24,6 +25,7 @@ from ..capture.camera import CameraSource, list_cameras
 from ..core.lid import LidMonitor
 from ..core.paths import APP_SUPPORT
 from ..eval.session import SessionWriter
+from ..health.tracker import HealthTracker
 from ..tracker import Tracker
 from .flows import MOTION_TIMING, Flows
 from .menu import SEPARATOR, Action, Choice, Header, MenuBar, Toggle
@@ -70,6 +72,8 @@ class GazeApp:
         self.snapping = SnapService(tracker)
         self.recording = Recording(tracker)
         self.voice = VoiceLog()  # what the voice controller heard and did, for the dashboard
+        self.health = HealthTracker(log_dir=APP_SUPPORT / "health")  # blinks, eye fatigue, breaks
+        self._health_now: dict = {}
         self.session: SessionWriter | None = None
         self.dashboard = None
         self.controller = None  # voice control (gaze.control), when on
@@ -103,14 +107,15 @@ class GazeApp:
             self._start_publisher()
         if o["voice"]:
             self._start_voice(o["voice_typed"])
+        self.tracker.add_listener(self.health.on_sample)
         self.tracker.start()
         self.lid.start()
         NSTimer.scheduledTimerWithTimeInterval_repeats_block_(1 / 60, True, self._tick)
-        NSTimer.scheduledTimerWithTimeInterval_repeats_block_(1.0, True, lambda _t: None)
+        NSTimer.scheduledTimerWithTimeInterval_repeats_block_(1.0, True, self._health_tick)
         NSEvent.addGlobalMonitorForEventsMatchingMask_handler_(NSEventMaskLeftMouseDown, self._on_click)
         # start the launch flow once the run loop is going
         NSTimer.scheduledTimerWithTimeInterval_repeats_block_(0.1, False, lambda _t: self._launch())
-        # Python only runs signal handlers while the main thread executes Python code; the empty 1 s timer
+        # Python only runs signal handlers while the main thread executes Python code; the 1 s health timer
         # guarantees that, so Ctrl+C and kill quit cleanly.
         for sig in (signal.SIGINT, signal.SIGTERM):
             signal.signal(sig, lambda *_: self.quit())
@@ -209,7 +214,7 @@ class GazeApp:
         phase, target = self.flows.phase
         return {"phase": phase, "target": target, "busy": self.flows.busy, "lid_deg": self.lid.angle,
                 "smoothing": self.tracker.smoothing, "overlay": self.overlay_on, "voice": self.voice.snapshot(),
-                "gaze_sigma_pt": round(self.gaze_sigma_pt(), 1)}
+                "gaze_sigma_pt": round(self.gaze_sigma_pt(), 1), "health": self._health_now}
 
     def _register_settings(self) -> None:
         """What the voice agent may change for the user (control/settings.py); changes run on the main thread."""
@@ -229,6 +234,9 @@ class GazeApp:
                           lambda: ["ring", "heat", "off"])
         settings.register("smoothing", "how much gaze is smoothed (more: steadier, slower)",
                           lambda: self.tracker.smoothing, on_main(self.tracker.set_smoothing), lambda: SMOOTHING_ORDER)
+        settings.register("health_reminders", "blink and 20-20-20 break reminders",
+                          lambda: "on" if self.health.reminders_on else "off",
+                          lambda v: setattr(self.health, "reminders_on", v == "on"), lambda: ["on", "off"])
         settings.register("learn_from_clicks", "improve calibration from where you click",
                           lambda: "on" if self.clicks.enabled else "off",
                           on_main(lambda v: setattr(self.clicks, "enabled", v == "on")), lambda: ["on", "off"])
@@ -296,6 +304,16 @@ class GazeApp:
         if self.session is not None:
             self.session.context["lid"] = angle
 
+    def _health_tick(self, _timer) -> None:
+        """Once a second: eye-health reminders, as a notification and (with voice control) a caption at the gaze."""
+        self._health_now = self.health.snapshot()  # for the dashboard (every frame) without recomputing it
+        for message in self.health.due_reminders():
+            log.info("health: %s", message)
+            subprocess.Popen(["osascript", "-e", f'display notification "{message}" with title "Eyes"'])
+            if self.controller is not None:
+                self.controller.indicator.say(message)
+                self.controller.indicator._caption_end = time.time() + 6
+
     def gaze_sigma_pt(self) -> float:
         """How wide the gaze heat map is right now: the last measured accuracy (launch check, validation or
         re-centre check) at the current distance, as a Gaussian width in screen points."""
@@ -356,6 +374,11 @@ class GazeApp:
         if speaker is not None and speaker.available:
             items.append(Choice("Agent voice", lambda: self._voice_options(speaker)))
         items += [
+            SEPARATOR,
+            Header("Health"),
+            Action(lambda: self.health.status_line(), lambda: None, lambda: False),
+            Toggle("Blink & break reminders", lambda: self.health.reminders_on,
+                   lambda: setattr(self.health, "reminders_on", not self.health.reminders_on)),
             SEPARATOR,
             Header("Learning & data"),
             Toggle("Learn from clicks", lambda: self.clicks.enabled, self._toggle_clicks),

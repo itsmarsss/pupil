@@ -18,6 +18,8 @@ export const PLOTS: PlotSpec[] = [
   { id: "eyes", title: "Eye openness", series: [
     { key: "open_l", label: "left", color: "#e599f7" }, { key: "open_r", label: "right", color: "#91a7ff" }] },
   { id: "disagreement", title: "ML vs eyeball (pt)", series: [{ key: "disagreement", label: "disagreement", color: "#ff9f43" }] },
+  { id: "health", title: "Blinks & fatigue", series: [
+    { key: "blink_rate", label: "blinks/min", color: "#4dabf7" }, { key: "fatigue", label: "fatigue", color: "#ff6b6b" }] },
   { id: "engine", title: "Engine", series: [
     { key: "fps", label: "fps", color: "#3ddc84" }, { key: "latency", label: "latency ms", color: "#adb5bd" }] },
 ];

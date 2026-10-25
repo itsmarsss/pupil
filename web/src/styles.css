@@ -85,3 +85,9 @@ code { background: #1c2230; padding: 1px 4px; border-radius: 4px; }
 .lips .lips-head { display: flex; flex-wrap: wrap; gap: 4px 12px; padding: 6px 10px 0; margin: 0; }
 .lips .lips-head i { display: inline-block; width: 10px; height: 2px; margin-right: 5px; vertical-align: middle; }
 .lips .plot { flex: 1; min-height: 0; }
+
+.health-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(96px, 1fr)); gap: 8px; }
+.health-tile { background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; }
+.health-value { font-size: 20px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.health-label { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .05em; margin-top: 2px; }
+.health-hint { font-size: 11px; color: var(--muted); opacity: .7; }

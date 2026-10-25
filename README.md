@@ -105,6 +105,19 @@ uv run gaze replay SESSION --modes hd+roll,hd,hd+frontal,vga --all
 separately. Profiles, recordings, the device file and the accuracy log live in
 `~/Library/Application Support/Gaze/`.
 
+## Eye health
+
+While it tracks your eyes, gaze also watches out for them (`health/`): blink rate (relaxed is ~15–20 a
+minute; staring at screens often drops it to 5–7, which dries the eyes), blink length, PERCLOS (share of the
+last minute with the eyes mostly closed, the standard drowsiness measure), lid droop against the start of
+the session, and screen time since your last break (20 s with your face out of view or looking away counts:
+the 20-20-20 rule). They combine into a fatigue score (low / moderate / high). Blinks are measured against
+your own open-eye baseline, so there's no fixed threshold to tune. Gentle, rate-limited reminders arrive
+as notifications (and at your gaze with voice control on): blink when the rate stays low, look away after
+20 minutes, take a break when fatigue is high. ◉ → Health shows the numbers and turns reminders off; the
+dashboard has a Health panel; a line a minute goes to `~/Library/Application Support/Gaze/health/`.
+These are heuristics for nudges, not a medical measurement.
+
 ## Voice control
 
 Look at something and say what to do. Voice control runs inside the same app as the tracker:

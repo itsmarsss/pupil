@@ -15,7 +15,7 @@ export interface Series {
 
 export const SERIES_KEYS = [
   "yaw", "pitch", "roll", "distance", "open_l", "open_r", "confidence", "disagreement", "fps", "latency", "lid",
-  "mouth", "mouth_motion", "lip_open",
+  "mouth", "mouth_motion", "lip_open", "blink_rate", "fatigue",
 ] as const;
 
 const LIP_WINDOW_S = 0.4; // control/lips.py WINDOW_S
@@ -132,6 +132,8 @@ class EngineStore {
     push("latency", f.latency_ms);
     push("lid", f.lid_deg);
     push("mouth", f.mouth_open);
+    push("blink_rate", f.health?.blink_rate);
+    push("fatigue", f.health?.fatigue);
     push("mouth_motion", lipMotion(s.t, s.mouth));
     const gate = f.voice?.lip_gate;
     push("lip_open", gate ? (gate.open ? 1 : 0) : null);

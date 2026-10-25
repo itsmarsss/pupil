@@ -83,7 +83,20 @@ export interface FrameState {
   overlay?: boolean;
   replay?: { index: number; playing: boolean; speed: number };
   voice?: VoiceState | null;
+  health?: HealthState;
   gaze_sigma_pt?: number; // gaze accuracy as a Gaussian width (points): the heat map's spread
+}
+
+/** Eye health (health/tracker.py): null values aren't measured yet (needs some face time). */
+export interface HealthState {
+  blink_rate?: number | null; // per minute of face time
+  blink_duration_ms?: number | null;
+  perclos?: number | null; // share of the last minute with the eyes mostly closed
+  openness_vs_start?: number | null; // lid droop: now vs the start of the session
+  minutes_on_screen?: number;
+  breaks?: number;
+  fatigue?: number | null; // 0-100
+  level?: "low" | "moderate" | "high" | null;
 }
 
 /** What the voice controller (gaze control) heard, decided and is doing. */
