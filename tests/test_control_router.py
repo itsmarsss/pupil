@@ -23,4 +23,4 @@ def test_leaves_exact_phrases_chatter_and_requests_alone():
 
 def test_corrected_phrase_routes():
     assert route(correct("never mine"), wake=False).kind == "cancel"
-    assert route(correct("go bag"), wake=False).kind == "key"
+    assert route(correct("go bag"), wake=False).kind == "shortcut"  # back, via the app's menu

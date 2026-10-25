@@ -24,6 +24,8 @@ from . import config
 MAX_AUDIO_FILES = 1000  # newest kept; ~1 s of 16 kHz mono is 32 KB
 CORRECT_S = 4.0
 REPEAT_S = 10.0
+# Saying these again is using them ("scroll down", "next"), not a sign the first one failed.
+STEPWISE = {"scroll", "scroll_down", "scroll_up", "shortcut", "key", "dictation"}
 CORRECTIONS = {"no", "nope", "undo", "undo that", "wrong", "wrong one", "not that", "no not that", "not that one"}
 
 
@@ -64,7 +66,9 @@ class EpisodeLog:
             if (kind == "cancel" or norm in CORRECTIONS) and since <= CORRECT_S and prev.get("acted"):
                 self.label(prev, "corrected")
                 break
-            if norm and norm == _norm(prev["text"]) and since <= REPEAT_S and kind not in ("cancel", "confirm"):
+            stepwise = prev.get("route") in STEPWISE or prev.get("decision") in STEPWISE
+            if norm and norm == _norm(prev["text"]) and since <= REPEAT_S and kind not in ("cancel", "confirm") \
+                    and not stepwise:
                 self.label(prev, "repeated")
                 break
         return ep

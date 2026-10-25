@@ -32,7 +32,8 @@ MAX_CANDIDATES = 25  # nearest elements, one question each
 IS_COMMAND = Noul(
     instructions="Is `command` an instruction for the computer?",
     criteria=NoulCriteria(
-        true="It asks the computer to do something, even in a word or two, like \"search\", \"copy that\" or \"next\"",
+        true="It asks the computer to do something, even in a word or two (\"search\", \"copy that\", \"next\") or "
+             "phrased as a question or a wish (\"can you open my notes?\", \"I want to watch this\")",
         false="Talking to someone else, thinking aloud, filler, or words that don't make sense as an instruction",
     ),
 )
@@ -47,8 +48,9 @@ WANTS_ELEMENT = Noul(
 )
 WANTS_APP = Noul(instructions="Does `command` ask to open, launch or switch to an application?")
 WANTS_SHORTCUT = Noul(instructions="Does `command` ask for a standard editing, navigation, tab or window command, "
-                                   "such as copy, paste, undo, save, find, go back, go forward, reload, new tab, "
-                                   "close tab, zoom or quit?")
+                                   "or a plain key, such as copy, paste, undo, save, find, go back, go forward, "
+                                   "reload, new tab, close tab, zoom, quit, or a key it names or implies (an arrow key "
+                                   "to move something, \"with space\", \"press enter\", page down)?")
 WANTS_SCROLL = Noul(instructions="Does `command` ask to scroll or move up or down the page?")
 NEEDS_AGENT = Noul(
     instructions="Does `command` need writing new text, reading or summarizing the screen, searching for "
@@ -56,8 +58,8 @@ NEEDS_AGENT = Noul(
     criteria=NoulCriteria(
         true="e.g. \"summarize this page\", \"reply saying I'm running late\", \"send this to Sam\", "
              "\"find a cheap flight to Boston\", or acting on several things or with a condition: \"close these "
-             "tabs but keep one\", \"delete all the empty ones\", or anything that takes more than one click or "
-             "keypress, like renaming or moving something or setting a field to a value",
+             "tabs but keep one\", \"delete all the empty ones\", or anything that takes several different steps, like "
+             "renaming or moving a file or setting a field to a value (pressing one key a few times is one step)",
         false="One click or keypress on something it names or points at (\"press send\") (\"search repositories\" means press the "
               "search button), scrolling, opening an app, a keyboard command, or a few of these in a row",
     ),
@@ -88,6 +90,11 @@ IS_COMPOUND = Noul(
               "but keep one\"",
     ),
 )
+TIMES = Choice(instructions="How many times does `command` want it done?",
+               criteria={"once": "once, or it doesn't say", "few": "a few times or a little: \"a bit\", \"two or "
+                                                                      "three\", \"a couple\"",
+                         "many": "many times or as far as it goes: \"all the way\", \"to the end\", \"lots\""})
+TIMES_COUNT = {"once": 1, "few": 3, "many": 10}
 SCROLL_DIRECTION = Choice(instructions="Which way does `command` want to scroll?",
                           criteria={"down": "down, further, next, more", "up": "up, back, toward the top"})
 ELEMENT_ACTION = Choice(
@@ -148,6 +155,7 @@ class Decision:
     app: str | None = None
     app_path: str | None = None
     shortcut: str | None = None
+    times: int = 1  # repeatable shortcuts and keys: "all the way right"
     risky: float = 0.0
     missing: str | None = None  # clarify: what the command leaves out (a MISSING choice)
     answers: dict | None = None  # every judgment, for the episode log and offline replay
@@ -200,7 +208,9 @@ def _decide(a, elements, gaze, apps, allow_clarify=True, allow_compound=True, co
     if p("wants_scroll") >= YES:  # before shortcuts: "scroll down" also reads as navigation
         return f"scroll_{choices['scroll_direction'].choice}", f"scroll {p('wants_scroll'):.2f}", {}
     if p("wants_shortcut") >= YES:
-        return "shortcut", f"shortcut {p('wants_shortcut'):.2f}", {"shortcut": choices["shortcut"].choice}
+        shortcut = choices["shortcut"].choice
+        times = TIMES_COUNT.get(choices["times"].choice, 1) if shortcut in commands.REPEATABLE and "times" in choices else 1
+        return "shortcut", f"shortcut {p('wants_shortcut'):.2f}", {"shortcut": shortcut, "times": times}
     if element_p and element_p[0][0] >= YES:
         return _element_route(element_p, gaze, choices, "")
     if p("is_command") < YES:
@@ -255,7 +265,7 @@ class Gate:
             "is_command": IS_COMMAND, "enough_context": ENOUGH_CONTEXT, "missing": MISSING, "is_compound": IS_COMPOUND,
             "needs_agent": NEEDS_AGENT, "wants_element": WANTS_ELEMENT, "wants_app": WANTS_APP,
             "wants_shortcut": WANTS_SHORTCUT, "wants_scroll": WANTS_SCROLL, "risky": RISKY,
-            "app": _app_question(apps), "shortcut": _shortcut_question(),
+            "app": _app_question(apps), "shortcut": _shortcut_question(), "times": TIMES,
             "scroll_direction": SCROLL_DIRECTION, "element_action": ELEMENT_ACTION,
             **_element_questions(gaze, elements),
         }

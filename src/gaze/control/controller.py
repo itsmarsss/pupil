@@ -12,7 +12,7 @@ import queue
 import threading
 import time
 
-from . import actions, apps, commands, config, dictation, macos, router, snapping
+from . import actions, apps, commands, config, dictation, macos, router, snapping, uitree
 from .agent import Agent
 from .episodes import EpisodeLog, element_dict
 from .gate import CLARIFY_PROMPTS, MAX_CANDIDATES, YES, Gate
@@ -321,6 +321,9 @@ class VoiceController:
             return
 
         ep["route"] = cmd.kind
+        if cmd.kind == "shortcut":
+            self._shortcut(cmd.args["shortcut"])
+            return
         # Exact phrase, but several elements are close together: let Jev pick which one "this" means.
         close = [c for c in candidates if c.distance(*gaze) <= config.SNAP_RADIUS / 2] if gaze else []
         if cmd.kind in ("click", "type") and len(close) > 1 and self.gate.available:
@@ -406,9 +409,7 @@ class VoiceController:
                 self._set_pending(("key", {"combo": combo}, gaze, None), desc)
                 self._status(f'"{desc}" might lose work. Say "confirm" to do it.')
                 return True
-            actions.press(combo)
-            self._acted("key", {"combo": combo, "shortcut": d.shortcut})
-            self._status(f"{desc} ({combo}): {d.summary()}")
+            self._shortcut(d.shortcut, d.times)
             return True
         if d.route == "close" and d.target is not None:
             if risky:
@@ -426,6 +427,24 @@ class VoiceController:
             self._do(kind, args, gaze, d.target)
             return True
         return False
+
+    def _shortcut(self, shortcut, times=1):
+        """A standard action, the way the frontmost app does it: its own menu command if it has one (shortcuts
+        differ between apps: "previous tab" is Ctrl+Shift+Tab in Chrome, Cmd+Shift+[ in Finder), else the keys."""
+        desc, combo = commands.SHORTCUTS[shortcut]
+        phrases = commands.MENU_PHRASES.get(shortcut)
+        for i in range(max(1, times)):
+            via = uitree.press_menu_command(phrases) if phrases else None
+            if via == "":
+                self._status(f"{desc}: not available right now")
+                return
+            if via is None:
+                actions.press(combo)
+            if i + 1 < times:
+                time.sleep(0.06)
+        how = f"menu {via!r}" if via else combo
+        self._acted("key", {"combo": combo, "shortcut": shortcut, "times": times, "via": how})
+        self._status(f"{desc} ({how}{f' x{times}' if times > 1 else ''})")
 
     def _close(self, target) -> bool:
         """Close what the user means, in any app: the target if it is a close control; its own close control; the
@@ -478,6 +497,11 @@ class VoiceController:
             step = {"clause": clause}
             steps.append(step)
             sub = router.route(clause)
+            if sub is not None and sub.kind == "shortcut":
+                step["route"] = "shortcut"
+                self._shortcut(sub.args["shortcut"])
+                done.append(clause)
+                continue
             if sub is not None and sub.kind in ("click", "type", "scroll", "key"):
                 step["route"] = sub.kind
                 self._do(sub.kind, sub.args, gaze, target)

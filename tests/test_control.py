@@ -389,3 +389,19 @@ def test_close_never_guesses_a_whole_window(monkeypatch):
     assert c._close(row) is False and clicks == []  # a list row: hand to the agent, don't close its window
     assert c._close(not_now) and clicks == ["close"]  # the dialog's own close control, found as a sibling
     assert c._close(tab) and clicks[-1] == "Figma" and keys == ["command+w"]
+
+
+def test_menu_commands_are_found_by_their_words_in_any_app():
+    from gaze.control.commands import MENU_PHRASES
+    from gaze.control.uitree import find_menu_title
+
+    chrome = ["select previous tab", "select next tab", "reload this page", "close tab", "close other tabs", "back"]
+    wezterm = ["activate the tab to the left", "activate the tab to the right", "reload configuration", "close current tab"]
+    finder = ["show previous tab", "open in new tab", "new tab", "back"]
+    assert find_menu_title(chrome, MENU_PHRASES["previous_tab"]) == "select previous tab"
+    assert find_menu_title(wezterm, MENU_PHRASES["previous_tab"]) == "activate the tab to the left"
+    assert find_menu_title(finder, MENU_PHRASES["previous_tab"]) == "show previous tab"
+    assert find_menu_title(chrome, MENU_PHRASES["close_tab"]) == "close tab"  # not "close other tabs"
+    assert find_menu_title(wezterm, MENU_PHRASES["close_tab"]) == "close current tab"
+    assert find_menu_title(wezterm, MENU_PHRASES["refresh"]) is None  # not "reload configuration"
+    assert find_menu_title(finder, MENU_PHRASES["new_tab"]) == "new tab"

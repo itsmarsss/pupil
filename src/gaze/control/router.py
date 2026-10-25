@@ -14,7 +14,8 @@ from . import config
 
 @dataclass
 class Command:
-    kind: str  # click | scroll | key | type | cancel | confirm | calibrate | recentre | check | unknown
+    kind: str  # click | scroll | key | shortcut | type | cancel | confirm | calibrate | recentre | check | dictate_on |
+    # dictate_off | unknown
     args: dict = field(default_factory=dict)
     text: str = ""
 
@@ -26,9 +27,9 @@ _PATTERNS = [
     (rf"^right[ -]?click{_DEICTIC}$", lambda m: Command("click", {"clicks": 1, "button": "right"})),
     (r"^scroll (up|down|left|right)(?: (a lot|a little))?$",
      lambda m: Command("scroll", {"direction": m[1], "amount": {"a lot": 10, "a little": 1}.get(m[2], 4)})),
-    (r"^(?:go )?back$", lambda m: Command("key", {"combo": "command+["})),
-    (r"^(?:go )?forward$", lambda m: Command("key", {"combo": "command+]"})),
-    (r"^new tab$", lambda m: Command("key", {"combo": "command+t"})),
+    (r"^(?:go )?back$", lambda m: Command("shortcut", {"shortcut": "back"})),  # run as the app's own menu command
+    (r"^(?:go )?forward$", lambda m: Command("shortcut", {"shortcut": "forward"})),
+    (r"^new tab$", lambda m: Command("shortcut", {"shortcut": "new_tab"})),
     (r"^(?:stop|cancel|never ?mind|abort)$", lambda m: Command("cancel")),
     (r"^(?:confirm|yes|yes please|do it|go ahead)$", lambda m: Command("confirm")),
     (r"^(?:re)?calibrate$", lambda m: Command("calibrate")),

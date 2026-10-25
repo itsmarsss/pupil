@@ -309,7 +309,8 @@ CARTESIA_VERSION = "2026-03-01"
 SEND_S = 0.1  # Cartesia recommends ~100 ms audio chunks
 SEND_SAMPLES = int(audio.RATE * SEND_S)
 SPEECH_LEAD_S = 0.3  # turn.start arrives a little after speech begins
-KEEPALIVE_S = 60  # gate closed = nothing sent, and Cartesia drops a connection idle for 180 s: 0.1 s of silence this often
+KEEPALIVE_S = 15  # gate closed = nothing sent; Cartesia drops idle connections ("websocket_idle_timeout", seen
+# well within 60 s): 0.1 s of silence this often
 SILENCE = bytes(SEND_SAMPLES * 2)
 MAX_FAILURES = 3  # consecutive connection failures before falling back to Whisper
 # Phrases the recognizer should expect (Cartesia keyterms: up to 100 terms, 1200 characters). Running and installed
@@ -372,7 +373,8 @@ class CartesiaVoice(Voice):
                              ssl=tls, open_timeout=5) as ws:
                     self._stream(ws, source.blocks, watch)
             except Exception as e:  # network down, bad key: retry, then fall back
-                self._failures += 1
+                if "idle_timeout" not in str(e):  # an idle drop isn't Cartesia failing: just reconnect
+                    self._failures += 1
                 print(f"Cartesia error ({e}); retrying...", flush=True)
                 time.sleep(1)
             finally:

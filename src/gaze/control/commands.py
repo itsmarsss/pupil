@@ -31,7 +31,7 @@ SHORTCUTS = {
     "new_window": ("Open a new window", "command+n"),
     "private_window": ("Open a new private / incognito window", "command+shift+n"),
     "back": ("Go back to the previous page", "command+["),
-    "forward": ("Go forward a page", "command+]"),
+    "forward": ("Go forward a page in the browser or file history", "command+]"),
     "refresh": ("Reload / refresh the page", "command+r"),
     "address_bar": ("Focus the browser address bar to type a URL or search", "command+l"),
     "zoom_in": ("Zoom in / make things bigger", "command+equal"),
@@ -46,6 +46,38 @@ SHORTCUTS = {
     "mission_control": ("Show Mission Control (all windows)", "control+up"),
     "escape": ("Press Escape / cancel / close a popup", "escape"),
     "enter": ("Press Enter / Return to confirm or submit", "return"),
+    # plain keys: games, lists, sliders, text, media (repeatable)
+    "key_left": ("Press the Left arrow key: move something left (a game piece, a selection, a slider), "
+                 "including \"all the way left\"", "left"),
+    "key_right": ("Press the Right arrow key: move something right (a game piece, a selection, a slider), "
+                  "including \"all the way right\"", "right"),
+    "key_up": ("Press the Up arrow key (move up, rotate in some games, previous item)", "up"),
+    "key_down": ("Press the Down arrow key (move down, next item, drop in some games)", "down"),
+    "key_space": ("Press Space (play/pause, jump, drop or place in a game, toggle a checkbox)", "space"),
+    "key_tab": ("Press Tab (next field)", "tab"),
+    "key_page_down": ("Press Page Down", "pagedown"),
+    "key_page_up": ("Press Page Up", "pageup"),
+    "key_home": ("Press Home: jump to the start of a line or document", "home"),
+    "key_end": ("Press End: jump to the end of a line or document", "end"),
+    "key_delete": ("Press Delete / Backspace (remove the character or selected item)", "backspace"),
+}
+REPEATABLE = {k for k in SHORTCUTS if k.startswith("key_")} | {"next_tab", "previous_tab", "back", "forward",
+                                                               "undo", "redo", "zoom_in", "zoom_out"}
+
+# The same action is a menu command in nearly every Mac app, under slightly different names and shortcuts. Run it
+# from the frontmost app's own menu (uitree.press_menu_command) and fall back to the keys above only if it has
+# none. Each phrase matches a menu title containing all its words; tried in order.
+MENU_PHRASES = {
+    "new_tab": ["new tab"], "close_tab": ["close tab", "close current tab", "close editor"],
+    "reopen_tab": ["reopen closed tab", "reopen tab", "reopen closed editor"],
+    "next_tab": ["next tab", "next editor", "tab to the right"],
+    "previous_tab": ["previous tab", "previous editor", "tab to the left"],
+    "new_window": ["new window"], "private_window": ["new private window", "new incognito window"],
+    "refresh": ["reload this page", "reload page", "reload", "refresh"],
+    "back": ["back"], "forward": ["forward"], "find": ["find"], "save": ["save"],
+    "zoom_in": ["zoom in"], "zoom_out": ["zoom out"], "actual_size": ["actual size", "reset zoom"],
+    "full_screen": ["enter full screen", "toggle full screen", "full screen"], "minimize": ["minimize"],
+    "address_bar": ["open location"], "select_all": ["select all"],
 }
 
 
