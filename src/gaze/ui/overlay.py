@@ -14,6 +14,7 @@ from AppKit import (
     NSWindowCollectionBehaviorFullScreenAuxiliary,
     NSWindowCollectionBehaviorIgnoresCycle,
     NSWindowCollectionBehaviorStationary,
+    NSWindowSharingNone,
     NSWindowStyleMaskBorderless,
 )
 
@@ -50,6 +51,7 @@ class GazeRing:
         win.setBackgroundColor_(NSColor.clearColor())
         win.setHasShadow_(False)
         win.setIgnoresMouseEvents_(True)
+        win.setSharingType_(NSWindowSharingNone)  # not in screenshots: the voice agent marks gaze itself
         win.setLevel_(NSScreenSaverWindowLevel)
         win.setCollectionBehavior_(
             NSWindowCollectionBehaviorCanJoinAllSpaces

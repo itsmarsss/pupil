@@ -48,13 +48,15 @@ class GazeApp:
         measure: bool = False,
         publish: bool = False,
         dashboard_port: int | None = None,
+        voice: bool = False,
+        voice_typed: bool = False,
     ):
         self.tracker = tracker
         self.screen = tracker.screen
         self.options = dict(profile_name=profile_name, n_targets=n_targets, recalibrate=recalibrate,
                             results_csv=results_csv or APP_SUPPORT / "validation.csv", snap=snap,
                             record_path=record_path, session_dir=session_dir, measure=measure,
-                            publish=publish, dashboard_port=dashboard_port)
+                            publish=publish, dashboard_port=dashboard_port, voice=voice, voice_typed=voice_typed)
         self.overlay_on = True
         self.lid = LidMonitor(hz=30.0, on_change=self._on_lid)  # hinge angle at the camera's rate
         self.clicks = ClickLearner(tracker, learn_from_clicks)
@@ -63,6 +65,7 @@ class GazeApp:
         self.voice = VoiceLog()  # what the voice controller heard and did, for the dashboard
         self.session: SessionWriter | None = None
         self.dashboard = None
+        self.controller = None  # voice control (gaze.control), when on
         self.flows: Flows | None = None
         self.ring: GazeRing | None = None
         self.menu: MenuBar | None = None
@@ -90,6 +93,8 @@ class GazeApp:
             self._start_dashboard(o["dashboard_port"])
         if o["publish"]:
             self._start_publisher()
+        if o["voice"]:
+            self._start_voice(o["voice_typed"])
         self.tracker.start()
         self.lid.start()
         NSTimer.scheduledTimerWithTimeInterval_repeats_block_(1 / 60, True, self._tick)
@@ -187,6 +192,23 @@ class GazeApp:
         phase, target = self.flows.phase
         return {"phase": phase, "target": target, "busy": self.flows.busy, "lid_deg": self.lid.angle,
                 "smoothing": self.tracker.smoothing, "overlay": self.overlay_on, "voice": self.voice.snapshot()}
+
+    def _start_voice(self, typed: bool) -> None:
+        """Voice control in this process: it reads gaze from the tracker and drives the flows directly."""
+        try:
+            from ..control.controller import VoiceController
+            from ..control.sources import TrackerGaze
+        except ImportError as e:
+            log.error("voice control needs its extras (uv sync --extra control): %s", e)
+            return
+        commands = self._remote_commands()
+        gaze = TrackerGaze(busy=lambda: self.flows.busy, report=self.voice.add,
+                           commands={k: commands[k] for k in ("recalibrate", "recentre", "validate")})
+        self.tracker.add_listener(gaze.on_sample)
+        self.controller = VoiceController(gaze, typed=typed)
+        self.controller.start()
+        NSTimer.scheduledTimerWithTimeInterval_repeats_block_(1 / 30, True, lambda _t: self.controller.tick())
+        log.info("voice control on%s", " (typed)" if typed else "")
 
     def _start_publisher(self) -> None:
         from ..sinks.publisher import GazePublisher

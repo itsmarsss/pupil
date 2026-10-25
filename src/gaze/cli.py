@@ -76,6 +76,8 @@ def cmd_run(args) -> int:
         measure=args.measure,
         publish=args.publish,
         dashboard_port=args.dashboard_port if args.dashboard else None,
+        voice=args.voice,
+        voice_typed=args.typed,
     ).run()
     return 0
 
@@ -264,6 +266,9 @@ def main(argv: list[str] | None = None) -> int:
         p.add_argument("--measure", action="store_true", help="run the head-still + head-moving accuracy measurement")
         p.add_argument("--publish", action="store_true", help="stream gaze over local UDP for `gaze control`")
         p.add_argument("--dashboard", action="store_true", help="serve the web dashboard on 127.0.0.1 and open it")
+        p.add_argument("--voice", action="store_true",
+                       help="voice control: look at something and say what to do (needs: uv sync --extra control)")
+        p.add_argument("--typed", action="store_true", help="with --voice: type commands in the terminal instead")
         p.add_argument("--dashboard-port", type=int, default=8766)
         p.add_argument("--appearance", choices=["network", "patches"], default="network",
                        help="eye appearance features: the pretrained network (default) or eye patches "
@@ -272,7 +277,7 @@ def main(argv: list[str] | None = None) -> int:
                        help="ring smoothing; medium holds steady during fixations (default)")
         p.add_argument("--normalise", choices=["roll", "frontal", "none"], default="roll",
                        help="straighten the face before the gaze model (default: level the eyes)")
-    sub.add_parser("control", help="look at something and say what to do (see `gaze control -h`)")
+    sub.add_parser("control", help="shortcut for `gaze --voice` (see `gaze control -h`)")
     sub.add_parser("cameras", help="list cameras")
     fov = sub.add_parser("fov", help="measure the camera's field of view (once per camera)")
     spacer = fov.add_mutually_exclusive_group(required=True)
