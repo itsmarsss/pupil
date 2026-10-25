@@ -65,9 +65,12 @@ def test_someone_else_only_when_sure(monkeypatch):
     monkeypatch.setattr(lips.time, "time", lambda: t2)
     assert not g2.someone_else(1, 3)  # lips moved during it
     g3 = LipGate()
-    t3 = feed(g3, 0, 4, lambda t: None)  # no face seen: can't be sure
+    t3 = feed(g3, 0, 4, lambda t: None)  # no face: nobody at the computer, so not you
     monkeypatch.setattr(lips.time, "time", lambda: t3)
-    assert not g3.someone_else(1, 3)
+    assert g3.someone_else(1, 3)
+    assert not g3.face_recent(t3)
+    monkeypatch.setattr(lips.time, "time", lambda: t3 + 10)  # tracker stopped sending: fail open
+    assert not g3.someone_else(1, 3) and g3.face_recent(t3 + 10)
 
 
 def test_opens_for_a_steady_open_mouth():
@@ -75,3 +78,16 @@ def test_opens_for_a_steady_open_mouth():
     t = feed(g, 0, 3, lambda t: 0.01)
     t = feed(g, t, t + 1.2, lambda t: 0.15)  # opened and held: no change after the first frame
     assert g.would_open(t)
+
+
+def test_a_flicker_of_movement_during_someone_elses_speech_isnt_you(monkeypatch):
+    import gaze.control.lips as lips
+
+    g = LipGate()
+    t = feed(g, 0, 6, lambda t: talking(t) if 3.0 < t < 3.15 else 0.02)  # a quick chew in a 3 s utterance
+    monkeypatch.setattr(lips.time, "time", lambda: t)
+    assert g.someone_else(1.5, 4.5)
+    g2 = LipGate()
+    t2 = feed(g2, 0, 6, lambda t: talking(t) if 2 < t < 4 else 0.02)  # talking through most of it
+    monkeypatch.setattr(lips.time, "time", lambda: t2)
+    assert not g2.someone_else(1.5, 4.5)

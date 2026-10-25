@@ -419,7 +419,8 @@ class CartesiaVoice(Voice):
                     block, pending = _pcm16(pending[:SEND_SAMPLES]), pending[SEND_SAMPLES:]
                     t_block = pending_end - len(pending) / audio.RATE
                     try:
-                        if self.gate is None or self.gate.is_open() or in_turn.is_set():
+                        # a turn in progress keeps going through pauses, but not once your face is gone
+                        if self.gate is None or self.gate.is_open() or (in_turn.is_set() and self.gate.face_recent()):
                             if not sending:
                                 sending = True
                                 self._opened_at = (preroll[0][0] if preroll else t_block) - SEND_S
@@ -427,6 +428,9 @@ class CartesiaVoice(Voice):
                                     ws.send(b)
                                 preroll.clear()
                             ws.send(block)
+                            last_sent = time.time()
+                        elif in_turn.is_set():  # face gone mid-turn: silence, so Cartesia ends the turn
+                            ws.send(SILENCE)
                             last_sent = time.time()
                         else:
                             sending = False

@@ -16,10 +16,15 @@ import time
 from collections import deque
 
 WINDOW_S = 0.4  # lip movement = how much the mouth opening changes over this window
-MIN_MOTION = 0.04  # floor for "moving" (mouth-open ratio range); resting jitter is usually well below
-NOISE_FACTOR = 3.0  # or this many times your measured resting jitter, whichever is higher
-OPEN_MIN = 0.06  # or held open this much wider than at rest (a steady open mouth: measured talking p95 0.27, still 0.01)
-HOLD_S = 1.5  # stay open this long after the lips last moved (pauses between words)
+# Tightened 2026-10-24 (was 0.04 / 3x / 0.06 / 1.5 s and "any movement within 0.5 s"): too forgiving, chewing
+# or a laugh while a video played let its speech through. Measured: still 0.005-0.01, talking swings ~0.1-0.27.
+MIN_MOTION = 0.06  # floor for "moving" (mouth-open ratio range); resting jitter is usually well below
+NOISE_FACTOR = 4.0  # or this many times your measured resting jitter, whichever is higher
+OPEN_MIN = 0.10  # or held open this much wider than at rest (talking p95 0.27, still 0.01; a smile stays below)
+HOLD_S = 0.8  # stay open this long after the lips last moved (pauses between words)
+ATTRIBUTE_SLACK_S = 0.2  # a transcript's window, widened this much each side, when checking it was you
+MIN_MOVING_SHARE = 0.2  # ...your lips moving in at least this share of its face frames
+MIN_MOVING_FRAMES = 3
 LOOK_HOLD_S = 1.5  # glancing away mid-sentence doesn't count as not looking
 MIN_CONFIDENCE = 0.2  # tracker confidence: falls toward 0 when the head leaves the range it was calibrated facing
 TRACKER_STALE_S = 1.0  # no tracker messages for this long: fail open
@@ -95,14 +100,21 @@ class LipGate:
             self.reason = "open"
             return True
 
-    def someone_else(self, t0, t1, slack=0.5):
-        """True only when sure a transcript of speech in [t0, t1] wasn't you: the tracker was running and saw your
-        face for most of it, and your lips never moved. Any doubt (no tracker, face lost) counts as you."""
+    def someone_else(self, t0, t1, slack=ATTRIBUTE_SLACK_S):
+        """True unless your lips were moving (while you faced the screen) through a real part of the speech in
+        [t0, t1]: at least MIN_MOVING_SHARE of the frames your face was seen, and MIN_MOVING_FRAMES. A flicker of
+        movement (chewing, a laugh) while a video talks doesn't count; no face means nobody at the computer.
+        Only a tracker that stopped sending fails open."""
         a, b = t0 - slack, t1 + slack
         with self._lock:
             if time.time() - self._last_msg > TRACKER_STALE_S:
                 return False
-            if any(a <= t <= b for t in self._moves):
-                return False
-            seen = sum(1 for t in self._faces if a <= t <= b)
-        return seen >= 0.5 * (b - a) * 15  # face in at least half the frames (tracker runs at ~15-30 fps)
+            moving = sum(1 for t in self._moves if a <= t <= b)
+            faces = sum(1 for t in self._faces if a <= t <= b)
+        return moving < max(MIN_MOVING_FRAMES, MIN_MOVING_SHARE * faces)
+
+    def face_recent(self, now=None):
+        """A face seen within LOOK_HOLD_S (or no tracker: fail open). Keeps a turn going only while you're there."""
+        now = time.time() if now is None else now
+        with self._lock:
+            return now - self._last_msg > TRACKER_STALE_S or bool(self._faces and now - self._faces[-1] < LOOK_HOLD_S)
