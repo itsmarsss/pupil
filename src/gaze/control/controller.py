@@ -82,7 +82,7 @@ class VoiceController:
             self._status(f"Fast tier (Jev) off: {self.gate.error}. Unmatched commands go straight to the agent.")
         self.agent = Agent(self.screen, self.gate, self._status)
         self.speaker = Speaker(on_state=lambda on: self.events.put(("speaking", on)))
-        self.agent.on_reply = self.speaker.say  # Claude's answer (or what it's waiting to confirm), read aloud
+        self.agent.on_reply = lambda text: self._say(text)  # the agent's answer (or what it's waiting on), aloud
         self.episodes = EpisodeLog(source="typed" if typed else "voice")
         self.flash_until = 0.0
         self.pending = None  # direct action waiting for "confirm"
@@ -176,7 +176,7 @@ class VoiceController:
         """A direct action waiting for "confirm" (None clears it); the dashboard shows it, and it's asked aloud."""
         self.pending = pending
         if pending and text:
-            self.speaker.say(f"{text}? Say confirm.")
+            self._say(f"{text}? Say confirm.")
         if pending and self._ep is not None:
             self._ep["pending"] = True
         self.gaze.report("pending", text if pending else "")
@@ -200,6 +200,8 @@ class VoiceController:
                 self.hud.status = f'Dropped (lips didn\'t move): "{text}"'
             elif kind == "speaking":
                 self.hud.speaking = payload
+                if not payload:
+                    self.indicator.said()  # fade the caption
             elif kind == "partial":  # words so far, while you're still talking
                 self.hud.heard = f"{payload}…" if payload else ""
             elif kind == "mic":
@@ -494,7 +496,7 @@ class VoiceController:
             self.clarifying = (request, d.missing, time.time() + CLARIFY_WINDOW_S, ep)
             self.gaze.report("pending", prompt)
             self._status(prompt)
-            self.speaker.say(prompt)
+            self._say(prompt)
             return
         if d.route == "compound":
             self._compound(request, gaze, target, candidates, app)
@@ -552,7 +554,7 @@ class VoiceController:
             ((n, pid) for n, pid in running if wanted in n.lower()), None)
         if match is None:
             self._status(f"No running app called {name!r}.")
-            self.speaker.say(f"I don't see {name} running.")
+            self._say(f"No {name} running.")
             return
         label, pid = match
         verb = "Force quit" if force else "Quit"
@@ -632,7 +634,7 @@ class VoiceController:
         self._ep["options"] = {el.describe(): s for s, el in options}
         names = " or ".join(NUMBERS[i] for i in range(len(options)))
         self._status(f"Which one? Say {names} (or look at it and say \"this one\").")
-        self.speaker.say(f"Which one? {names.capitalize()}?")
+        self._say(f"Which one? {names.capitalize()}?")
 
     def _resolve_choice(self, text, cloud):
         choosing, self.choosing = self.choosing, None
@@ -769,6 +771,14 @@ class VoiceController:
             self._start_agent(request + note, gaze, target, candidates, app)
             return
         self._status(f"Done: {'; '.join(done)}")
+
+    def _say(self, text):
+        """Speak `text` and run it as a faint caption under the gaze pill (shown for a reading time if speech is off)."""
+        self.indicator.say(text)
+        if self.speaker.available:
+            self.speaker.say(text)
+        else:
+            self.indicator._caption_end = time.time() + 1.0 + len(text) / 15
 
     @contextlib.contextmanager
     def _working(self, state, label):

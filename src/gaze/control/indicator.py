@@ -1,7 +1,8 @@
-"""A small status pill that trails the user's gaze: what voice control is doing, colour-coded, at a glance.
+"""A small status pill that trails the user's gaze: what voice control is doing, colour-coded, at a glance, with
+what the agent is saying running faintly underneath.
 
-It sits beside the gaze (never on it, so it doesn't cover what you're looking at), eases toward it so eye jitter
-doesn't shake it, flips to the other side near screen edges, and hides when nothing is happening. Kept out of
+It sits centred just under the gaze (never on it, so it doesn't cover what you're looking at), eases toward it so eye jitter
+doesn't shake it, moves above it near the bottom of the screen, and hides when nothing is happening. Kept out of
 screenshots, like the HUD, so the agent never sees it.
 """
 from __future__ import annotations
@@ -17,8 +18,11 @@ from AppKit import (
     NSFont,
     NSFontAttributeName,
     NSForegroundColorAttributeName,
+    NSGraphicsContext,
     NSMakeRect,
     NSScreen,
+    NSShadow,
+    NSShadowAttributeName,
     NSStatusWindowLevel,
     NSString,
     NSView,
@@ -31,7 +35,7 @@ from AppKit import (
     NSWindowStyleMaskBorderless,
 )
 
-OFFSET = 34  # points from the gaze to the pill's near corner
+OFFSET = 30  # points below the gaze to the pill (centred under it)
 EASE = 0.22  # per tick, toward the gaze (smooths eye jitter)
 DEADZONE = 6  # points: smaller gaze movements don't move it
 HEIGHT = 22
@@ -60,6 +64,18 @@ STYLES = {
 BACKGROUND = NSColor.colorWithCalibratedWhite_alpha_(0.08, 0.82)
 TEXT = NSColor.colorWithCalibratedWhite_alpha_(0.95, 1.0)
 FONT = NSFont.systemFontOfSize_weight_(12, 0.3)
+CAPTION = NSColor.colorWithCalibratedWhite_alpha_(1.0, 1.0)
+CAPTION_FONT = NSFont.systemFontOfSize_weight_(13, 0.2)
+CAPTION_W = 340  # caption line width, points; longer speech scrolls
+CAPTION_H = 18
+CAPTION_GAP = 4
+CAPTION_SPEED = 45  # points per second, once a long caption starts scrolling
+CAPTION_HOLD_S = 0.8  # read the start before it scrolls
+CAPTION_FADE_S = 1.2
+_SHADOW = NSShadow.alloc().init()
+_SHADOW.setShadowBlurRadius_(3)
+_SHADOW.setShadowOffset_((0, -1))
+_SHADOW.setShadowColor_(NSColor.colorWithCalibratedWhite_alpha_(0.0, 0.9))
 
 
 @dataclass(frozen=True)
@@ -72,26 +88,43 @@ class _PillView(NSView):
     def drawRect_(self, rect):
         NSColor.clearColor().set()
         NSBezierPath.fillRect_(rect)
-        status = self.status
-        if status is None:
-            return
-        color, pulses = STYLES.get(status.state, STYLES["thinking"])
         b = self.bounds()
-        BACKGROUND.set()
-        NSBezierPath.bezierPathWithRoundedRect_xRadius_yRadius_(b, HEIGHT / 2, HEIGHT / 2).fill()
-        alpha = 0.55 + 0.45 * (0.5 + 0.5 * math.sin(time.time() * 6)) if pulses else 1.0
-        color.colorWithAlphaComponent_(alpha).set()
-        NSBezierPath.bezierPathWithOvalInRect_(NSMakeRect(PAD, (HEIGHT - DOT) / 2, DOT, DOT)).fill()
-        attrs = {NSFontAttributeName: FONT, NSForegroundColorAttributeName: TEXT}
-        text = NSString.stringWithString_(status.label)
-        size = text.sizeWithAttributes_(attrs)
-        text.drawAtPoint_withAttributes_((PAD + DOT + 6, (HEIGHT - size.height) / 2), attrs)
+        status = self.status
+        if status is not None:
+            color, pulses = STYLES.get(status.state, STYLES["thinking"])
+            pill = NSMakeRect((b.size.width - self.pill_w) / 2, b.size.height - HEIGHT, self.pill_w, HEIGHT)
+            BACKGROUND.set()
+            NSBezierPath.bezierPathWithRoundedRect_xRadius_yRadius_(pill, HEIGHT / 2, HEIGHT / 2).fill()
+            alpha = 0.55 + 0.45 * (0.5 + 0.5 * math.sin(time.time() * 6)) if pulses else 1.0
+            color.colorWithAlphaComponent_(alpha).set()
+            NSBezierPath.bezierPathWithOvalInRect_(
+                NSMakeRect(pill.origin.x + PAD, pill.origin.y + (HEIGHT - DOT) / 2, DOT, DOT)).fill()
+            attrs = {NSFontAttributeName: FONT, NSForegroundColorAttributeName: TEXT}
+            text = NSString.stringWithString_(status.label)
+            size = text.sizeWithAttributes_(attrs)
+            text.drawAtPoint_withAttributes_((pill.origin.x + PAD + DOT + 6, pill.origin.y + (HEIGHT - size.height) / 2), attrs)
+        caption = self.caption
+        if caption:
+            text, offset, alpha = caption
+            attrs = {NSFontAttributeName: CAPTION_FONT,
+                     NSForegroundColorAttributeName: CAPTION.colorWithAlphaComponent_(0.8 * alpha),
+                     NSShadowAttributeName: _SHADOW}
+            line = NSString.stringWithString_(text)
+            width = line.sizeWithAttributes_(attrs).width
+            NSGraphicsContext.saveGraphicsState()
+            NSBezierPath.clipRect_(NSMakeRect(0, 0, b.size.width, CAPTION_H))
+            x = (b.size.width - width) / 2 if width <= b.size.width else -offset  # long: scrolls left
+            line.drawAtPoint_withAttributes_((x, 2), attrs)
+            NSGraphicsContext.restoreGraphicsState()
 
 
 class Indicator:
+    """The pill sits centred just under the gaze; while the agent speaks, what it says runs underneath in faint
+    text (scrolling when it's longer than fits), then fades."""
+
     def __init__(self):
         win = NSWindow.alloc().initWithContentRect_styleMask_backing_defer_(
-            NSMakeRect(0, 0, 120, HEIGHT), NSWindowStyleMaskBorderless, NSBackingStoreBuffered, False)
+            NSMakeRect(0, 0, CAPTION_W, HEIGHT), NSWindowStyleMaskBorderless, NSBackingStoreBuffered, False)
         win.setOpaque_(False)
         win.setBackgroundColor_(NSColor.clearColor())
         win.setHasShadow_(False)
@@ -101,32 +134,62 @@ class Indicator:
         win.setCollectionBehavior_(NSWindowCollectionBehaviorCanJoinAllSpaces | NSWindowCollectionBehaviorStationary
                                    | NSWindowCollectionBehaviorFullScreenAuxiliary
                                    | NSWindowCollectionBehaviorIgnoresCycle)
-        view = _PillView.alloc().initWithFrame_(NSMakeRect(0, 0, 120, HEIGHT))
-        view.status = None
+        view = _PillView.alloc().initWithFrame_(NSMakeRect(0, 0, CAPTION_W, HEIGHT))
+        view.status, view.caption, view.pill_w = None, None, 0
         win.setContentView_(view)
         self._win, self._view = win, view
         frame = NSScreen.mainScreen().frame()
         self._screen_w, self._screen_h = frame.size.width, frame.size.height
         self._pos = None  # eased position of the gaze it follows (top-left points)
         self._shown: Status | None = None
+        self._caption: str | None = None
+        self._caption_start = 0.0
+        self._caption_end: float | None = None  # when speech stopped (then it fades)
+
+    def say(self, text: str) -> None:
+        """Show what's being said, under the pill."""
+        self._caption, self._caption_start, self._caption_end = " ".join(text.split()), time.time(), None
+
+    def said(self) -> None:
+        """Speech ended (or was cut off): fade the caption."""
+        if self._caption and self._caption_end is None:
+            self._caption_end = time.time()
+
+    def _caption_now(self):
+        if not self._caption:
+            return None
+        now = time.time()
+        alpha = 1.0
+        if self._caption_end is not None:
+            alpha = 1 - (now - self._caption_end) / CAPTION_FADE_S
+            if alpha <= 0:
+                self._caption = None
+                return None
+        width = NSString.stringWithString_(self._caption).sizeWithAttributes_({NSFontAttributeName: CAPTION_FONT}).width
+        offset = max(0.0, min((now - self._caption_start - CAPTION_HOLD_S) * CAPTION_SPEED, width - CAPTION_W + 20))
+        return self._caption, offset, alpha
 
     def update(self, status: Status | None, gaze) -> None:
         """Called every tick (~30 Hz) with what to show and where the user is looking (None: keep it put)."""
-        if status is None:
+        caption = self._caption_now()
+        if status is None and caption is None:
             if self._win.isVisible():
                 self._win.orderOut_(None)
             self._shown = None
             return
         if status != self._shown:
             self._shown = status
-            self._view.status = status
-            width = NSString.stringWithString_(status.label).sizeWithAttributes_({NSFontAttributeName: FONT}).width
-            w = math.ceil(PAD + DOT + 6 + width + PAD)
-            self._win.setContentSize_((w, HEIGHT))
-            self._view.setFrame_(NSMakeRect(0, 0, w, HEIGHT))
-            self._view.setNeedsDisplay_(True)
-        elif STYLES.get(status.state, (None, False))[1]:
-            self._view.setNeedsDisplay_(True)  # the pulse
+            width = 0 if status is None else \
+                NSString.stringWithString_(status.label).sizeWithAttributes_({NSFontAttributeName: FONT}).width
+            self._view.pill_w = 0 if status is None else math.ceil(PAD + DOT + 6 + width + PAD)
+        self._view.status = status
+        self._view.caption = caption
+        w = max(self._view.pill_w, CAPTION_W if caption else 0)
+        h = HEIGHT + (CAPTION_GAP + CAPTION_H if caption else 0)
+        if (w, h) != (self._win.frame().size.width, self._win.frame().size.height):
+            self._win.setContentSize_((w, h))
+            self._view.setFrame_(NSMakeRect(0, 0, w, h))
+        self._view.setNeedsDisplay_(True)  # cheap: a small window (pulse, scrolling caption, fade)
         if gaze is not None:
             if self._pos is None:
                 self._pos = gaze
@@ -135,10 +198,9 @@ class Indicator:
                              self._pos[1] + (gaze[1] - self._pos[1]) * EASE)
         if self._pos is None:
             return
-        w = self._win.frame().size.width
         x, y = self._pos
-        left = x + OFFSET if x + OFFSET + w < self._screen_w else x - OFFSET - w  # flip near the right edge
-        top = y + OFFSET if y + OFFSET + HEIGHT < self._screen_h else y - OFFSET - HEIGHT  # and the bottom
-        self._win.setFrameOrigin_((left, self._screen_h - top - HEIGHT))
+        left = min(max(x - w / 2, 4), self._screen_w - w - 4)  # centred under the gaze, kept on screen
+        top = y + OFFSET if y + OFFSET + h < self._screen_h else y - OFFSET - h  # above it near the bottom
+        self._win.setFrameOrigin_((left, self._screen_h - top - h))
         if not self._win.isVisible():
             self._win.orderFrontRegardless()
