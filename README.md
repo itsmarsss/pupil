@@ -87,7 +87,8 @@ play / pause / step / speed controls.
 | `--record FILE` | write every gaze sample (and clicks) to a CSV |
 | `--results FILE` | append accuracy checks to a CSV |
 | `--save-session [DIR]` | save calibration and check frames (face crops only) for replay |
-| `--publish` | stream gaze over local UDP for `gaze control` |
+| `--voice [--typed]` | voice control (see below) |
+| `--publish` | also stream gaze over local UDP for other programs |
 
 ### Measuring changes
 
@@ -102,31 +103,32 @@ uv run gaze replay SESSION --modes hd+roll,hd,hd+frontal,vga --all
 separately. Profiles, recordings, the device file and the accuracy log live in
 `~/Library/Application Support/Gaze/`.
 
-## Voice control (`gaze control`)
+## Voice control
 
-Look at something and say what to do. `gaze control` starts the tracker with
-`--publish` (it streams gaze points over local UDP and takes "recalibrate" back), then
-listens to the mic:
+Look at something and say what to do. Voice control runs inside the same app as the tracker:
 
 ```sh
 uv sync --extra control
 cp .env.example .env                     # add TYPESAFE_API_KEY (fast tier) and/or ANTHROPIC_API_KEY (Claude agent)
-uv run gaze control                      # add --typed to type commands, --gaze mouse to skip the camera
+uv run gaze --voice --dashboard          # or: uv run gaze control --dashboard
 ```
 
-Needs Microphone, Accessibility and Screen Recording for your terminal as well as Camera.
+`--typed` types commands in the terminal instead of speaking; `gaze control --gaze mouse` uses the
+mouse cursor as gaze (no camera). Needs Microphone, Accessibility and Screen Recording for your terminal
+as well as Camera.
 
 | Tier | | Examples |
 |---|---|---|
-| 0 · `router.py` | exact phrases, matched by rules | "click", "double click this", "scroll down a lot", "go back", "type hello", "stop", "calibrate" |
+| 0 · `router.py` | exact phrases, matched by rules | "click", "double click this", "scroll down a lot", "go back", "type hello", "stop", "calibrate", "re-centre", "check accuracy" |
 | 1 · `gate.py` | Jev answers small yes/no questions about the command and the elements near your gaze; a truth table picks the action | "open Safari", "search repositories", "close this tab" (asks to confirm risky ones) |
 | 2 · `agent.py` | Claude computer-use loop, told where you were looking while you spoke | "open this in a new tab and summarize it" |
 
-"This" means where you looked *while speaking*, snapped to the nearest Accessibility
-element (`snapping.py`). Say "calibrate" to rerun the tracker's dots, "stop" to cancel
-the agent. Options: `--calibrate`, `--no-tracker` (use a `gaze --publish` you started
-yourself), `--tracker-args ...` (passed to the tracker). All settings are listed in
-`.env.example`. This drives your real Mac: use a test browser profile.
+"This" means where you looked *while speaking*, snapped to the nearest Accessibility element
+(`snapping.py`). If the tracker wasn't confident then (head turned past what calibration covered),
+"click" and "type" ask you to confirm instead of acting. A pill at the bottom of the screen shows the mic,
+what was heard and what happened; the dashboard's "Voice & agent" panel logs it and outlines the target.
+Say "stop" to cancel, "confirm" to approve. All settings are in `.env.example`. This drives your real
+Mac: use a test browser profile.
 
 ## How it works
 
@@ -134,7 +136,7 @@ yourself), `--tracker-args ...` (passed to the tracker). All settings are listed
 camera 1080p → crop 4:3 → MediaPipe landmarks + head pose ─┬─ level the eyes → face/eye crops → gaze network ─┐
                                                             └─ 3D eyeball model (geometry/) ──────────────────┤
                        per-person calibration (network features | geometric features | head pose) ◄──────────┘
-                       → blend with the eyeball model → drift offset → smoothing → ring / dashboard / control
+                       → blend with the eyeball model → drift offset → smoothing → ring / dashboard / voice control
 ```
 
 - **Calibration** fits ridge regressions from those features to screen points and picks
