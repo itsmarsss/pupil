@@ -13,6 +13,7 @@ from pathlib import Path
 
 from ..calibration.implicit import evaluate_click, window
 from ..calibration.profile import CLICK
+from ..core.env import env
 from ..core.paths import recordings_dir
 from ..sinks.recorder import GazeRecorder
 from ..sinks.snapper import Element, Snapper
@@ -146,6 +147,8 @@ class VoiceLog:
         self._log: collections.deque = collections.deque(maxlen=keep)
         self._state: dict = {}
         self._lips: collections.deque = collections.deque(maxlen=12)  # lip-gate verdicts, newest last
+        retention = min(20, max(1, int(env("APIFY_RESEARCH_RETENTION", "5"))))
+        self._research: collections.deque = collections.deque(maxlen=retention)
 
     def add(self, msg: dict) -> None:
         kind, text = msg.get("event"), msg.get("text", "")
@@ -162,6 +165,14 @@ class VoiceLog:
                 self._state["models"] = msg.get("models")
             elif kind == "lips":
                 self._lips.append({k: v for k, v in msg.items() if k not in ("event", "text")})
+            elif kind == "research":
+                research = msg.get("research")
+                if isinstance(research, dict):
+                    self._state["research"] = research
+                    if research.get("phase") in ("complete", "partial", "failed"):
+                        run_id = research.get("run_id")
+                        if not self._research or run_id != self._research[-1].get("run_id"):
+                            self._research.append(research)
             else:  # heard / status / tier
                 if kind == "heard":
                     self._state["heard"] = text
@@ -174,4 +185,10 @@ class VoiceLog:
             if not self._state:
                 return None  # no controller connected
             return {**self._state, "log": list(self._log)[-12:], "lips": list(self._lips),
+                    "research_history": list(self._research),
                     "connected": time.time() - self._state["seen"] < 30}
+
+    def clear_research(self) -> None:
+        with self._lock:
+            self._research.clear()
+            self._state.pop("research", None)

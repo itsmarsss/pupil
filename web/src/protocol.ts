@@ -116,6 +116,8 @@ export interface VoiceState {
   heat?: { x: number; y: number; w: number; h: number; label: string; share: number }[]; // last "this": candidates
   lips?: LipVerdict[];
   models?: ModelCall[]; // which model each role calls (control/models.py)
+  research?: ResearchState;
+  research_history?: ResearchState[];
 }
 
 /** One role's model and its latest call: active while a request (or a stream: hearing, speaking) is open. */
@@ -127,6 +129,30 @@ export interface ModelCall {
   what?: string; // what the call is for: the Jev question set, the agent step, "listening"...
   t?: number; // when it started (active) or finished (seconds)
   ms?: number | null; // how long the last call took
+}
+
+export interface ResearchCard {
+  id: string;
+  title: string;
+  url?: string;
+  recommendation?: string;
+  rationale?: string;
+  quote?: string;
+  retrieved_at?: string;
+  contradiction?: boolean;
+  uncertain?: boolean;
+}
+
+export interface ResearchState {
+  query: string;
+  phase: "starting" | "running" | "complete" | "partial" | "failed";
+  actor_id?: string;
+  run_id?: string | null;
+  elapsed_s: number;
+  cards: ResearchCard[];
+  citations: string[];
+  partial?: boolean;
+  error?: string | null;
 }
 
 /** The live lip gate (control/lips.py): audio only counts while it's open. */
@@ -149,5 +175,5 @@ export interface LipVerdict {
 export type EngineMessage = SceneInfo | CalibrationInfo | FrameState;
 
 export type Command =
-  | "recalibrate" | "recentre" | "check" | "measure" | "cycle_smoothing" | "toggle_overlay" // live app
+  | "recalibrate" | "recentre" | "check" | "measure" | "cycle_smoothing" | "toggle_overlay" | "clear_research" // live app
   | "play" | "pause" | "seek" | "step" | "speed"; // replay

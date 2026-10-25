@@ -1,0 +1,15 @@
+{
+  "actorSpecification": 1,
+  "name": "accessible-decision-researcher",
+  "title": "Accessible Decision Researcher",
+  "description": "Turns a selected public page and a constrained question into compact, sourced decision evidence.",
+  "version": "0.1",
+  "build": {
+    "dockerfile": "./Dockerfile"
+  },
+  "input": "./input_schema.json",
+  "output": "./output_schema.json",
+  "storages": {
+    "dataset": "./dataset_schema.json"
+  }
+}

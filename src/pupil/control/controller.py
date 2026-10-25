@@ -105,7 +105,10 @@ class VoiceController:
         self.gate = Gate()
         if not self.gate.available:
             self._status(f"Fast tier (Jev) off: {self.gate.error}. Unmatched commands go straight to the agent.")
-        self.agent = Agent(self.screen, self.gate, self._status)
+        self.agent = Agent(
+            self.screen, self.gate, self._status,
+            on_provider_event=lambda state: self.gaze.report("research", research=state),
+        )
         self.speaker = Speaker(on_state=lambda on: self.events.put(("speaking", on)))
         self.agent.on_reply = lambda text: self._say(text)  # the agent's answer (or what it's waiting on), aloud
         self.episodes = EpisodeLog(source="typed" if typed else "voice")
@@ -516,7 +519,10 @@ class VoiceController:
         self.agent.start(request, gaze, target, candidates, app, tier=tier, budget=budget,
                          context=self._conversation_context(request),
                          on_done=lambda text, steps, s: (
-                             self.episodes.outcome(ep, agent_result=text, agent_steps=steps, agent_s=round(s, 1)),
+                             self.episodes.outcome(
+                                 ep, agent_result=text, agent_steps=steps, agent_s=round(s, 1),
+                                 apify=list(self.agent.provider_metadata),
+                             ),
                              self._note_activity(text or "Agent finished", ep, agent=True)))
 
     def _route_with_gate(self, request, gaze, target, candidates, allow_clarify=True, assume_command=False):
