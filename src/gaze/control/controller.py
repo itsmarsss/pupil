@@ -17,6 +17,7 @@ from .agent import Agent
 from .episodes import EpisodeLog, element_dict
 from .gate import CLARIFY_PROMPTS, MAX_CANDIDATES, YES, Gate
 from .hud import Hud
+from .lips import LipGate
 from .screen import Screen
 from .voice import CartesiaVoice, TypedInput, Voice
 
@@ -56,7 +57,8 @@ class VoiceController:
         self.voice: Voice | None = None  # the mic thread (None when typing)
         self.enabled = True
         self._ep: dict | None = None  # episode the worker is handling (one at a time)
-        self._lips: dict = {}  # lip-gate measurements for the utterance being transcribed
+        self.lips = LipGate(config.LIP_GATE) if gaze.calibratable and config.LIP_GATE != "off" else None
+        gaze.lips = self.lips
 
     def start(self) -> None:
         threading.Thread(target=self._snap_loop, name="snap", daemon=True).start()
@@ -67,11 +69,11 @@ class VoiceController:
         else:
             voice = CartesiaVoice if config.STT == "cartesia" else Voice
             self.voice = voice(self._on_utterance, self._on_mic_state, lambda name: self.events.put(("mic_device", name)),
-                               accept=self._accept_speech, on_rejected=self._on_rejected)
+                               on_partial=lambda text: self.events.put(("partial", text)), gate=self.lips)
             self.voice.start()
             self.hud.mic = "loading"
-        self.gaze.report("lip_gate", enabled=config.LIP_GATE and hasattr(self.gaze, "lips"),
-                         threshold=config.LIP_MOVING)
+        self.gaze.report("lip_gate", enabled=self.lips is not None and self.lips.mode == "on",
+                         threshold=self.lips.threshold if self.lips else None)
         if not macos.has_accessibility():
             self.hud.status = "Grant Accessibility permission to your terminal (System Settings > Privacy & Security)."
         self.hud.show()
@@ -91,25 +93,22 @@ class VoiceController:
 
     # --- callbacks from the voice threads ---
 
-    def _accept_speech(self, t0, t1):
-        """Lip gate, before transcription: speech while the camera sees your lips still isn't yours."""
-        if not config.LIP_GATE or not hasattr(self.gaze, "lips"):
-            self._lips = {}
-            return True, {}
-        moving, info = self.gaze.lips(t0, t1)
-        self._lips = {"moving": moving, **info}
-        self.gaze.report("lips", **self._lips)  # the dashboard's Lips plot marks each utterance
-        return moving is not False, self._lips
-
-    def _on_rejected(self, t0, t1, info):
-        self.events.put(("rejected", (t0, t1, info)))
-
     def _on_utterance(self, text, t0, t1):
         if not self.enabled:
             return
-        print(f"[{time.strftime('%H:%M:%S')}] heard: \"{text}\"", flush=True)
+        stamp = time.strftime('%H:%M:%S')
+        if self.lips and self.lips.someone_else(t0, t1):
+            if self.lips.mode == "on":
+                print(f"[{stamp}] ignored (your lips didn't move): \"{text}\"", flush=True)
+                self.events.put(("partial", ""))
+                self.events.put(("dropped", (text, t0, t1)))
+                return
+            print(f"[{stamp}] [shadow] gate would have BLOCKED: \"{text}\"", flush=True)
+        elif self.lips and self.lips.mode == "shadow":
+            print(f"[{stamp}] [shadow] gate would have let through: \"{text}\"", flush=True)
+        print(f"[{stamp}] heard: \"{text}\"", flush=True)
         self.gaze.report("heard", text)
-        self.events.put(("speech", (text, t0, t1, self._lips)))
+        self.events.put(("speech", (text, t0, t1)))
 
     def _on_mic_state(self, state):
         self.gaze.report("mic", state)
@@ -139,13 +138,14 @@ class VoiceController:
                 break
             if kind == "speech":
                 self._on_speech(*payload)
-            elif kind == "rejected":
-                t0, t1, info = payload
-                ep = self.episodes.begin("", t0, t1, "rejected")
-                ep.update(route="lip_gate", lips=info)
+            elif kind == "dropped":  # heard, but the lip gate is sure it wasn't you
+                text, t0, t1 = payload
+                ep = self.episodes.begin(text, t0, t1, "dropped")
+                ep["route"] = "lip_gate"
                 self.episodes.finish(ep)
-                self.hud.status = ("Ignored speech: no one in front of the camera." if info.get("why") == "no face"
-                                   else "Ignored speech: your lips weren't moving.")
+                self.hud.status = f'Dropped (lips didn\'t move): "{text}"'
+            elif kind == "partial":  # words so far, while you're still talking
+                self.hud.heard = f"{payload}…" if payload else ""
             elif kind == "mic":
                 self.hud.mic = payload
             elif kind == "mic_device":
@@ -157,6 +157,8 @@ class VoiceController:
                 self.flash_until = time.time() + 0.4
         h = self.hud
         h.gaze = self.gaze.point()
+        if self.lips and self.lips.mode == "on":
+            h.gate = "open" if self.lips.would_open() else f"waiting ({self.lips.reason})"
         h.target, h.candidates = self.snap
         h.warning = ("" if self.gaze.connected and not self.gaze.busy
                      else "calibrating" if self.gaze.busy else "no gaze: is the camera on?")
@@ -174,7 +176,7 @@ class VoiceController:
             self.snap = snapping.snap(*point, self.screen.w_pt, self.screen.h_pt) if point else (None, [])
             time.sleep(0.15)
 
-    def _on_speech(self, text, t0, t1, lips=None):
+    def _on_speech(self, text, t0, t1):
         cmd = router.route(text)
         if cmd is None:
             return
@@ -185,8 +187,6 @@ class VoiceController:
         ep = self.episodes.begin(cmd.text, t0, t1, cmd.kind)
         if fixed:
             ep["heard_as"] = text
-        if lips:
-            ep["lips"] = lips
         self.hud.heard = cmd.text
         if cmd.kind == "cancel":  # handled immediately, even while a command is running
             self.agent.cancel()

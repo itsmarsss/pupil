@@ -11,8 +11,6 @@ import time
 from collections import deque
 from typing import Callable
 
-import numpy as np
-
 from ..core.types import Sample
 from . import config
 
@@ -27,16 +25,19 @@ class TrackerGaze:
         self._busy, self._commands, self._report = busy, commands, report
         self._lock = threading.Lock()
         self._history: deque = deque(maxlen=900)  # (wall t, x, y, confidence), ~30 s at 30 Hz
-        self._mouth: deque = deque(maxlen=900)  # (wall t, mouth openness or None when no face)
+        self.lips = None  # a lips.LipGate fed with every frame
         self._last_seen = self._last_point = 0.0
         self._offset = time.time() - time.monotonic_ns() / 1e9  # speech is timestamped with time.time()
 
     def on_sample(self, s: Sample) -> None:
         now = time.time()
         self._last_seen = now
-        with self._lock:
-            self._mouth.append((self._offset + s.t_ns / 1e9, s.face.mouth_open if s.face is not None else None))
         p = s.point
+        if self.lips is not None:  # same fields the tracker used to publish to the controller
+            msg = {"state": p.state.value, "confidence": float(p.confidence), "busy": self.busy}
+            if s.face is not None:
+                msg["mouth"] = s.face.mouth_open
+            self.lips.update(msg, now)
         if p.valid:
             with self._lock:
                 self._history.append((self._offset + s.t_ns / 1e9, p.x, p.y, float(p.confidence)))
@@ -70,23 +71,6 @@ class TrackerGaze:
         with self._lock:
             window = [c for t, _, _, c in self._history if t0 <= t <= t1] or [c for *_, c in list(self._history)[-5:]]
         return statistics.median(window) if window else 0.0
-
-    def lips(self, t0, t1) -> tuple[bool | None, dict]:
-        """Were the user's lips moving between t0 and t1? False too when the camera saw no face at all (nobody at the
-        computer: a TV or someone else); None when it saw the face only part of the time, so it can't say."""
-        with self._lock:
-            window = [m for t, m in self._mouth if t0 <= t <= t1]
-        seen = [m for m in window if m is not None]
-        # t0/t1 on the tracker's clock (monotonic seconds), so the dashboard can draw the window on its plots
-        info = {"frames": len(window), "face_frames": len(seen),
-                "t0": round(t0 - self._offset, 3), "t1": round(t1 - self._offset, 3)}
-        if len(window) >= 3 and not seen:
-            return False, {**info, "why": "no face"}
-        if len(window) < 3 or len(seen) < 0.7 * len(window):
-            return None, info
-        lo, hi = np.percentile(seen, [10, 90])
-        info["range"] = round(float(hi - lo), 3)
-        return bool(hi - lo >= config.LIP_MOVING), info
 
     def send(self, cmd: dict) -> None:
         fn = self._commands.get(cmd.get("cmd"))

@@ -49,10 +49,9 @@ MIC_NAME = os.environ.get("GAZE_MIC", "")  # force an input by name; empty = fol
 # e.g. to AirPods), skipping silent virtual devices like "Virtual Desktop Mic" / "BlackHole"
 VOICE_PROCESSING = os.environ.get("GAZE_VOICE_PROCESSING", "1") != "0"  # Apple's noise suppression + echo cancel
 # on the system default input (not available for a mic picked by name)
-LIP_GATE = os.environ.get("GAZE_LIP_GATE", "1") != "0"  # ignore speech while the camera sees your lips still
-LIP_MOVING = 0.04  # p10-p90 range of mouth openness (inner-lip gap / width) that counts as talking. A first,
-# deliberately low guess: episodes log the range for every utterance (`gaze episodes`), so tune it from those.
-# The gate only rejects when the camera saw the face for most of the utterance.
+# Lip gate (lips.py): speech counts only while you face the screen and move your lips. on | shadow (log what it
+# would block, block nothing) | off. Eye tracking only; with --gaze mouse there is no face to watch.
+LIP_GATE = os.environ.get("GAZE_LIP_GATE", "on")
 WAKE_WORD = os.environ.get("GAZE_WAKE_WORD", "").strip().lower()  # e.g. "gaze"; empty = every utterance is a command
 
 # Snapping
