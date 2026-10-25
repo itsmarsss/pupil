@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import signal
 import threading
 import time
@@ -34,6 +35,8 @@ log = logging.getLogger(__name__)
 
 LID_MOVED_DEG = 4.0  # hinge change since calibration that flags the fit as suspect
 SMOOTHING_ORDER = ["off", "light", "medium", "strong"]
+HEAT_WINDOW_NS = 600_000_000  # the on-screen heat map shows this much recent gaze
+HEAT_MAX_POINTS = 24
 DASHBOARD_PORT = 8766
 
 
@@ -82,6 +85,7 @@ class GazeApp:
         o = self.options
         NSApplication.sharedApplication().setActivationPolicy_(NSApplicationActivationPolicyAccessory)
         self.ring = GazeRing(self.screen)
+        self.ring.heat = os.environ.get("GAZE_DISPLAY", "heat") == "heat"  # ring | heat (◉ → Gaze display)
         if o["session_dir"] is not None:
             self._start_session(o["session_dir"])
         self.flows = Flows(self.tracker, TargetScreen(self.screen), self.ring, self.lid.sensor,
@@ -243,8 +247,12 @@ class GazeApp:
         if p is not None and p.valid:
             self._last_valid_ns = now
             confidence = min(p.confidence, 0.3) if self.lid_moved else p.confidence
-            if self.ring.heat:
-                self.ring.sigma = self.gaze_sigma_pt()
+            if self.ring.heat:  # the full heat map: the last HEAT_WINDOW of raw gaze, blurred by its accuracy
+                recent = self.tracker.samples_between(now - HEAT_WINDOW_NS, now)
+                points = [(s.point.raw_x, s.point.raw_y, s.point.confidence) for s in recent
+                          if s.point.valid and s.point.raw_x is not None]
+                self.ring.show_cloud(points[-HEAT_MAX_POINTS:], self.gaze_sigma_pt())
+                return
             element = self.snapping.element_for(p)
             if element is not None and not self.ring.heat:  # the heat map shows raw gaze: the blur is the point
                 self.ring.show_at(*element.centre, fixating=True, confidence=confidence)
