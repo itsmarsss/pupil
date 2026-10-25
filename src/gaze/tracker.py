@@ -15,7 +15,7 @@ import numpy as np
 
 from .calibration.features import calibration_vector
 from .core.device import load_device
-from .geometry.eyeball import ScreenPlane, geo_block, measure, to_array
+from .geometry.eyeball import ScreenPlane, geo_block, reconstruct, to_array
 from .calibration.profile import Profile
 from .capture.camera import FrameSource
 from .core.screen import Screen
@@ -144,14 +144,16 @@ class Tracker:
     def process(self, frame) -> Sample:
         face = self.face_tracker.process(frame)
         features = self.model.infer(frame, face) if face is not None else None
-        calib, geo = None, None
+        calib, geo, rec = None, None, None
         if features is not None:
-            m = measure(face)  # eyeball model, from the unwarped face
-            block = geo_block(m, self.plane) if m is not None else None
+            rec = reconstruct(face)  # eyeball model, from the unwarped face
+            block = geo_block(rec.measure, self.plane) if rec is not None else None
             if block is not None:
-                calib, geo = calibration_vector(features.vector, face, block), to_array(m)
+                calib, geo = calibration_vector(features.vector, face, block), to_array(rec.measure)
         point = self._point(frame.t_ns, face, calib, geo)
         sample = Sample(frame.t_ns, features, face, point, calib, geo)
+        if rec is not None:
+            sample.extra["reconstruction"] = rec  # 3D detail for visualisation
         with self._lock:
             self._history.append(sample)
             cutoff = frame.t_ns - int(HISTORY_S * 1e9)
