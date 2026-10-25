@@ -91,7 +91,7 @@ MIC_NAME = env("MIC", "")  # force an input by name; empty = follow the macOS de
 # e.g. to AirPods), skipping silent virtual devices like "Virtual Desktop Mic" / "BlackHole"
 AVOID_BLUETOOTH_MIC = env("AVOID_BLUETOOTH_MIC", "1") != "0"  # following the default: when it's
 # AirPods (Bluetooth), listen on the MacBook mic so they keep full-quality audio; pick AirPods in ◉ → Microphone
-SAVE_AUDIO = env("SAVE_AUDIO", "1") != "0"  # each command's audio next to its episode (.logs/audio)
+SAVE_AUDIO = env("SAVE_AUDIO", "0") == "1"  # 1 = keep each command's audio (.logs/audio), to debug hearing
 VOICE_PROCESSING = env("VOICE_PROCESSING", "0") == "1"  # Apple's noise suppression + echo cancel.
 # Off by default: on AirPods it forces a call-style path that sounded and transcribed worse; ◉ → Voice isolation
 # on the system default input (not available for a mic picked by name)

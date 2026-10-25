@@ -92,13 +92,17 @@ class EpisodeLog:
         if samples is None or not len(samples):
             return
         folder = self.path.parent / "audio"
-        folder.mkdir(parents=True, exist_ok=True)
         path = folder / f"{ep['id']}.wav"
-        with wave.open(str(path), "wb") as w:
-            w.setnchannels(1)
-            w.setsampwidth(2)
-            w.setframerate(rate)
-            w.writeframes((np.clip(samples, -1, 1) * 32767).astype("<i2").tobytes())
+        try:
+            folder.mkdir(parents=True, exist_ok=True)
+            with open(path, "wb") as f, wave.open(f, "wb") as w:  # (a failed wave.open alone crashes in __del__)
+                w.setnchannels(1)
+                w.setsampwidth(2)
+                w.setframerate(rate)
+                w.writeframes((np.clip(samples, -1, 1) * 32767).astype("<i2").tobytes())
+        except OSError:  # disk full, folder gone: the command matters, its recording doesn't
+            path.unlink(missing_ok=True)
+            return
         ep["audio"] = str(path.relative_to(self.path.parent))
         for old in sorted(folder.glob("*.wav"), key=lambda p: p.stat().st_mtime)[:-MAX_AUDIO_FILES]:
             old.unlink(missing_ok=True)
