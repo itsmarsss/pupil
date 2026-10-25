@@ -36,6 +36,9 @@ BLINK_REMIND_COOLDOWN_S = 10 * 60
 FATIGUE_REMIND_COOLDOWN_S = 30 * 60
 
 
+STRONGEST = 0.8  # the score is at least this share of the strongest single signal
+
+
 def _clamp(x):
     return float(min(max(x, 0.0), 1.0))
 
@@ -118,15 +121,18 @@ class HealthTracker:
             on_screen_min = (now - self._screen_since) / 60 if self._screen_since is not None and self._away_since is None else 0.0
             breaks = self.breaks
         parts = {  # each 0 (fine) .. 1 (strong sign of tiredness), and its weight
-            "blink_rate": (_clamp((12 - rate) / 8) if rate is not None else None, 0.25),
-            "blink_duration": (_clamp((duration - 0.25) / 0.25) if duration is not None else None, 0.15),
-            "perclos": (_clamp((perclos - 0.05) / 0.15) if perclos is not None else None, 0.25),
-            "droop": (_clamp((0.95 - droop) / 0.2) if droop is not None else None, 0.15),
-            "screen_time": (_clamp((on_screen_min - 20) / 40), 0.2),
+            "blink_rate": (_clamp((15 - rate) / 9) if rate is not None else None, 0.3),  # 15/min fine, 6 strong
+            "blink_duration": (_clamp((duration - 0.2) / 0.2) if duration is not None else None, 0.15),
+            "perclos": (_clamp((perclos - 0.03) / 0.1) if perclos is not None else None, 0.25),
+            "droop": (_clamp((0.97 - droop) / 0.15) if droop is not None else None, 0.1),
+            "screen_time": (_clamp((on_screen_min - 15) / 30), 0.2),
         }
         known = [(v, w) for v, w in parts.values() if v is not None]
-        score = round(100 * sum(v * w for v, w in known) / sum(w for _, w in known)) if known else None
-        level = None if score is None else "low" if score < 35 else "moderate" if score < 65 else "high"
+        # Sensitive on purpose: one strong sign (blinking 5 times a minute) is enough to call it, so the score is
+        # the larger of the weighted mean and most of the strongest single signal.
+        score = round(100 * max(sum(v * w for v, w in known) / sum(w for _, w in known),
+                                STRONGEST * max(v for v, _ in known))) if known else None
+        level = None if score is None else "low" if score < 30 else "moderate" if score < 60 else "high"
         return {
             "blink_rate": None if rate is None else round(rate, 1),
             "blink_duration_ms": None if duration is None else round(duration * 1000),

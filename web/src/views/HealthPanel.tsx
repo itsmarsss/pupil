@@ -36,8 +36,8 @@ function Gauge({ score, level }: { score: number | null | undefined; level: Heal
       <path d={`M ${cx - r} ${cy} A ${r} ${r} 0 0 1 ${cx + r} ${cy}`} fill="none" stroke="url(#gauge-fill)" strokeWidth={12}
             strokeLinecap="round" strokeDasharray={`${len * shown} ${len}`} className="gauge-arc" />
       <text x={cx} y={cy - 14} textAnchor="middle" className="gauge-score">{score ?? "–"}</text>
-      <text x={cx} y={cy + 4} textAnchor="middle" className="gauge-level" fill={level ? LEVEL_COLOR[level] : MUTED}>
-        {level ? `${level} fatigue` : "measuring…"}
+      <text x={cx} y={cy + 6} textAnchor="middle" className="gauge-level" fill={level ? LEVEL_COLOR[level] : MUTED}>
+        {level ?? "measuring"}
       </text>
     </svg>
   );
@@ -45,7 +45,7 @@ function Gauge({ score, level }: { score: number | null | undefined; level: Heal
 
 /** Blink rate over the last couple of minutes, with the relaxed 15-20 band shaded. */
 function Sparkline({ values }: { values: number[] }) {
-  const w = 140, h = 40, max = 30;
+  const w = 70, h = 18, max = 30;
   const y = (v: number) => h - (Math.min(v, max) / max) * h;
   const pts = values.map((v, i) => `${(i / Math.max(values.length - 1, 1)) * w},${y(v)}`).join(" ");
   return (
@@ -58,20 +58,20 @@ function Sparkline({ values }: { values: number[] }) {
 
 /** Progress toward the next 20-20-20 break. */
 function BreakRing({ minutes, every }: { minutes: number; every: number }) {
-  const r = 26, c = 2 * Math.PI * r, due = minutes >= every;
+  const r = 24, c = 2 * Math.PI * r, due = minutes >= every;
   const frac = Math.min(minutes / every, 1);
   return (
     <svg className={`ring${due ? " due" : ""}`} viewBox="0 0 64 64">
-      <circle cx={32} cy={32} r={r} fill="none" stroke="#232833" strokeWidth={6} />
-      <circle cx={32} cy={32} r={r} fill="none" stroke={due ? MID : "#4dabf7"} strokeWidth={6} strokeLinecap="round"
+      <circle cx={32} cy={32} r={r} fill="none" stroke="#232833" strokeWidth={8} />
+      <circle cx={32} cy={32} r={r} fill="none" stroke={due ? MID : "#4dabf7"} strokeWidth={8} strokeLinecap="round"
               strokeDasharray={`${c * frac} ${c}`} transform="rotate(-90 32 32)" />
-      <text x={32} y={36} textAnchor="middle" className="ring-text">{Math.floor(minutes)}m</text>
+      <text x={32} y={39} textAnchor="middle" className="ring-text">{Math.floor(minutes)}</text>
     </svg>
   );
 }
 
-/** Eye health: fatigue and what drives it, blinking, and breaks (health/tracker.py). Heuristic nudges, not a
- *  medical measurement. */
+/** Eye health: fatigue and what drives it, blinking, and breaks (health/tracker.py). Compact: a small gauge beside
+ *  the two numbers that matter, then a bar per signal. Heuristic nudges, not a medical measurement. */
 export function HealthPanel() {
   const { frame } = useEngine();
   const h = frame?.health;
@@ -81,56 +81,47 @@ export function HealthPanel() {
   const rate = h.blink_rate;
   const every = h.break_every_min ?? 20;
   const minutes = h.minutes_on_screen ?? 0;
+  const due = minutes >= every;
   const blinkSeries = engine.series.blink_rate.filter((v): v is number => v != null);
   return (
     <div className="pane scroll health">
-      <section className="health-hero">
+      <section className="h-top">
         <Gauge score={h.fatigue} level={h.level} />
-        <div className="health-why">
-          {h.fatigue == null ? "Needs half a minute of your face in view." :
-            top ? <>Mostly from <b>{NAMES[top[0]]}</b></> : "Eyes look rested."}
-        </div>
-      </section>
-
-      <section className="health-cards">
-        <div className="health-card">
-          <div className="card-head">Blinks</div>
-          <div className="card-main">
-            <span className="big" style={{ color: rate == null ? MUTED : rate < 8 ? BAD : rate < 12 ? MID : GOOD }}>
+        <div className="h-side">
+          <div className="h-stat">
+            <span className="h-num" style={{ color: rate == null ? MUTED : rate < 8 ? BAD : rate < 12 ? MID : GOOD }}>
               {rate == null ? "–" : rate.toFixed(0)}
             </span>
-            <span className="unit">/ min</span>
+            <span className="h-unit">blinks/min</span>
+            <Sparkline values={blinkSeries} />
           </div>
-          <Sparkline values={blinkSeries} />
-          <div className="card-foot">relaxed: 15–20</div>
-        </div>
-        <div className="health-card">
-          <div className="card-head">Break</div>
-          <div className="card-main ring-row">
+          <div className="h-stat">
             <BreakRing minutes={minutes} every={every} />
-            <div className="ring-copy">
-              {minutes >= every ? <b className="due-text">Look away 20 s</b> : <>Next in <b>{Math.ceil(every - minutes)} min</b></>}
-              <div className="card-foot">{h.breaks ?? 0} break{h.breaks === 1 ? "" : "s"} so far</div>
-            </div>
+            <span className={`h-break${due ? " due" : ""}`}>
+              {due ? "look away 20 s" : <>break in <b>{Math.ceil(every - minutes)}m</b></>}
+              <span className="h-sub"> · {h.breaks ?? 0} taken</span>
+            </span>
+          </div>
+          <div className="h-why">
+            {h.fatigue == null ? "needs ~30 s of your face" : top ? <>mostly <b>{NAMES[top[0]]}</b></> : "eyes look rested"}
           </div>
         </div>
       </section>
-
-      <section className="health-signals">
+      <section className="h-signals">
         {SIGNALS.map((s) => {
           const v = signals[s.key];
           return (
-            <div key={s.key} className="signal">
-              <span className="signal-label">{s.label}</span>
-              <span className="signal-bar">
-                <span style={{ width: `${v == null ? 0 : Math.max(v * 100, 4)}%`, background: v == null ? MUTED : severity(v) }} />
+            <div key={s.key} className="h-signal" title={s.label}>
+              <span className="h-label">{s.label}</span>
+              <span className="h-bar">
+                <span style={{ width: `${v == null ? 0 : Math.max(v * 100, 3)}%`, background: v == null ? MUTED : severity(v) }} />
               </span>
-              <span className="signal-value">{s.value(h)}</span>
+              <span className="h-value">{s.value(h)}</span>
             </div>
           );
         })}
       </section>
-      <div className="health-note">Nudges from your blinking and screen time, not a medical measurement.</div>
+      <div className="h-note">nudges, not a medical measurement</div>
     </div>
   );
 }
