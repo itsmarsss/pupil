@@ -36,6 +36,10 @@ export function ScreenView() {
         {frame?.target && (
           <circle cx={frame.target[0]} cy={frame.target[1]} r={r * 1.8} fill="none" stroke={C.target} strokeWidth={3} />
         )}
+        {frame?.voice?.target && (
+          <rect x={frame.voice.target.x} y={frame.voice.target.y} width={frame.voice.target.w}
+                height={frame.voice.target.h} fill="none" stroke={C.voice} strokeWidth={3} rx={4} />
+        )}
         {dot(frame?.face_pointing_pt, C.pointing, 0.8, "face")}
         {dot(g?.ml, C.ml, 0.9, "ML")}
         {dot(g?.eyeball, C.eyeball, 0.9, "eyeball")}

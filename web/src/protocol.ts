@@ -81,6 +81,17 @@ export interface FrameState {
   smoothing?: string;
   overlay?: boolean;
   replay?: { index: number; playing: boolean; speed: number };
+  voice?: VoiceState | null;
+}
+
+/** What the voice controller (gaze control) heard, decided and is doing. */
+export interface VoiceState {
+  connected: boolean;
+  mic?: string | null;
+  heard?: string;
+  pending?: string | null;
+  target?: { x: number; y: number; w: number; h: number; label: string } | null;
+  log: { t: number; kind: "heard" | "status" | string; text: string }[];
 }
 
 export type EngineMessage = SceneInfo | CalibrationInfo | FrameState;

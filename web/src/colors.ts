@@ -13,4 +13,5 @@ export const C = {
   lid: "#6b7280",
   boxes: "#4fc3f7",
   calib: "#5c6370",
+  voice: "#f06595",
 } as const;

@@ -24,7 +24,8 @@ export function StatusPanel() {
       <h4>Legend</h4>
       <ul className="legend">
         {([["target", "target"], ["fused", "app (combined)"], ["ml", "ML calibration"], ["eyeball", "eyeball model"],
-           ["smoothed", "ring (smoothed)"], ["pointing", "face pointing"], ["rays", "eye rays"]] as const).map(([k, label]) => (
+           ["smoothed", "ring (smoothed)"], ["pointing", "face pointing"], ["rays", "eye rays"],
+           ["voice", "voice target"]] as const).map(([k, label]) => (
           <li key={k}><span style={{ background: C[k] }} />{label}</li>
         ))}
       </ul>

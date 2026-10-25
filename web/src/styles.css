@@ -74,3 +74,10 @@ button, select { font: inherit; }
 .timeline .track input { width: 100%; position: relative; z-index: 1; }
 .timeline .marker { position: absolute; top: 0; width: 2px; height: 6px; }
 .timeline .pos { color: var(--muted); font-size: 12px; min-width: 140px; text-align: right; }
+
+.heard { font-style: italic; }
+.pending { margin-top: 8px; padding: 6px 8px; border-radius: 6px; background: #3b2a12; color: #ffd08a; }
+.voice-log { list-style: none; padding: 0; margin: 0; display: grid; gap: 4px; font-size: 12px; }
+.voice-log .when { color: var(--muted); margin-right: 8px; font-variant-numeric: tabular-nums; }
+.voice-log .heard q, .voice-log li.heard q { color: #f06595; }
+code { background: #1c2230; padding: 1px 4px; border-radius: 4px; }
