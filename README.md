@@ -111,10 +111,9 @@ While it tracks your eyes, gaze also watches out for them (`health/`): blink rat
 minute; staring at screens often drops it to 5–7, which dries the eyes), blink length, PERCLOS (share of the
 last minute with the eyes mostly closed, the standard drowsiness measure), lid droop against the start of
 the session, and screen time since your last break (20 s with your face out of view or looking away counts:
-the 20-20-20 rule), and eye movements as alertness signs against your first minutes (gaze drifting more
-while you fixate, slower saccades for their size, less looking around). ◉ → Health → Alertness check (20 s)
-measures reactivity: dots appear at random moments and places and it times how fast your eyes get there,
-against your earlier checks. They combine into a fatigue score (low / moderate / high), sensitive on
+the 20-20-20 rule), and alertness from how your eyes move, against your first minutes: how fast they jump
+between things, whether the jumps drag (take longer per degree), how steadily they hold, and how often you
+look around. They combine into a fatigue score (low / moderate / high), sensitive on
 purpose: one strong sign is enough. Blinks are measured against
 your own open-eye baseline, so there's no fixed threshold to tune. Gentle, rate-limited reminders arrive
 as notifications (and at your gaze with voice control on): blink when the rate stays low, look away after

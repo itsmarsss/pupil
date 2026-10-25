@@ -201,7 +201,6 @@ class GazeApp:
             "measure": on_main(lambda: f.when_idle(f.measure)),
             "cycle_smoothing": on_main(self._cycle_smoothing),
             "toggle_overlay": on_main(self._toggle_overlay),
-            "alertness": on_main(lambda: f.when_idle(self._alertness_check)),
         }
 
     def _start_dashboard(self, port: int) -> None:
@@ -306,9 +305,6 @@ class GazeApp:
         if self.session is not None:
             self.session.context["lid"] = angle
 
-    def _alertness_check(self) -> None:
-        self.flows.alertness_check(self.health.record_reaction)
-
     def _health_tick(self, _timer) -> None:
         """Once a second: eye-health reminders, as a notification and (with voice control) a caption at the gaze."""
         self._health_now = self.health.snapshot()  # for the dashboard (every frame) without recomputing it
@@ -382,7 +378,6 @@ class GazeApp:
             SEPARATOR,
             Header("Health"),
             Action(lambda: self.health.status_line(), lambda: None, lambda: False),
-            Action("Alertness check (20 s)", self._alertness_check, idle),
             Toggle("Blink & break reminders", lambda: self.health.reminders_on,
                    lambda: setattr(self.health, "reminders_on", not self.health.reminders_on)),
             SEPARATOR,

@@ -6,8 +6,8 @@ Fed every tracker sample (cheap: a few comparisons per frame). The measures:
 - PERCLOS: share of the last minute with the eyes mostly (>= 80%) closed, the standard drowsiness measure
 - lid droop: how open the eyes are now against the start of the session
 - screen time since the last break (face out of view or looking off-screen for BREAK_S: the 20-20-20 rule)
-- eye movements (eyemove.py): gaze drift while fixating, saccade speed and rate, against the session's start
-- reaction: how fast the eyes reach a dot that appears (the alertness check), against earlier checks
+- alertness from eye movements (eyemove.py): how fast the eyes jump and whether the jumps drag, gaze drift while
+  fixating and how often you look around, each against the session's start
 The fatigue score combines them. These are heuristics for nudges, not a medical measurement.
 """
 from __future__ import annotations
@@ -30,7 +30,6 @@ PERCLOS_WINDOW_S = 60.0
 MIN_FACE_S = 30.0  # face time needed before blink rate means anything
 SESSION_BASELINE_S = 180.0  # the first minutes of openness are the session's reference for droop
 LOG_EVERY_S = 60.0
-REACTION_VALID_S = 30 * 60  # an alertness check counts toward fatigue this long
 ON_SCREEN = {TrackingState.TRACKING, TrackingState.BLINK, TrackingState.UNCALIBRATED}
 
 # reminders: (kind, condition text, cooldown)
@@ -53,8 +52,6 @@ class HealthTracker:
         self._lock = threading.Lock()
         self.eyes = EyeMovement()
         self._pt_per_deg = pt_per_deg
-        self.reaction: dict | None = None  # the last alertness check: {"ms", "baseline_ms", "misses", "t"}
-        self._reaction_history = self._load_reactions(log_dir)
         self.blinks = BlinkDetector()
         self._blinks: deque = deque()  # Blink, last few minutes
         self._face: deque = deque()  # (t, frame duration) with the face visible, for face-time normalisation
@@ -132,13 +129,6 @@ class HealthTracker:
             on_screen_min = (now - self._screen_since) / 60 if self._screen_since is not None and self._away_since is None else 0.0
             breaks = self.breaks
             eyes = self.eyes.snapshot(now)
-        reaction = self.reaction if self.reaction and time.time() - self.reaction["t"] < REACTION_VALID_S else None
-        if reaction is None:
-            reaction_sign = None
-        elif reaction.get("baseline_ms"):
-            reaction_sign = _clamp((reaction["ms"] / reaction["baseline_ms"] - 1.1) / 0.35)  # 10% slower: starts
-        else:
-            reaction_sign = _clamp((reaction["ms"] - 450) / 250)  # no history yet: an absolute guess
         parts = {  # each 0 (fine) .. 1 (strong sign of tiredness), and its weight
             "blink_rate": (_clamp((15 - rate) / 9) if rate is not None else None, 0.3),  # 15/min fine, 6 strong
             "blink_duration": (_clamp((duration - 0.2) / 0.2) if duration is not None else None, 0.15),
@@ -148,7 +138,7 @@ class HealthTracker:
             "gaze_drift": (_clamp((eyes["gaze_drift"] - 1.15) / 0.5) if eyes["gaze_drift"] else None, 0.1),
             "saccade_speed": (_clamp((0.92 - eyes["saccade_speed"]) / 0.25) if eyes["saccade_speed"] else None, 0.1),
             "saccade_rate": (_clamp((0.8 - eyes["saccade_rate"]) / 0.4) if eyes["saccade_rate"] else None, 0.05),
-            "reaction": (reaction_sign, 0.15),
+            "eye_drag": (_clamp((eyes["saccade_drag"] - 1.15) / 0.4) if eyes["saccade_drag"] else None, 0.15),
         }
         known = [(v, w) for v, w in parts.values() if v is not None]
         # Sensitive on purpose: one strong sign (blinking 5 times a minute) is enough to call it, so the score is
@@ -169,8 +159,6 @@ class HealthTracker:
             "signals": {k: None if v is None else round(v, 2) for k, (v, _) in parts.items()},
             "break_every_min": TWENTY_MIN // 60,
             "eyes": eyes,
-            "reaction_ms": None if reaction is None else reaction["ms"],
-            "reaction_baseline_ms": None if reaction is None else reaction.get("baseline_ms"),
         }
 
     def status_line(self) -> str:
@@ -205,30 +193,6 @@ class HealthTracker:
             out.append("Your eyes look tired: a 5-minute break would help.")
         self._log(h)
         return out
-
-    # ---- the alertness check (ui/flows.py runs it) ------------------------------------------------------
-
-    def record_reaction(self, latencies_ms: list[float], misses: int) -> dict:
-        """Store an alertness check: median eye reaction time vs the median of earlier checks."""
-        ms = round(float(np.median(latencies_ms))) if latencies_ms else None
-        baseline = round(float(np.median(self._reaction_history[-10:]))) if len(self._reaction_history) >= 2 else None
-        self.reaction = {"ms": ms, "baseline_ms": baseline, "misses": misses, "t": time.time()} if ms else None
-        if ms:
-            self._reaction_history.append(ms)
-            if self._log_dir is not None:
-                try:
-                    self._log_dir.mkdir(parents=True, exist_ok=True)
-                    (self._log_dir / "reaction.json").write_text(json.dumps(self._reaction_history[-200:]))
-                except OSError:
-                    pass
-        return self.reaction or {"ms": None, "baseline_ms": baseline, "misses": misses}
-
-    @staticmethod
-    def _load_reactions(log_dir) -> list:
-        try:
-            return json.loads((log_dir / "reaction.json").read_text()) if log_dir is not None else []
-        except (OSError, ValueError):
-            return []
 
     def _log(self, h: dict) -> None:
         """A line a minute in the day's health log (local only)."""

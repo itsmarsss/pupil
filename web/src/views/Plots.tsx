@@ -8,6 +8,8 @@ export interface PlotSpec {
   title: string;
   series: { key: string; label: string; color: string }[];
   range?: [number, number]; // fixed y range (default: auto)
+  source?: () => Series; // the data (default: the live 20 s series)
+  unit?: "s" | "min"; // time axis labels
 }
 
 export const PLOTS: PlotSpec[] = [
@@ -19,8 +21,9 @@ export const PLOTS: PlotSpec[] = [
   { id: "eyes", title: "Eye openness", series: [
     { key: "open_l", label: "left", color: "#e599f7" }, { key: "open_r", label: "right", color: "#91a7ff" }] },
   { id: "disagreement", title: "ML vs eyeball (pt)", series: [{ key: "disagreement", label: "disagreement", color: "#ff9f43" }] },
-  { id: "health", title: "Blinks & fatigue", series: [
-    { key: "blink_rate", label: "blinks/min", color: "#4dabf7" }, { key: "fatigue", label: "fatigue", color: "#ff6b6b" }] },
+  { id: "fatigue", title: "Fatigue (30 min)", series: [
+    { key: "fatigue", label: "fatigue", color: "#ff6b6b" }, { key: "blink_rate", label: "blinks/min", color: "#4dabf7" }],
+    range: [0, 100], source: () => engine.healthSeries, unit: "min" },
   { id: "engine", title: "Engine", series: [
     { key: "fps", label: "fps", color: "#3ddc84" }, { key: "latency", label: "latency ms", color: "#adb5bd" }] },
 ];
@@ -33,8 +36,9 @@ function compact(v: number): string {
   return `${+v.toFixed(a < 1 && a > 0 ? 2 : 1)}`;
 }
 
-/** `source` picks the data (default: the live 20 s series; the Health panel passes its 30-minute one). */
-export function Plot({ spec, source = () => engine.series, unit = "s" }: { spec: PlotSpec; source?: () => Series; unit?: "s" | "min" }) {
+export function Plot({ spec }: { spec: PlotSpec }) {
+  const source = spec.source ?? (() => engine.series);
+  const unit = spec.unit ?? "s";
   const box = useRef<HTMLDivElement>(null);
   const plot = useRef<uPlot | null>(null);
   const { version } = useEngine();

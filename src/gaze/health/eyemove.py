@@ -1,7 +1,7 @@
-"""Eye movements as alertness signs: gaze drift while fixating, how fast the eyes jump, how often they look around.
+"""Alertness from eye movements: how fast the eyes jump, whether the jumps drag, gaze drift, how often they move.
 
-With fatigue, saccades (the jumps between things you look at) slow down for their size, happen less often, and
-gaze holds less steadily on what you're looking at. A webcam tracker samples at ~30 Hz with a degree or two of
+With fatigue, saccades (the jumps between things you look at) slow down for their size and drag out (take longer
+per degree), happen less often, and gaze holds less steadily on what you're looking at. A webcam tracker samples at ~30 Hz with a degree or two of
 jitter, so absolute numbers mean little: each measure is compared with the user's own first minutes this session,
 and only movements well above the jitter count (saccades over MIN_SACCADE_DEG at over SACCADE_DEG_S).
 """
@@ -25,7 +25,7 @@ class EyeMovement:
     def __init__(self):
         self._prev = None  # (t, x_deg, y_deg)
         self._saccade = None  # in progress: (start t, start xy, peak deg/s)
-        self.saccades: deque = deque()  # (t, amplitude deg, peak deg/s)
+        self.saccades: deque = deque()  # (t, amplitude deg, peak deg/s, duration s)
         self._fixation = None  # (id, start t, [xy...])
         self.fixations: deque = deque()  # (t, rms dispersion deg)
         self._baseline = {"saccades": [], "fixations": [], "t0": None, "face_s": 0.0}
@@ -56,7 +56,7 @@ class EyeMovement:
                     start_t, (sx, sy), peak = self._saccade
                     amplitude = math.hypot(x - sx, y - sy)
                     if amplitude >= MIN_SACCADE_DEG:
-                        record = (start_t, amplitude, peak)
+                        record = (start_t, amplitude, peak, self._prev[0] - start_t)  # until the last fast frame
                         self.saccades.append(record)
                         if in_baseline:
                             b["saccades"].append(record)
@@ -81,7 +81,12 @@ class EyeMovement:
     @staticmethod
     def _speed(saccades) -> float | None:
         """Peak speed per degree of jump (the main-sequence slope): lower = slower eyes."""
-        return float(np.median([p / a for _, a, p in saccades])) if len(saccades) >= MIN_SACCADES else None
+        return float(np.median([p / a for _, a, p, _ in saccades])) if len(saccades) >= MIN_SACCADES else None
+
+    @staticmethod
+    def _drag(saccades) -> float | None:
+        """Seconds per degree of jump: higher = the eyes drag."""
+        return float(np.median([d / a for _, a, _, d in saccades])) if len(saccades) >= MIN_SACCADES else None
 
     def snapshot(self, now: float) -> dict:
         """Each measure now / its baseline (1 = same as the start of the session), None until both exist."""
@@ -99,6 +104,7 @@ class EyeMovement:
         return {
             "gaze_drift": ratio(drift_now, drift_base) if baseline_done else None,
             "saccade_speed": ratio(self._speed(self.saccades), self._speed(b["saccades"])) if baseline_done else None,
+            "saccade_drag": ratio(self._drag(self.saccades), self._drag(b["saccades"])) if baseline_done else None,
             "saccade_rate": ratio(rate_now, rate_base) if baseline_done else None,
             "saccades_per_min": None if rate_now is None else round(rate_now, 1),
             "drift_deg": None if drift_now is None else round(drift_now, 2),

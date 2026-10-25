@@ -86,13 +86,4 @@ def test_eye_movements_show_slower_jumps_and_more_drift_when_tired():
     look(130, saccade_frames=3, jitter_deg=0.35)  # tired: slower jumps, wobblier fixations
     tired = em.snapshot(t)
     assert tired["saccade_speed"] < 0.8 and tired["gaze_drift"] > 1.5
-
-
-def test_reaction_checks_compare_with_earlier_ones(tmp_path):
-    h = HealthTracker(log_dir=tmp_path)
-    h.record_reaction([300, 320, 310], misses=0)
-    h.record_reaction([290, 300, 305], misses=0)
-    r = h.record_reaction([420, 450, 430], misses=1)  # much slower than before
-    assert r["ms"] == 430 and r["baseline_ms"] == 305
-    assert h.snapshot()["signals"]["reaction"] > 0.5
-    assert HealthTracker(log_dir=tmp_path)._reaction_history == [310, 300, 430]  # kept across sessions
+    assert tired["saccade_drag"] > 1.3 and 0.85 <= fresh["saccade_drag"] <= 1.15  # jumps take longer: dragging
