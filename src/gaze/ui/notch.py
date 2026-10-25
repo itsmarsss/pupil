@@ -28,10 +28,10 @@ from AppKit import (
     NSGraphicsContext,
     NSImage,
     NSImageSymbolConfiguration,
-    NSMainMenuWindowLevel,
     NSMakeRect,
     NSPanel,
     NSScreen,
+    NSScreenSaverWindowLevel,
     NSString,
     NSView,
     NSWindowCollectionBehaviorCanJoinAllSpaces,
@@ -251,7 +251,9 @@ class Notch:
         panel.setIgnoresMouseEvents_(True)
         panel.setSharingType_(NSWindowSharingNone)  # never in screenshots: the agent doesn't see it
         panel.setHidesOnDeactivate_(False)
-        panel.setLevel_(NSMainMenuWindowLevel + 3)  # over the menu bar (after anything that resets the level)
+        # over the menu bar and the gaze blob (overlay.py, screen-saver level), so the blob slides under it; set
+        # after anything that resets the level
+        panel.setLevel_(NSScreenSaverWindowLevel + 1)
         panel.setMovable_(False)
         panel.setCollectionBehavior_(NSWindowCollectionBehaviorCanJoinAllSpaces | NSWindowCollectionBehaviorStationary
                                      | NSWindowCollectionBehaviorFullScreenAuxiliary
