@@ -1,4 +1,5 @@
 import os
+import re
 from pathlib import Path
 
 from ..sinks.publisher import CMD_PORT, GAZE_PORT  # noqa: F401  (shared with the tracker)
@@ -15,7 +16,15 @@ def _load_dotenv(path=ROOT / ".env"):
     for line in path.read_text().splitlines():
         key, sep, value = line.strip().partition("=")
         if sep and key and not key.startswith("#"):
-            os.environ.setdefault(key.strip(), value.strip().strip("'\""))
+            os.environ.setdefault(key.strip(), _dotenv_value(value))
+
+
+def _dotenv_value(raw: str) -> str:
+    """A value as written: quoted keeps everything inside; unquoted ends at an inline " # comment"."""
+    raw = raw.strip()
+    if raw[:1] in ("'", '"') and raw[1:].find(raw[0]) >= 0:
+        return raw[1:1 + raw[1:].find(raw[0])]
+    return re.split(r"\s+#", raw, maxsplit=1)[0].strip()
 
 
 _load_dotenv()

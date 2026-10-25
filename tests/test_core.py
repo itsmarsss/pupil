@@ -97,3 +97,13 @@ def test_settings_read_the_new_name_then_the_old(monkeypatch):
     assert env("NOTCH", "1") == "0"
     monkeypatch.setenv("PUPIL_NOTCH", "1")
     assert env("NOTCH", "1") == "1"
+
+
+def test_dotenv_values_drop_inline_comments():
+    from pupil.control.config import _dotenv_value
+
+    assert _dotenv_value("30            # step limit for a normal task") == "30"
+    assert _dotenv_value("anthonylu/accessible-decision-researcher") == "anthonylu/accessible-decision-researcher"
+    assert _dotenv_value('"a # inside quotes"  # comment') == "a # inside quotes"
+    assert _dotenv_value("sk-abc#123") == "sk-abc#123"  # a # inside a value (no space before it) stays
+    assert _dotenv_value("") == ""
