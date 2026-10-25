@@ -68,3 +68,10 @@ def test_someone_else_only_when_sure(monkeypatch):
     t3 = feed(g3, 0, 4, lambda t: None)  # no face seen: can't be sure
     monkeypatch.setattr(lips.time, "time", lambda: t3)
     assert not g3.someone_else(1, 3)
+
+
+def test_opens_for_a_steady_open_mouth():
+    g = LipGate()
+    t = feed(g, 0, 3, lambda t: 0.01)
+    t = feed(g, t, t + 1.2, lambda t: 0.15)  # opened and held: no change after the first frame
+    assert g.would_open(t)
