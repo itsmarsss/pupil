@@ -93,8 +93,8 @@ class Flows:
 
     def after_cancel(self) -> None:
         self.label(None)
-        if self.tracker.profile is not None and self.tracker.profile.calibrated:
-            self.done()
+        if self.tracker.pointing == "face" or (self.tracker.profile is not None and self.tracker.profile.calibrated):
+            self.done()  # (face pointing works without calibration: Esc on its dot just carries on)
         else:
             self.quit()
 
@@ -110,7 +110,11 @@ class Flows:
 
     # ---- launch ------------------------------------------------------------------------
     def launch(self, force_recalibrate: bool) -> None:
-        """Reuse a saved calibration after a quick check, or start calibrating."""
+        """Reuse a saved calibration after a quick check, or start calibrating. Face pointing needs neither: one
+        centre dot lines it up."""
+        if self.tracker.pointing == "face":
+            self.recentre()
+            return
         model_id = self.tracker.model.model_id
         camera = self.tracker.source.source_id
         screen_pt = (self.screen.width_pt, self.screen.height_pt)
@@ -312,7 +316,8 @@ class Flows:
     def recentre(self) -> None:
         """Drift correction: one centre dot; shift every prediction so it lands on the dot."""
         profile = self.tracker.profile
-        if profile is None or not profile.calibrated:
+        face = self.tracker.pointing == "face"
+        if not face and (profile is None or not profile.calibrated):
             self.intro()
             return
         self._begin()
@@ -328,8 +333,14 @@ class Flows:
                 self.after_cancel()
                 return
             if len(got) < MIN_SAMPLES_PER_TARGET:
-                self.message(["Couldn't see your eyes", "Space: try again  ·  Return: full calibration"],
-                             {SPACE: self.recentre, RETURN: self.intro, ESC: self.done})
+                self.message(["Couldn't see your face" if face else "Couldn't see your eyes",
+                              "Space: try again" + ("" if face else "  ·  Return: full calibration")],
+                             {SPACE: self.recentre, **({} if face else {RETURN: self.intro}), ESC: self.done})
+                return
+            if face:  # face pointing: line it up with the dot, nothing to save
+                neutral = self.tracker.recentre_face(got, centre)
+                log.info("face pointing re-centred (neutral head direction at %.0f, %.0f pt)", *neutral)
+                self.done()
                 return
             before = profile.meta.offset_pt
             try:
@@ -345,7 +356,8 @@ class Flows:
             self.validate(n=3)
 
         TargetSequence(self.targets, [centre], self.timing, on_target, on_done,
-                       on_start=lambda t, onset: self.label("recentre", t, onset), lines=["Look at the dot"]).start()
+                       on_start=lambda t, onset: self.label("recentre", t, onset),
+                       lines=["Point your face at the dot" if face else "Look at the dot"]).start()
 
     def measure(self) -> None:
         """Two 9-dot checks: head still, then head moving naturally."""

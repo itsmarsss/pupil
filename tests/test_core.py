@@ -107,3 +107,55 @@ def test_dotenv_values_drop_inline_comments():
     assert _dotenv_value('"a # inside quotes"  # comment') == "a # inside quotes"
     assert _dotenv_value("sk-abc#123") == "sk-abc#123"  # a # inside a value (no space before it) stays
     assert _dotenv_value("") == ""
+
+
+def test_face_pointing_follows_the_head_with_emulated_noise():
+    from types import SimpleNamespace as NS
+
+    import numpy as np
+
+    from pupil.core.screen import Screen
+    from pupil.core.types import TrackingState
+    from pupil.geometry.eyeball import ScreenPlane
+    from pupil.tracker import Tracker
+
+    t = Tracker.__new__(Tracker)
+    t.screen = Screen(width_pt=1512, height_pt=982, width_mm=302.4, height_mm=196.4)
+    t.plane = ScreenPlane(t.screen)
+    t.pointing, t.face_noise_deg, t.face_gain = "face", 0.6, 1.0
+    t.face_neutral_pt = t.face_anchor_pt = None
+    t._rng, t.distance_mm, t._last_point = np.random.default_rng(0), 550.0, None
+    class _Raw:  # no smoothing: see the noise itself
+        def __call__(self, x, y, t_ns, ppd):
+            return x, y
+
+        def reset(self):
+            pass
+
+    t._filter = _Raw()
+    t._fixations = NS(update=lambda *a: None, reset=lambda: None)
+
+    def measure(x_cm, y_cm):  # a head at 55 cm whose forward axis hits the screen plane at (x, y) cm
+        nose = np.array([0.0, -5.0, 55.0])
+        forward = nose - np.array([x_cm, y_cm, 0.0])  # the head frame's +z points away from the screen
+        basis = np.eye(3)
+        basis[:, 2] = forward / np.linalg.norm(forward)
+        return NS(measure=NS(nose=nose, basis=basis))
+
+    face = NS(distance_mm=550.0, is_blinking=False)
+    centre_cm = t.plane.to_cm(756, 491)
+    points = np.array([(p.raw_x, p.raw_y) for p in (t._face_point(i, face, measure(*centre_cm)) for i in range(400))])
+    assert t._face_point(0, face, measure(*centre_cm)).state is TrackingState.TRACKING
+    spread = points.std(axis=0)
+    sigma = t.screen.deg_to_pt(0.6, 550.0)
+    assert np.allclose(points.mean(axis=0), (756, 491), atol=sigma / 4)  # centred on where the head points
+    assert np.allclose(spread, sigma, rtol=0.2)  # with ~0.6° of noise
+    t.recentre_face(points + [40, -25], (756, 491))  # head pointed a little off while looking at the dot
+    later = np.array([(p.raw_x, p.raw_y) for p in (t._face_point(i, face, measure(*centre_cm)) for i in range(400))])
+    assert np.allclose(np.median(later + [40, -25], axis=0), (756, 491), atol=sigma / 3)  # now it lands on the dot
+    t.face_gain = 2.5  # a head turn moves the point 2.5x as far from the neutral direction
+    aside = t.plane.to_cm(756 + 40, 491)
+    moved = np.mean([t._face_point(i, face, measure(*aside)).raw_x for i in range(400)])
+    still = np.mean([t._face_point(i, face, measure(*centre_cm)).raw_x for i in range(400)])
+    assert abs((moved - still) - 100) < sigma / 2
+    assert t._face_point(0, None, None).state is TrackingState.NO_FACE

@@ -343,7 +343,8 @@ class PupilApp:
         prof = self.tracker.profile
         tracking = ("calibrating" if self.flows.busy else "starting" if p is None
                     else "no face" if p.state == TrackingState.NO_FACE
-                    else "uncalibrated" if p.state == TrackingState.UNCALIBRATED or prof is None or not prof.calibrated
+                    else "uncalibrated" if p.state == TrackingState.UNCALIBRATED or (
+                        self.tracker.pointing != "face" and (prof is None or not prof.calibrated))
                     else "tracking")
         last = self.flows.last_result
         m = NotchModel(tracking=tracking,
@@ -375,6 +376,8 @@ class PupilApp:
 
         last = self.flows.last_result if self.flows is not None else None
         deg = last.accuracy_deg if last is not None and np.isfinite(last.accuracy_deg) else DEFAULT_SIGMA_DEG
+        if self.tracker.pointing == "face":  # face pointing: its emulated inaccuracy is the accuracy
+            deg = max(self.tracker.face_noise_deg, 0.3)
         if self.lid_moved:
             deg *= 1.5  # the lid has moved since calibration: less sure
         return sigma_from_accuracy(self.screen.deg_to_pt(deg, self.tracker.distance_mm))

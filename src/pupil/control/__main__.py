@@ -94,8 +94,9 @@ def run_mouse_mode(typed: bool, dashboard_port: int | None, tracker_argv: list[s
 def main(argv=None):
     parser = argparse.ArgumentParser(prog="pupil control", description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--gaze", choices=["eyes", "mouse"], default="eyes",
-                        help="eyes = webcam eye tracking (default); mouse = the cursor stands in for gaze")
+    parser.add_argument("--gaze", choices=["eyes", "face", "mouse"], default="eyes",
+                        help="eyes = webcam eye tracking (default); face = where your head points, with ~0.6° "
+                             "emulated inaccuracy (demos, no calibration); mouse = the cursor stands in for gaze")
     parser.add_argument("--no-camera", action="store_true",
                         help="with --gaze mouse: no webcam (no lip gate; mic-only voice, dev fallback)")
     parser.add_argument("--calibrate", action="store_true", help="recalibrate the tracker on start (eyes only)")
@@ -110,7 +111,8 @@ def main(argv=None):
                               camera=not args.no_camera)
     from ..cli import main as pupil_main
 
-    return pupil_main(["--voice", *(["--typed"] if args.typed else []),
+    face = ["--pointing=face"] if args.gaze == "face" else []
+    return pupil_main(["--voice", *face, *(["--typed"] if args.typed else []),
                       *(["--recalibrate"] if args.calibrate else []), *dashboard, *port, *tracker_args])
 
 

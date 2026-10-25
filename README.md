@@ -140,7 +140,9 @@ cp .env.example .env                     # add TYPESAFE_API_KEY (fast tier) and/
 uv run pupil --voice --dashboard          # or: uv run pupil control --dashboard
 ```
 
-`--typed` types commands in the terminal instead of speaking; `pupil control --gaze mouse --dashboard`
+`pupil control --gaze face` follows where your head points instead of your eyes, with ~0.6° of emulated
+inaccuracy: steady and calibration-free for demos (one centre dot lines it up; `--face-noise DEG`, `--face-gain X`,
+default 2.5, since heads turn less than eyes). `--typed` types commands in the terminal instead of speaking; `pupil control --gaze mouse --dashboard`
 uses the **cursor for gaze** but keeps the **webcam for the lip gate**, so voice, barge-in, and TTS behave like
 eye mode (barge-in when your lips move after speech starts). Pass `--no-camera` for cursor-only dev mode (mic ducks
 during TTS). If **your** speech gets cut mid-sentence, lower `PUPIL_CARTESIA_END_THRESHOLD` (e.g. `0.2`). Needs

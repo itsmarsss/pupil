@@ -15,7 +15,7 @@ import numpy as np
 
 from .calibration.features import calibration_vector
 from .core.device import load_device
-from .geometry.eyeball import ScreenPlane, geo_block, reconstruct, to_array
+from .geometry.eyeball import ScreenPlane, face_pointing, geo_block, reconstruct, to_array
 from .calibration.profile import Profile
 from .capture.camera import FrameSource
 from .core.screen import Screen
@@ -28,6 +28,9 @@ from .models.base import GazeModel
 log = logging.getLogger(__name__)
 
 DEFAULT_DISTANCE_MM = 550.0
+FACE_NOISE_DEG = 0.6  # pointing = "face": emulated tracker inaccuracy, Gaussian, in degrees at the eye
+FACE_GAIN = 2.5  # ...and how much a head turn moves the point: the head turns ±18° looking across a laptop screen
+#                 (measured on recorded sessions), so 1:1 would need ±40° to reach its edges
 HISTORY_S = 6.0
 
 Listener = Callable[[Sample], None]
@@ -63,6 +66,13 @@ class Tracker:
         self._last_point: GazePoint | None = None
         self.distance_mm = DEFAULT_DISTANCE_MM
         self.fps = 0.0
+        # "eyes": the calibrated eye model (default). "face": where the head points (the nose's forward ray on the
+        # screen), plus FACE_NOISE_DEG of noise: no calibration, steady, for demos. Re-centre lines it up.
+        self.pointing = "eyes"
+        self.face_noise_deg, self.face_gain = FACE_NOISE_DEG, FACE_GAIN
+        self.face_neutral_pt: np.ndarray | None = None  # where the head points (unscaled) when aimed at...
+        self.face_anchor_pt: np.ndarray | None = None  # ...this screen point (both set by re-centre; else centre)
+        self._rng = np.random.default_rng()
 
     # ---- lifecycle -----------------------------------------------------------------
     def start(self) -> None:
@@ -170,7 +180,10 @@ class Tracker:
             block = geo_block(rec.measure, self.plane) if rec is not None else None
             if block is not None:
                 calib, geo = calibration_vector(features.vector, face, block), to_array(rec.measure)
-        point = self._point(frame.t_ns, face, calib, geo)
+        if self.pointing == "face":
+            point = self._face_point(frame.t_ns, face, rec)
+        else:
+            point = self._point(frame.t_ns, face, calib, geo)
         sample = Sample(frame.t_ns, features, face, point, calib, geo)
         if rec is not None:
             sample.extra["reconstruction"] = rec  # 3D detail for visualisation
@@ -181,6 +194,38 @@ class Tracker:
                 self._history.popleft()
         self._last_point = point
         return sample
+
+    def _face_point(self, t_ns: int, face: FaceObservation | None, rec) -> GazePoint:
+        """Where the head points, with emulated eye-tracker noise: steady demos without calibration."""
+        pointing = face_pointing(rec.measure) if rec is not None else None
+        if face is None or pointing is None:
+            self._filter.reset()
+            self._fixations.reset()
+            return GazePoint(t_ns, TrackingState.NO_FACE)
+        if face.distance_mm:
+            self.distance_mm = 0.9 * self.distance_mm + 0.1 * face.distance_mm
+        sigma = self.screen.deg_to_pt(self.face_noise_deg, self.distance_mm)
+        neutral, anchor = self._face_reference()
+        aimed = anchor + self.face_gain * (self.plane.to_pt(pointing) - neutral)
+        raw_x, raw_y = self.screen.clamp(*(aimed + self._rng.normal(0.0, sigma, 2)))
+        x, y = self._filter(raw_x, raw_y, t_ns, self.pt_per_deg)
+        fixation = self._fixations.update(float(x), float(y), t_ns, self.pt_per_deg)
+        return GazePoint(t_ns, TrackingState.TRACKING, float(x), float(y), float(raw_x), float(raw_y), fixation,
+                         self.distance_mm, 1.0)
+
+    def _face_reference(self):
+        centre = np.array([self.screen.width_pt / 2, self.screen.height_pt / 2])
+        return (self.face_neutral_pt if self.face_neutral_pt is not None else centre,
+                self.face_anchor_pt if self.face_anchor_pt is not None else centre)
+
+    def recentre_face(self, points, target) -> np.ndarray:
+        """Face pointing: the points it gave while the user aimed at `target` now land on it (their median head
+        direction becomes the neutral one). Returns the new neutral, in unscaled screen points."""
+        neutral, anchor = self._face_reference()
+        unscaled = neutral + (np.asarray(points, float) - anchor) / self.face_gain
+        self.face_neutral_pt = np.median(unscaled, axis=0)
+        self.face_anchor_pt = np.asarray(target, float)
+        return self.face_neutral_pt
 
     def _point(self, t_ns: int, face: FaceObservation | None, calib: np.ndarray | None,
                geo: np.ndarray | None = None) -> GazePoint:

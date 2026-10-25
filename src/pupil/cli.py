@@ -11,6 +11,13 @@ def add_tracker_arguments(parser: argparse.ArgumentParser) -> None:
     """Camera/tracker options shared by `pupil run` and `pupil control --gaze mouse`."""
     parser.add_argument("--mode", choices=["hd", "vga"], default="hd", help="capture resolution (default hd)")
     parser.add_argument("--camera", default="FaceTime", help="camera name substring or index")
+    parser.add_argument("--pointing", choices=["eyes", "face"], default="eyes",
+                        help="eyes = eye tracking (default); face = follow where your head points, with emulated "
+                             "inaccuracy (demos: no calibration, re-centre to line it up)")
+    parser.add_argument("--face-noise", type=float, default=None, metavar="DEG",
+                        help="with --pointing face: emulated inaccuracy in degrees (default 0.6)")
+    parser.add_argument("--face-gain", type=float, default=None, metavar="X",
+                        help="with --pointing face: how far a head turn moves the point (default 2.5)")
     parser.add_argument("--source", help="replay a video/image instead of the camera")
     parser.add_argument("--model", help="path to the gaze model")
     parser.add_argument("--appearance", choices=["network", "patches"], default="network",
@@ -49,7 +56,13 @@ def _build_tracker(args):
         from .face.normalize import NormalisedModel
 
         model = NormalisedModel(model, args.normalise)
-    return Tracker(source, FaceTracker(), model, main_screen(), smoothing=args.smoothing)
+    tracker = Tracker(source, FaceTracker(), model, main_screen(), smoothing=args.smoothing)
+    tracker.pointing = getattr(args, "pointing", "eyes")
+    if getattr(args, "face_noise", None) is not None:
+        tracker.face_noise_deg = max(0.0, args.face_noise)
+    if getattr(args, "face_gain", None) is not None:
+        tracker.face_gain = max(0.2, args.face_gain)
+    return tracker
 
 
 def _single_instance():
