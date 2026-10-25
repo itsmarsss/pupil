@@ -1,0 +1,14 @@
+{
+  "actorOutputSchemaVersion": 1,
+  "title": "Accessible decision evidence",
+  "description": "Normalized recommendations and evidence from independently retrieved public sources.",
+  "type": "object",
+  "properties": {
+    "results": {
+      "type": "string",
+      "title": "Decision evidence",
+      "description": "Source-oriented records with rationale, quotes, uncertainty, and safe next actions.",
+      "template": "{{links.apiDefaultDatasetUrl}}/items"
+    }
+  }
+}

@@ -9,7 +9,7 @@
 {"text": "forward", "expect": ["shortcut_forward"], "app": "Google Chrome", "gaze": [700, 400]}
 {"text": "new tab", "expect": ["shortcut_new_tab"], "app": "Google Chrome", "gaze": [700, 400]}
 {"text": "go to github.com", "expect": ["navigate"], "app": "Google Chrome", "gaze": [700, 400]}
-{"text": "search for best eye trackers", "expect": ["navigate"], "app": "Google Chrome", "gaze": [700, 400]}
+{"text": "search for best eye trackers", "expect": ["navigate", "agent"], "app": "Google Chrome", "gaze": [700, 400]}
 {"text": "look up the weather in Toronto", "expect": ["navigate", "agent"], "app": "Google Chrome", "gaze": [700, 400]}
 {"text": "type hello world", "expect": ["type"], "app": "Notes", "gaze": [700, 400]}
 {"text": "quit games", "expect": ["quit_app_Games"], "app": "Google Chrome", "gaze": [700, 400]}

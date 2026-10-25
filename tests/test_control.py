@@ -56,6 +56,25 @@ def test_voice_log_tracks_state_and_history():
     assert [e["text"] for e in snap["log"]] == ["s1", "s2", "s3"]
 
 
+def test_voice_log_tracks_and_deletes_progressive_research():
+    v = VoiceLog()
+    v.add({"event": "research", "research": {
+        "query": "accessible headphones", "phase": "running", "elapsed_s": 1.2,
+        "cards": [], "citations": [], "run_id": "run-1",
+    }})
+    assert v.snapshot()["research"]["phase"] == "running"
+    v.add({"event": "research", "research": {
+        "query": "accessible headphones", "phase": "complete", "elapsed_s": 4.5,
+        "cards": [{"id": "1", "title": "Source"}], "citations": ["https://example.com"], "run_id": "run-1",
+    }})
+    snap = v.snapshot()
+    assert snap["research"]["cards"][0]["title"] == "Source"
+    assert len(snap["research_history"]) == 1
+    v.clear_research()
+    snap = v.snapshot()
+    assert "research" not in snap and snap["research_history"] == []
+
+
 def test_tracker_gaze_reads_samples_in_process():
     from pupil.control.sources import TrackerGaze
     from pupil.core.types import GazePoint, Sample, TrackingState
@@ -124,6 +143,17 @@ def test_truth_table_clarify_and_compound():
     assert _decide(_answers(is_compound=0.95, wants_app=0.9), [], None, {}, allow_compound=False)[0] == "open_app"
     route, _, extras = _decide(_answers(wants_scroll=0.95, wants_shortcut=0.8), [], None, {})
     assert route == "scroll" and extras["args"] == {"direction": "down", "amount": 4}
+
+
+def test_research_goes_to_the_agent_only_with_the_research_tools(monkeypatch):
+    from pupil.control import config
+    from pupil.control.gate import _decide
+
+    research = _answers(needs_research=0.95, wants_shortcut=0.9)
+    monkeypatch.setattr(config, "APIFY_TOKEN", "")
+    assert _decide(research, [], None, {})[0] == "shortcut"  # no token: as before
+    monkeypatch.setattr(config, "APIFY_TOKEN", "configured")
+    assert _decide(research, [], None, {})[0] == "agent"
 
 
 def test_truth_table_unsure_commands_and_follow_ups():

@@ -125,6 +125,17 @@ IS_COMPOUND = Noul(
               "but keep one\"",
     ),
 )
+NEEDS_RESEARCH = Noul(
+    instructions="Does `command` need current information from the web that isn't on the screen: comparing "
+                 "products or options, prices, reviews, the latest news, checking a claim against sources, or "
+                 "gathering listings?",
+    criteria=NoulCriteria(
+        true="e.g. \"compare this with three alternatives\", \"is this the cheapest?\", \"what are people saying "
+             "about this\", \"find current prices for these\"",
+        false="Working with what's on screen or in an app (\"summarize this page\", \"reply to her\", \"open my "
+              "notes\"), or opening a website or one search",
+    ),
+)
 AGENT_TIER = Choice(
     instructions="If `command` goes to the agent, which kind of model should do it?",
     criteria={"fast": "quick: a question about the screen, one or two steps, or real-time play where speed matters "
@@ -259,6 +270,7 @@ class Decision:
     answers: dict | None = None  # every judgment, for the episode log and offline replay
     tier: str = "standard"  # agent routes: which model tier (config.AGENT_TIERS)
     budget: str = "normal"  # agent routes: how many steps (config.AGENT_BUDGETS)
+    research: bool = False  # agent routes: needs current web information (offers the Apify research tools)
     options: list | None = None  # "choose": [(share, element)] to ask between
     action: str | None = None  # "choose": what to do to the one picked
     args: dict | None = None  # scroll {direction, amount}; quit_app {app, force}; reference {mode}; relative {direction}
@@ -325,6 +337,8 @@ def _decide(a, elements, gaze, apps, allow_clarify=True, allow_compound=True, co
         return "reference", f"the last action {p('about_last'):.2f}", {"args": {"mode": {"close_it": "close_last"}.get(mode, mode)}}
     if p("needs_agent") >= YES:
         return "agent", f"needs steps/writing {p('needs_agent'):.2f}", {}
+    if p("needs_research") >= YES and config.APIFY_TOKEN:  # weighing up sources, not one search: the agent researches
+        return "agent", f"needs web research {p('needs_research'):.2f}", {}
     # A specific on-screen control wins over apps/shortcuts ("close this" on a window's close button), and since
     # the command is clearly about some element, the best match only needs to be more likely than not. "This" /
     # "that" point at what's under the gaze too: Cmd+W for "close this" on a popup would close the window behind.
@@ -429,7 +443,7 @@ class Gate:
             "needs_agent": NEEDS_AGENT, "wants_element": WANTS_ELEMENT, "wants_app": WANTS_APP,
             "wants_shortcut": WANTS_SHORTCUT, "wants_scroll": WANTS_SCROLL, "risky": RISKY,
             "app": _app_question(apps), "shortcut": _shortcut_question(), "times": TIMES,
-            "agent_tier": AGENT_TIER, "agent_budget": AGENT_BUDGET,
+            "agent_tier": AGENT_TIER, "agent_budget": AGENT_BUDGET, "needs_research": NEEDS_RESEARCH,
             "scroll_direction": SCROLL_DIRECTION, "scroll_amount": SCROLL_AMOUNT, "element_action": ELEMENT_ACTION,
             "wants_cancel": WANTS_CANCEL, "wants_type": WANTS_TYPE, "wants_web": WANTS_WEB,
             "wants_quit": WANTS_QUIT, "force_quit": FORCE_QUIT,
@@ -445,7 +459,8 @@ class Gate:
                    "nouls": {k: round(v.noul, 4) for k, v in result.nouls.items()},
                    "choices": {k: v.choice for k, v in result.choices.items()}}
         decision = Decision(route, why, ms, risky=result.nouls["risky"].noul, answers=answers,
-                            tier=result.choices["agent_tier"].choice, budget=result.choices["agent_budget"].choice, **extras)
+                            tier=result.choices["agent_tier"].choice, budget=result.choices["agent_budget"].choice,
+                            research=result.nouls["needs_research"].noul >= YES, **extras)
         _log({"tier": "gate", "kind": "decision", "utterance": utterance, "route": route, "why": why,
               "target": decision.target.describe() if decision.target else None, "app": decision.app,
               "shortcut": decision.shortcut, "risky": round(decision.risky, 3),

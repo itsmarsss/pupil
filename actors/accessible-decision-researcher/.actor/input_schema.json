@@ -1,0 +1,118 @@
+{
+  "title": "Accessible decision research input",
+  "description": "Research public evidence for a hands-free decision. Never include credentials, cookies, private documents, or personal data.",
+  "type": "object",
+  "schemaVersion": 1,
+  "properties": {
+    "selectedUrl": {
+      "title": "Selected public URL",
+      "type": "string",
+      "description": "Optional public http(s) page the user is looking at.",
+      "editor": "textfield",
+      "pattern": "^https?://"
+    },
+    "selectedText": {
+      "title": "Selected page text",
+      "type": "string",
+      "description": "Optional non-sensitive excerpt, capped at 4,000 characters.",
+      "editor": "textarea",
+      "maxLength": 4000
+    },
+    "question": {
+      "title": "Decision question",
+      "type": "string",
+      "description": "The comparison, fact-check, or decision question to research using current public sources.",
+      "editor": "textarea",
+      "minLength": 3,
+      "maxLength": 1000
+    },
+    "constraints": {
+      "title": "Constraints",
+      "type": "array",
+      "description": "Budget, accessibility, location, time, or other decision requirements.",
+      "editor": "stringList",
+      "items": { "type": "string", "maxLength": 200 },
+      "default": []
+    },
+    "sourcePolicy": {
+      "title": "Source policy",
+      "type": "object",
+      "description": "Optional domain allow/block lists.",
+      "editor": "json",
+      "properties": {
+        "allowedDomains": {
+          "title": "Allowed domains",
+          "type": "array",
+          "description": "Optional domains to include in research.",
+          "editor": "stringList",
+          "items": { "type": "string" },
+          "maxItems": 20
+        },
+        "blockedDomains": {
+          "title": "Blocked domains",
+          "type": "array",
+          "description": "Optional domains to exclude from research.",
+          "editor": "stringList",
+          "items": { "type": "string" },
+          "maxItems": 20
+        },
+        "preferPrimarySources": {
+          "title": "Prefer primary sources",
+          "type": "boolean",
+          "description": "Prefer official and first-party sources when they are available.",
+          "editor": "checkbox",
+          "default": true
+        }
+      },
+      "additionalProperties": false,
+      "default": { "preferPrimarySources": true }
+    },
+    "maxSources": {
+      "title": "Maximum independent sources",
+      "type": "integer",
+      "description": "Maximum number of independently retrieved public sources to compare.",
+      "editor": "number",
+      "minimum": 3,
+      "maximum": 10,
+      "default": 3
+    },
+    "maxItems": {
+      "title": "Maximum output records",
+      "type": "integer",
+      "description": "Hard limit on normalized evidence records written to the output dataset.",
+      "editor": "number",
+      "minimum": 3,
+      "maximum": 20,
+      "default": 10
+    },
+    "maxRuntimeSecs": {
+      "title": "Maximum runtime",
+      "type": "integer",
+      "description": "Maximum time in seconds allowed for child research runs.",
+      "editor": "number",
+      "minimum": 10,
+      "maximum": 120,
+      "default": 45
+    },
+    "maxChargeUsd": {
+      "title": "Maximum child-run charge",
+      "type": "number",
+      "description": "Maximum combined charge in US dollars allocated across child Actor runs.",
+      "editor": "number",
+      "minimum": 0.01,
+      "maximum": 1,
+      "default": 0.25
+    },
+    "privacyMode": {
+      "title": "Privacy mode",
+      "type": "string",
+      "description": "Controls whether selected page text may be included in child research inputs.",
+      "enum": ["public-only", "omit-selected-text"],
+      "enumTitles": ["Public data only", "Do not send selected text"],
+      "default": "public-only",
+      "editor": "select"
+    }
+  },
+  "required": ["question"],
+  "additionalProperties": false
+}

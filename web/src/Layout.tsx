@@ -10,10 +10,11 @@ import { ScreenView } from "./views/ScreenView";
 import { HealthPanel } from "./views/HealthPanel";
 import { LipsPlot } from "./views/LipsPlot";
 import { VoicePanel } from "./views/VoicePanel";
+import { ResearchPanel } from "./views/ResearchPanel";
 
 // Every view is a dockview panel: drag tabs to rearrange, split or stack them, drag the dividers to resize.
 // The layout is saved per browser; bump LAYOUT_KEY when panels change so stale layouts are dropped.
-const LAYOUT_KEY = "gaze.layout.v8";
+const LAYOUT_KEY = "gaze.layout.v9";
 
 const components: Record<string, FunctionComponent<IDockviewPanelProps>> = {
   scene: () => <div className="pane flush"><Scene3D /></div>,
@@ -24,6 +25,7 @@ const components: Record<string, FunctionComponent<IDockviewPanelProps>> = {
   calibration: () => <CalibrationPanel />,
   controls: () => <ControlsPanel />,
   voice: () => <VoicePanel />,
+  research: () => <ResearchPanel />,
   lips: () => <LipsPlot />,
   health: () => <HealthPanel />,
   ...Object.fromEntries(PLOTS.map((spec) => [`plot-${spec.id}`, () => <div className="pane flush"><Plot spec={spec} /></div>])),
@@ -43,6 +45,7 @@ function defaultLayout(api: DockviewApi) {
   add("scene", "3D", { referencePanel: "camera", direction: "below" });
   add("voice", "Voice & agent", { referencePanel: "screen", direction: "below" });
   add("lips", "Lips", { referencePanel: "voice", direction: "within" });
+  add("research", "Decision research", { referencePanel: "voice", direction: "within" });
   add("plot-fatigue", "Fatigue (30 min)", { referencePanel: "health", direction: "below" });
   add("plot-eyes", "Eye openness", { referencePanel: "plot-fatigue", direction: "within" });
   add("calibration", "Calibration", { referencePanel: "status", direction: "within" });

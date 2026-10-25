@@ -33,6 +33,20 @@ AGENT_TIERS = {
 }
 AGENT_BUDGETS = {"quick": 10, "normal": MAX_AGENT_STEPS, "ongoing": int(env("MAX_STEPS_ONGOING", "300"))}
 
+# Apify decision research. Content fetched from the web is untrusted and bounded before it reaches Claude.
+APIFY_TOKEN = os.environ.get("APIFY_TOKEN", "")
+APIFY_MCP_ENDPOINT = env("APIFY_MCP_ENDPOINT", "https://mcp.apify.com")
+APIFY_TIMEOUT_S = min(120.0, max(5.0, float(env("APIFY_TIMEOUT_S", "45"))))
+APIFY_MAX_ITEMS = min(50, max(1, int(env("APIFY_MAX_ITEMS", "15"))))
+APIFY_MAX_OUTPUT_BYTES = min(
+    500_000, max(8_000, int(env("APIFY_MAX_OUTPUT_BYTES", "100000")))
+)
+APIFY_MAX_CHARGE_USD = min(1.0, max(0.01, float(env("APIFY_MAX_CHARGE_USD", "0.25"))))
+APIFY_RESEARCH_ACTOR = env("APIFY_RESEARCH_ACTOR", "apify/rag-web-browser")
+# All paid runs in one agent task together; each run is also capped by APIFY_MAX_CHARGE_USD
+APIFY_TASK_BUDGET_USD = min(5.0, max(0.01, float(env("APIFY_TASK_BUDGET_USD", "1.0"))))
+APIFY_RESEARCH_RETENTION = min(20, max(1, int(env("APIFY_RESEARCH_RETENTION", "5"))))
+
 # Fast tier: a Jev-style decision model (TypeSafe System One API; any compatible base URL works)
 GATE_MODEL = env("GATE_MODEL", "jev-1.14.0")  # pinned: aliases move and deprecations are short
 GATE_BASE_URL = os.environ.get("TYPESAFE_BASE_URL")  # None = api.typesafe.ai; e.g. OpenRouter / Vercel AI Gateway
