@@ -16,7 +16,7 @@ import urllib.parse
 import threading
 import time
 
-from . import actions, apps, commands, config, dictation, heat, macos, router, snapping, uitree
+from . import actions, apps, commands, config, dictation, heat, macos, router, settings, snapping, uitree
 from .agent import Agent
 from .episodes import EpisodeLog, element_dict
 from .gate import CLARIFY_PROMPTS, MAX_CANDIDATES, NO, Gate
@@ -25,7 +25,7 @@ from .indicator import Indicator, Status
 from .lips import LipGate
 from .screen import Screen
 from .speech import Speaker
-from .voice import CartesiaVoice, TypedInput, Voice
+from .voice import CartesiaVoice, TypedInput, Voice, input_devices
 
 # Gate routes -> the direct action they map to.
 _ROUTE_ACTIONS = {
@@ -122,6 +122,33 @@ class VoiceController:
         if not macos.has_accessibility():
             self.hud.status = "Grant Accessibility permission to your terminal (System Settings > Privacy & Security)."
         self.hud.show()
+
+    def _register_settings(self):
+        """Voice control's own settings, for the agent's settings tool."""
+        voice = self.voice
+
+        def onoff(get, set_):
+            return (lambda: "on" if get() else "off"), (lambda v: set_(v == "on")), (lambda: ["on", "off"])
+
+        if voice is not None:
+            def mics():
+                try:
+                    return ["automatic", *input_devices()]
+                except Exception:
+                    return ["automatic"]
+            settings.register("microphone", "which mic listens (automatic: the default, but not Bluetooth)",
+                              lambda: voice.device or "automatic",
+                              lambda v: voice.use(None if v == "automatic" else v), mics)
+            settings.register("voice_isolation", "Apple noise suppression on the default mic", *onoff(
+                lambda: voice.isolation, voice.set_isolation))
+        settings.register("speak_replies", "read the agent's replies aloud", *onoff(
+            lambda: config.SPEAK, lambda on: setattr(config, "SPEAK", on)))
+        settings.register("format_dictation", "clean up dictated text (symbols, punctuation)", *onoff(
+            lambda: config.DICTATION_FORMAT, lambda on: setattr(config, "DICTATION_FORMAT", on)))
+        if self.lips is not None:
+            settings.register("lip_gate", "listen only while your lips move (shadow: log only)",
+                              lambda: self.lips.mode, lambda v: setattr(self.lips, "mode", v),
+                              lambda: ["on", "shadow", "off"])
 
     def set_enabled(self, on: bool) -> None:
         """Pause or resume: off releases the mic, hides the HUD and stops looking for targets."""
@@ -226,7 +253,8 @@ class VoiceController:
             state = (is_open, self.lips.reason, round(self.lips.threshold, 3), round(self.lips.open_above, 3))
             if state != self._lip_state:  # for the dashboard's Lips plot
                 self._lip_state = state
-                self.gaze.report("lip_gate", mode=self.lips.mode, open=is_open, reason=state[1],
+                self._register_settings()
+        self.gaze.report("lip_gate", mode=self.lips.mode, open=is_open, reason=state[1],
                                  threshold=state[2], open_above=state[3])
         h.target, h.candidates = self.snap
         h.warning = ("" if self.gaze.connected and not self.gaze.busy

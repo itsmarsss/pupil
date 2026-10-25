@@ -12,7 +12,7 @@ import time
 import anthropic
 import pyautogui
 
-from . import actions, apps, config, snapping, uitree
+from . import actions, apps, config, settings, snapping, uitree
 from .actions import ComputerExecutor
 from .screen import ScreenshotUnavailable, image_block
 
@@ -60,6 +60,14 @@ CUSTOM_TOOLS = [
                     "Notes, Reminders, Calendar, Music, Safari/Chrome (tabs, URLs), Keynote/Pages/Numbers, System "
                     "Events (UI scripting, keystrokes). The first use per app asks the user for permission.",
      "input_schema": {"type": "object", "properties": {"script": {"type": "string"}}, "required": ["script"]}},
+    {"name": "settings",
+     "description": "This voice-control app's own settings, which the user may ask you to change (\"use my AirPods "
+                    "mic\", \"switch cameras\", \"stop talking back\", \"show the ring\"): action \"list\" shows "
+                    "each with its current value and options; \"set\" changes `name` to `value` (an option can be "
+                    "named by a unique part of it).",
+     "input_schema": {"type": "object", "properties": {
+         "action": {"type": "string", "enum": ["list", "set"]}, "name": {"type": "string"},
+         "value": {"type": "string"}}, "required": ["action"]}},
     {"name": "open_app",
      "description": "Open (or bring to the front) a Mac application by name. Apps with an adapter tool (named "
                     "after the app) open in their scriptable form this way.",
@@ -81,8 +89,8 @@ LOOK_ONLY = {"screenshot", "zoom", "cursor_position", "mouse_move", "wait", "scr
 
 
 def _look_only(call):
-    """Calls that only read the screen or an app's structure: no risk check."""
-    return call.name in LOOK_ONLY or (call.name == "menu" and call.input.get("action", "list") == "list")
+    """Calls that only read the screen, an app's structure or the settings: no risk check."""
+    return call.name in LOOK_ONLY or (call.name in ("menu", "settings") and call.input.get("action", "list") == "list")
 
 
 class Agent:
@@ -303,6 +311,10 @@ class Agent:
             return uitree.set_value(int(inp["id"]), inp["text"]), False
         if name == "applescript":
             return uitree.applescript(inp["script"])
+        if name == "settings":
+            if inp.get("action", "list") == "list":
+                return settings.listing(), False
+            return settings.change(inp.get("name", ""), inp.get("value", ""))
         adapted = apps.call(name, inp)
         if adapted is not None:
             return adapted
@@ -320,6 +332,8 @@ class Agent:
             return f"press {uitree.describe(int(inp.get('id', -1)))}"
         if call.name == "set_value":
             return f"replace the text of {uitree.describe(int(inp.get('id', -1)))} with {inp.get('text', '')[:200]!r}"
+        if call.name == "settings" and inp.get("action") == "set":
+            return f"change the setting {inp.get('name')} to {inp.get('value')!r}"
         if call.name == "applescript":
             return f"run AppleScript:\n{inp.get('script', '')[:600]}"
         if call.name == "drag":

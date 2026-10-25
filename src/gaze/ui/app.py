@@ -211,6 +211,28 @@ class GazeApp:
                 "smoothing": self.tracker.smoothing, "overlay": self.overlay_on, "voice": self.voice.snapshot(),
                 "gaze_sigma_pt": round(self.gaze_sigma_pt(), 1)}
 
+    def _register_settings(self) -> None:
+        """What the voice agent may change for the user (control/settings.py); changes run on the main thread."""
+        from ..control import settings
+
+        def on_main(fn):
+            return lambda value: AppHelper.callAfter(fn, value) or None
+
+        def camera(name):
+            names = list_cameras()
+            self._switch_camera(names.index(name))
+
+        settings.register("camera", "which camera tracks the eyes (each keeps its own calibration)",
+                          lambda: self.tracker.source.source_id, on_main(camera),
+                          lambda: list_cameras() if isinstance(self.tracker.source, CameraSource) else [])
+        settings.register("gaze_display", "how gaze is drawn on screen", self._display, on_main(self._set_display),
+                          lambda: ["ring", "heat", "off"])
+        settings.register("smoothing", "how much gaze is smoothed (more: steadier, slower)",
+                          lambda: self.tracker.smoothing, on_main(self.tracker.set_smoothing), lambda: SMOOTHING_ORDER)
+        settings.register("learn_from_clicks", "improve calibration from where you click",
+                          lambda: "on" if self.clicks.enabled else "off",
+                          on_main(lambda v: setattr(self.clicks, "enabled", v == "on")), lambda: ["on", "off"])
+
     def _start_voice(self, typed: bool) -> None:
         """Voice control in this process: it reads gaze from the tracker and drives the flows directly."""
         try:
@@ -223,6 +245,7 @@ class GazeApp:
         gaze = TrackerGaze(busy=lambda: self.flows.busy, report=self.voice.add, sigma=self.gaze_sigma_pt,
                            commands={k: commands[k] for k in ("recalibrate", "recentre", "validate")})
         self.tracker.add_listener(gaze.on_sample)
+        self._register_settings()
         self.controller = VoiceController(gaze, typed=typed)
         self.controller.start()
         NSTimer.scheduledTimerWithTimeInterval_repeats_block_(1 / 30, True, lambda _t: self.controller.tick())

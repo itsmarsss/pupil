@@ -521,3 +521,18 @@ def test_quitting_targets_the_named_app_and_always_asks(monkeypatch):
     c._quit_app("that app", force=False, target=dock_icon)  # "quit that app" looking at its Dock icon
     assert pending[-1][0][1]["name"] == "WezTerm" and pending[-1][1] == "Quit WezTerm"
     assert "quit_app" in commands.ALWAYS_CONFIRM  # Jev's Cmd+Q asks too, whatever its risk score
+
+
+def test_settings_match_options_by_a_unique_part():
+    from gaze.control import settings
+
+    state = {"mic": "automatic"}
+    settings.register("microphone", "which mic", lambda: state["mic"], lambda v: state.update(mic=v),
+                      lambda: ["automatic", "😨😨😨 AirPods Pro", "MacBook Pro Microphone"])
+    assert settings.change("microphone", "airpods") == ("microphone set to '😨😨😨 AirPods Pro'", False)
+    assert state["mic"] == "😨😨😨 AirPods Pro"
+    text, error = settings.change("microphone", "o")  # matches several: refuse, list the options
+    assert error and "MacBook Pro Microphone" in text
+    assert settings.change("mic", "automatic")[1] is False  # a setting by part of its name
+    assert settings.change("volume", "11")[1] is True
+    assert "microphone = 'automatic'" in settings.listing()

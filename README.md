@@ -135,8 +135,15 @@ device Whisper `base.en` behind a Silero speech detector. `GAZE_LIP_GATE=shadow`
 would block; `GAZE_VOICE_PROCESSING=1` turns voice isolation on at start. Misheard commands and on-
 screen labels are snapped to what was meant ("closed time" → "close tab").
 
-Talking back: Claude's replies, its clarifying questions and "say confirm" prompts are read aloud with
-Cartesia Sonic (one short sentence; `GAZE_SPEAK=0` turns it off). Start talking and it stops: barge-in is
+Which model: Jev routes each agent task to a tier (fast: Sonnet at low effort, for quick questions and
+real-time games; standard; deep: Opus, for writing, building and multi-app work) and a step budget (quick,
+normal, or ongoing until you say stop, so it can play Tetris). The agent can also change this app's own
+settings when asked: camera, microphone, voice isolation, spoken replies, gaze display, smoothing.
+
+Talking back: the agent's replies, its clarifying questions and "say confirm" prompts are read aloud with
+Cartesia Sonic, telegraphic ("Done. 3 results."), and run as faint captions under a small status pill that
+follows your gaze (colour-coded: listening, thinking, agent working, waiting on you); `GAZE_SPEAK=0` turns
+speech off. Start talking and it stops: barge-in is
 detected from your lips moving, not sound, so the Mac's own speaker doesn't cut itself off. Speaking while
 Claude is working reaches it at its next step ("actually, make it blue"); saying something other than
 "confirm" when it's waiting to confirm skips that step and follows the new instruction; "stop" cancels.
