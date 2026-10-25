@@ -1,4 +1,4 @@
-"""Look at something, say what to do: voice control running inside the gaze app.
+"""Look at something, say what to do: voice control running inside Pupil.
 
 Tiers: 0 = stop/confirm/dictation phrases (router.py), 1 = Jev gate (gate.py), 2 = the computer-use agent (agent.py).
 "This" is where the user looked while speaking, snapped to the nearest Accessibility element. The gate may also
@@ -26,6 +26,7 @@ from .gate import CLARIFY_PROMPTS, MAX_CANDIDATES, NO, YES, Gate
 from .hud import Hud
 from .indicator import Indicator, Status
 from .lips import LipGate
+from .memory import Memory
 from .screen import Screen
 from .speech import Speaker
 from .voice import CartesiaVoice, TypedInput, Voice, input_devices
@@ -105,8 +106,9 @@ class VoiceController:
         self.gate = Gate()
         if not self.gate.available:
             self._status(f"Fast tier (Jev) off: {self.gate.error}. Unmatched commands go straight to the agent.")
-        self.agent = Agent(self.screen, self.gate, self._status,
-                           on_provider_event=lambda state: self.gaze.report("research", research=state))
+        self.memory = Memory()
+        self.gate.remembered = self.memory.latest_item()
+        self.agent = Agent(self.screen, self.gate, self._status, on_provider_event=self._on_research)
         self.speaker = Speaker(on_state=lambda on: self.events.put(("speaking", on)))
         self.agent.on_reply = lambda text: self._say(text)  # the agent's answer (or what it's waiting on), aloud
         self.episodes = EpisodeLog(source="typed" if typed else "voice")
@@ -131,11 +133,15 @@ class VoiceController:
         self._typed = typed
         self.voice: Voice | None = None  # the mic thread (None when typing)
         self.enabled = True
-        self.lips = LipGate(config.LIP_GATE) if gaze.calibratable and config.LIP_GATE != "off" else None
+        use_lips = config.LIP_GATE != "off" and (gaze.calibratable or getattr(gaze, "lip_gate", False))
+        self.lips = LipGate(config.LIP_GATE) if use_lips else None
         gaze.lips = self.lips
         self._lip_state = None  # last lip-gate state sent to the dashboard
         self._models_seen = -1  # models.version() last sent to the dashboard
         self._menu_choice: dict = {}  # (app, shortcut) -> the app's menu command for it (Jev's pick), or None
+        self._tts_started_at = 0.0
+        self._tts_echo_until = 0.0  # ignore mic pickup of our own speech until then
+        self._last_tts_text = ""
 
     def _configure_models(self):
         """What each role will call, for the dashboard before anything has been called."""
@@ -164,8 +170,10 @@ class VoiceController:
             self.hud.mic = "typing in terminal"
         else:
             voice = CartesiaVoice if config.STT == "cartesia" else Voice
+            duck = lambda: self.lips is None and self.speaker.speaking
             self.voice = voice(self._on_utterance, self._on_mic_state, lambda name: self.events.put(("mic_device", name)),
-                               on_partial=lambda text: self.events.put(("partial", text)), gate=self.lips)
+                               on_partial=lambda text: self.events.put(("partial", text)), gate=self.lips,
+                               stt_duck=duck)
             self.voice.start()
             self.hud.mic = "loading"
         if not macos.has_accessibility():
@@ -220,10 +228,35 @@ class VoiceController:
 
     # --- callbacks from the voice threads ---
 
+    def _tts_echo(self, text: str) -> bool:
+        """True when the mic is probably hearing our own TTS (no lip gate to tell them apart)."""
+        if self.lips is not None:
+            return False
+        if not self.speaker.speaking and time.time() > self._tts_echo_until:
+            return False
+        heard = text.lower().strip(" .!?,\"'")
+        if not heard:
+            return True
+        spoken = (self._last_tts_text or self.speaker.text).lower()
+        if not spoken:
+            return False
+        if heard in spoken:
+            return True
+        for word in spoken.replace(":", " ").replace(",", " ").split():
+            w = word.strip(".,!?:\"'")
+            if len(heard) <= 5 and w:
+                stem = heard[: min(3, len(heard))]
+                if w.startswith(heard) or heard in w or w.startswith(stem) or heard.startswith(w[: min(3, len(w))]):
+                    return True
+        return False
+
     def _on_utterance(self, text, t0, t1):
         if not self.enabled:
             return
         stamp = time.strftime('%H:%M:%S')
+        if self._tts_echo(text):
+            print(f"[{stamp}] ignored (speaker echo): \"{text}\"", flush=True)
+            return
         someone_else = self.lips.someone_else(t0, t1) if self.lips else False
         if self.lips:  # the dashboard's Lips plot marks each utterance with the verdict
             self.gaze.report("lips", t0=round(self.gaze.frame_time(t0), 3), t1=round(self.gaze.frame_time(t1), 3),
@@ -245,8 +278,6 @@ class VoiceController:
     def _on_mic_state(self, state):
         self.gaze.report("mic", state)
         self.events.put(("mic", state))
-        if state == "listening" and self.lips is None:  # no lips to watch: any speech at the mic barges in
-            self.speaker.stop()
 
     def _status(self, text):
         print(f"[{time.strftime('%H:%M:%S')}] {text}", flush=True)
@@ -284,7 +315,11 @@ class VoiceController:
                 self.hud.status = f'Dropped (lips didn\'t move): "{text}"'
             elif kind == "speaking":
                 self.hud.speaking = payload
-                if not payload:
+                if payload:
+                    self._tts_started_at = time.time()
+                    self._last_tts_text = self.speaker.text
+                else:
+                    self._tts_echo_until = time.time() + 1.2
                     self.indicator.said()  # fade the caption
             elif kind == "partial":  # words so far, while you're still talking
                 self.hud.heard = f"{payload}…" if payload else ""
@@ -305,9 +340,10 @@ class VoiceController:
         h = self.hud
         h.gaze = self.gaze.point()
         self.indicator.update(self._indicator_status(), h.gaze)
-        if self.speaker.speaking and self.lips is not None and self.lips.would_open():
+        if (self.speaker.speaking and self.lips is not None and self._tts_started_at
+                and self.lips.moved_since(self._tts_started_at) and self.lips.would_open()):
             self.indicator.clear()
-            self.speaker.stop()  # barge-in: you started talking (lips, not sound: the speaker would trigger that)
+            self.speaker.stop()  # barge-in: lips moved after TTS started (not sound, not an old open gate)
         if self.lips:
             is_open = self.lips.would_open()
             if self.lips.mode == "on":
@@ -316,11 +352,14 @@ class VoiceController:
             if state != self._lip_state:  # for the dashboard's Lips plot
                 self._lip_state = state
                 self._register_settings()
-        self.gaze.report("lip_gate", mode=self.lips.mode, open=is_open, reason=state[1],
-                                 threshold=state[2], open_above=state[3])
+            self.gaze.report("lip_gate", mode=self.lips.mode, open=is_open, reason=state[1],
+                             threshold=state[2], open_above=state[3])
         h.target, h.candidates = self.snap
-        h.warning = ("" if self.gaze.connected and not self.gaze.busy
-                     else "calibrating" if self.gaze.busy else "no gaze: is the camera on?")
+        if not self.gaze.calibratable:
+            h.warning = ""
+        else:
+            h.warning = ("" if self.gaze.connected and not self.gaze.busy
+                         else "calibrating" if self.gaze.busy else "no gaze: is the camera on?")
         if h.flash and time.time() > self.flash_until:
             h.flash = None
         h.update()
@@ -346,6 +385,13 @@ class VoiceController:
         if cmd.kind == "cancel":  # handled immediately, even while a command is running
             self._cancel()
             ep["route"] = "cancel"
+            self.episodes.finish(ep)
+            return
+        if cmd.kind == "forget":
+            self.memory.clear()
+            self.gate.remembered = None
+            ep["route"] = "forget"
+            self._status("Forgot.")
             self.episodes.finish(ep)
             return
         if cmd.kind in ("dictate_on", "dictate_off"):
@@ -624,7 +670,7 @@ class VoiceController:
             self._do("type", {"text": text}, gaze, d.target or target)
             return True
         if d.route in ("click", "double_click", "right_click", "close") and d.target is not None \
-                and getattr(self, "_confidence", 1.0) < config.GAZE_MIN_CONFIDENCE:
+                and getattr(self, "_confidence", 1.0) < config.TRACKER_MIN_CONFIDENCE:
             # The tracker wasn't sure (head turned past what calibration covered): ask instead of acting.
             kind, kargs = _ROUTE_ACTIONS.get(d.route, ("close", {}))
             self._set_pending((kind, kargs, gaze, d.target), f"{kind} {d.target.describe()}")
@@ -728,6 +774,8 @@ class VoiceController:
         self.gate.recent = said[-4:]  # before this one
         replies = [s for t, who, s in self._converse_log() if who == "assistant" and now - t < RECENT_CONTEXT_S / 2]
         self.gate.last_reply = replies[-1] if replies else None
+        remembered = getattr(self, "memory", None)
+        self.gate.remembered = remembered.latest_item() if remembered is not None else None
         self._converse("user", text)
 
     def _converse_log(self):
@@ -736,6 +784,12 @@ class VoiceController:
     def _converse(self, who, text):
         if text:
             self.__dict__.setdefault("conversation", deque(maxlen=24)).append((time.time(), who, text))
+            memory = getattr(self, "memory", None)
+            if memory is not None and who in ("user", "assistant"):
+                app = window = ""
+                if who == "user":
+                    app, window = uitree.front_context()
+                memory.remember(who, text, app=app, window=window, page=window)
 
     def _conversation_context(self, request):
         """The last few minutes, oldest first, for the agent: what was said, done and answered before `request`."""
@@ -749,7 +803,28 @@ class VoiceController:
                           "assistant": f'- you said: "{text}"'}[who])
         if lines and lines[-1].endswith(f'"{request}"'):
             lines.pop()  # that's this request
-        return "\n".join(lines[-12:])
+        body = "\n".join(lines[-12:])
+        memory = getattr(self, "memory", None)
+        recalled = memory.recall(request) if memory is not None else ""
+        if not recalled:
+            return body
+        note = ("Remembered from earlier. \"The one we talked about\" means these facts, not the gaze ring. "
+                "Match a remembered title to a control on this page:\n" + recalled)
+        return f"{body}\n\n{note}" if body else note
+
+    def _on_research(self, state):
+        """Research cards reach the dashboard and, once finished, the durable memory."""
+        self.gaze.report("research", research=state)
+        if not isinstance(state, dict) or state.get("phase") not in ("complete", "partial"):
+            return
+        cards = state.get("cards") or []
+        if not cards:
+            return
+        memory = getattr(self, "memory", None)
+        if memory is None:
+            return
+        memory.remember("research", state.get("query") or "", cards=cards)
+        self.gate.remembered = memory.latest_item()
 
     def _menu_for(self, shortcut):
         """The frontmost app's own menu command for a standard action, chosen by Jev from its real menus once per

@@ -3,7 +3,7 @@ import socket
 import time
 
 from pupil.control import router
-from pupil.sinks.publisher import GazePublisher
+from pupil.sinks.publisher import PupilPublisher
 from pupil.ui.services import VoiceLog
 
 
@@ -28,7 +28,7 @@ def _free_port() -> int:
 def test_publisher_routes_commands_and_events():
     port = _free_port()
     got, events = [], []
-    GazePublisher(port=_free_port()).listen({"recentre": lambda: got.append("recentre")}, port=port,
+    PupilPublisher(port=_free_port()).listen({"recentre": lambda: got.append("recentre")}, port=port,
                                             on_event=events.append)
     out = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     out.sendto(json.dumps({"cmd": "recentre"}).encode(), ("127.0.0.1", port))
@@ -43,7 +43,7 @@ def test_publisher_routes_commands_and_events():
 
 def test_voice_log_tracks_state_and_history():
     v = VoiceLog(keep=3)
-    assert v.snapshot() is None  # no controller yet
+    assert v.snapshot() == {"connected": False, "log": [], "lips": [], "research_history": []}
     v.add({"event": "mic", "text": "listening"})
     v.add({"event": "pending", "text": "click Delete"})
     v.add({"event": "heard", "text": "confirm"})  # a new utterance clears the pending prompt
@@ -498,7 +498,7 @@ def test_answers_to_which_one(monkeypatch):
     from pupil.control.snapping import Element
 
     a = Element("AXRadioButton", "YouTube", 0, 0, 100, 30)
-    b = Element("AXRadioButton", "Gaze dashboard", 300, 0, 100, 30)
+    b = Element("AXRadioButton", "Pupil dashboard", 300, 0, 100, 30)
     done, said = [], []
     c = ctl.VoiceController.__new__(ctl.VoiceController)
     c._ep, c._busy_with, c.hud, c._status = {}, None, _A(badges=[]), said.append

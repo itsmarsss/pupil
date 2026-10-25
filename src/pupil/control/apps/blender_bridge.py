@@ -17,8 +17,10 @@ import traceback
 
 import bpy
 
-PORT = int(os.environ.get("PUPIL_BLENDER_PORT") or os.environ.get("GAZE_BLENDER_PORT", "47810"))
-TOKEN_FILE = os.path.expanduser("~/Library/Application Support/Gaze/blender_bridge.token")
+from ...core.paths import APP_SUPPORT
+
+PORT = int(os.environ.get("PUPIL_BLENDER_PORT", "47810"))
+TOKEN_FILE = APP_SUPPORT / "blender_bridge.token"
 MAX_OUTPUT = 8000
 
 _jobs: queue.Queue = queue.Queue()
@@ -29,15 +31,15 @@ def _run(code):
     try:
         tree = ast.parse(code)
         last = tree.body.pop() if tree.body and isinstance(tree.body[-1], ast.Expr) else None
-        scope = {"bpy": bpy, "__name__": "__gaze__"}
+        scope = {"bpy": bpy, "__name__": "__pupil__"}
         result = None
         with contextlib.redirect_stdout(out), contextlib.redirect_stderr(out):
-            exec(compile(tree, "<gaze>", "exec"), scope)
+            exec(compile(tree, "<pupil>", "exec"), scope)
             if last is not None:
-                value = eval(compile(ast.Expression(last.value), "<gaze>", "eval"), scope)
+                value = eval(compile(ast.Expression(last.value), "<pupil>", "eval"), scope)
                 result = None if value is None else repr(value)[:MAX_OUTPUT]
         try:  # one undo step per request, so the user can Cmd+Z what the agent did
-            bpy.ops.ed.undo_push(message="gaze agent")
+            bpy.ops.ed.undo_push(message="pupil agent")
         except Exception:
             pass
         return {"ok": True, "output": out.getvalue()[-MAX_OUTPUT:], "result": result}
@@ -87,11 +89,11 @@ def _serve():
     srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     srv.bind(("127.0.0.1", PORT))
     srv.listen(4)
-    print(f"gaze bridge listening on 127.0.0.1:{PORT}")
+    print(f"pupil bridge listening on 127.0.0.1:{PORT}")
     while True:
         conn, _ = srv.accept()
         threading.Thread(target=_handle, args=(conn, token), daemon=True).start()
 
 
 bpy.app.timers.register(_pump, persistent=True)
-threading.Thread(target=_serve, name="gaze-bridge", daemon=True).start()
+threading.Thread(target=_serve, name="pupil-blender-bridge", daemon=True).start()

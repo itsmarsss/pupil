@@ -13,7 +13,7 @@ import time
 from pupil.control.providers.apify import ApifyProvider
 
 
-if (os.environ.get("PUPIL_LIVE_APIFY") or os.environ.get("GAZE_LIVE_APIFY")) != "1":
+if os.environ.get("PUPIL_LIVE_APIFY") != "1":
     raise SystemExit("Set PUPIL_LIVE_APIFY=1 to spend Apify credits on this live rehearsal.")
 
 runs = int(os.environ.get("PUPIL_APIFY_DEMO_RUNS", "10"))

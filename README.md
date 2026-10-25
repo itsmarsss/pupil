@@ -3,9 +3,6 @@
 Webcam gaze tracking for macOS that works within a minute of launch and gets more
 accurate the longer you use it.
 
-*Formerly Gaze:* settings named `GAZE_*` still work (the new names are `PUPIL_*`), and data saved under
-`~/Library/Application Support/Gaze` moves to `…/Pupil` the first time `pupil` runs.
-
 It combines two estimators of where you're looking:
 
 - **Appearance:** a neural gaze model on face and eye crops, calibrated per person.
@@ -22,7 +19,7 @@ model's own estimate. On 138 replayed check dots this cut the mean error from 2.
 
 - macOS on Apple Silicon, built-in camera
 - [uv](https://docs.astral.sh/uv/), Python 3.11; Node 22 + [pnpm](https://pnpm.io) for the dashboard
-- Gaze model weights at `models/gaze_base.mnn` (or set `PUPIL_MODELS_DIR`). Not included;
+- Pretrained gaze-network weights at `models/gaze_base.mnn` (or set `PUPIL_MODELS_DIR`). Not included;
   see Licensing. The MediaPipe face landmarker downloads itself on first run.
 - Camera permission for your terminal. Close other apps using the camera: macOS shares
   it at the resolution the first app picked, and the app warns when it gets less than 1080p.
@@ -99,14 +96,14 @@ play / pause / step / speed controls.
 
 ```sh
 uv run pupil --save-session --measure
-uv run pupil replay ~/Library/Application\ Support/Gaze/recordings/session-…
+uv run pupil replay ~/Library/Application\ Support/Pupil/recordings/session-…
 uv run pupil replay SESSION --modes hd+roll,hd,hd+frontal,vga --all
 ```
 
 `replay` re-runs a saved session through each pipeline variant on the same frames, including
 `live` (the app's own calibration), and reports head-still and head-moving checks
 separately. Profiles, recordings, the device file and the accuracy log live in
-`~/Library/Application Support/Gaze/`.
+`~/Library/Application Support/Pupil/`.
 
 ## The notch
 
@@ -130,7 +127,7 @@ purpose: one strong sign is enough. Blinks are measured against
 your own open-eye baseline, so there's no fixed threshold to tune. Gentle, rate-limited reminders arrive
 as notifications (and at your gaze with voice control on): blink when the rate stays low, look away after
 20 minutes, take a break when fatigue is high. ◉ → Health shows the numbers and turns reminders off; the
-dashboard has a Health panel; a line a minute goes to `~/Library/Application Support/Gaze/health/`.
+dashboard has a Health panel; a line a minute goes to `~/Library/Application Support/Pupil/health/`.
 These are heuristics for nudges, not a medical measurement.
 
 ## Voice control
@@ -143,8 +140,11 @@ cp .env.example .env                     # add TYPESAFE_API_KEY (fast tier) and/
 uv run pupil --voice --dashboard          # or: uv run pupil control --dashboard
 ```
 
-`--typed` types commands in the terminal instead of speaking; `pupil control --gaze mouse` uses the
-mouse cursor as gaze (no camera). Needs Microphone, Accessibility and Screen Recording for your terminal
+`--typed` types commands in the terminal instead of speaking; `pupil control --gaze mouse --dashboard`
+uses the **cursor for gaze** but keeps the **webcam for the lip gate**, so voice, barge-in, and TTS behave like
+eye mode (barge-in when your lips move after speech starts). Pass `--no-camera` for cursor-only dev mode (mic ducks
+during TTS). If **your** speech gets cut mid-sentence, lower `PUPIL_CARTESIA_END_THRESHOLD` (e.g. `0.2`). Needs
+Microphone, **Camera**, Accessibility and Screen Recording for your terminal
 as well as Camera.
 
 | Tier | | Examples |
@@ -228,10 +228,10 @@ repository root `.env`:
 
 ```env
 APIFY_TOKEN=your-token
-GAZE_APIFY_RESEARCH_ACTOR=your-username/accessible-decision-researcher
+PUPIL_APIFY_RESEARCH_ACTOR=your-username/accessible-decision-researcher
 ```
 
-Restart Gaze after changing `.env`; configuration is loaded when the process starts.
+Restart Pupil after changing `.env`; configuration is loaded when the process starts.
 
 The heat map gives extra weight to your final stable fixation. For a recent clicked target, say
 "again" to repeat the action, "do the same here" while looking somewhere else, or

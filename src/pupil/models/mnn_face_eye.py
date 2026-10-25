@@ -12,7 +12,7 @@ from pathlib import Path
 import cv2
 import numpy as np
 
-from ..core.paths import GAZE_MODEL_FILE, model_path
+from ..core.paths import PUPIL_GAZE_MODEL, model_path
 from ..core.types import FaceObservation, Frame, GazeFeatures
 from ..face.tracker import crop
 
@@ -29,9 +29,9 @@ class MNNFaceEyeModel:
     def __init__(self, path: str | Path | None = None, threads: int = 4):
         import MNN
 
-        self.path = Path(path) if path else model_path(GAZE_MODEL_FILE)
+        self.path = Path(path) if path else model_path(PUPIL_GAZE_MODEL)
         if not self.path.exists():
-            raise FileNotFoundError(f"Gaze model not found at {self.path}. Set PUPIL_MODELS_DIR or copy it there.")
+            raise FileNotFoundError(f"gaze model not found at {self.path}. Set PUPIL_MODELS_DIR or copy it there.")
         self.model_id = _file_id(self.path)
         rt = MNN.nn.create_runtime_manager(({"precision": "low", "backend": 0, "numThread": threads},))
         self._module = MNN.nn.load_module_from_file(

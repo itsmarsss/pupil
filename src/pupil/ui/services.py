@@ -15,7 +15,7 @@ from ..calibration.implicit import evaluate_click, window
 from ..calibration.profile import CLICK
 from ..core.env import env
 from ..core.paths import recordings_dir
-from ..sinks.recorder import GazeRecorder
+from ..sinks.recorder import PupilRecorder
 from ..sinks.snapper import Element, Snapper
 from ..tracker import Tracker
 
@@ -110,7 +110,7 @@ class Recording:
 
     def __init__(self, tracker: Tracker):
         self.tracker = tracker
-        self.recorder: GazeRecorder | None = None
+        self.recorder: PupilRecorder | None = None
 
     @property
     def on(self) -> bool:
@@ -118,7 +118,7 @@ class Recording:
 
     def start(self, path: Path | None = None) -> None:
         path = path or recordings_dir() / time.strftime("gaze-%Y%m%d-%H%M%S.csv")
-        self.recorder = GazeRecorder(path)
+        self.recorder = PupilRecorder(path)
         self.tracker.add_listener(self.recorder.on_sample)
         log.info("recording gaze to %s", path)
 
@@ -180,10 +180,10 @@ class VoiceLog:
                 self._log.append({"t": round(time.time(), 2), "kind": kind, "text": text})
             self._state["seen"] = time.time()
 
-    def snapshot(self) -> dict | None:
+    def snapshot(self) -> dict:
         with self._lock:
             if not self._state:
-                return None  # no controller connected
+                return {"connected": False, "log": [], "lips": [], "research_history": []}
             return {**self._state, "log": list(self._log)[-12:], "lips": list(self._lips),
                     "research_history": list(self._research),
                     "connected": time.time() - self._state["seen"] < 30}

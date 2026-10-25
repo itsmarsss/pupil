@@ -28,6 +28,7 @@ _PATTERNS = [
     (r"^(?:check|test) (?:the )?(?:accuracy|tracking|gaze)$", lambda m: Command("check")),
     (r"^(?:start )?(?:dictation|dictating)(?: mode)?$|^start dictating$|^dictate$", lambda m: Command("dictate_on")),
     (r"^(?:stop|end|finish|exit) (?:dictation|dictating)(?: mode)?$", lambda m: Command("dictate_off")),
+    (r"^forget that$|^clear (?:your )?memory$", lambda m: Command("forget")),
 ]
 
 

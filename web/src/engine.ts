@@ -51,8 +51,10 @@ class EngineStore {
   private ws: WebSocket | null = null;
   private listeners = new Set<() => void>();
   private retry: number | undefined;
+  private closing = false;
 
   connect() {
+    this.closing = false;
     const proto = location.protocol === "https:" ? "wss" : "ws";
     const ws = new WebSocket(`${proto}://${location.host}/ws`);
     ws.binaryType = "arraybuffer";
@@ -62,16 +64,19 @@ class EngineStore {
     };
     ws.onclose = () => {
       this.connected = false;
+      this.ws = null;
       this.bump();
-      this.retry = window.setTimeout(() => this.connect(), 1000);
+      if (!this.closing) this.retry = window.setTimeout(() => this.connect(), 1000);
     };
     ws.onmessage = (ev) => this.receive(ev.data);
     this.ws = ws;
   }
 
   disconnect() {
+    this.closing = true;
     window.clearTimeout(this.retry);
     this.ws?.close();
+    this.ws = null;
   }
 
   send(cmd: Command, value?: number) {

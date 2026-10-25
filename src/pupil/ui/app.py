@@ -29,7 +29,7 @@ from ..health.tracker import HealthTracker
 from ..tracker import Tracker
 from .flows import MOTION_TIMING, Flows
 from .menu import SEPARATOR, Action, Choice, Header, MenuBar, Toggle
-from .overlay import GazeRing
+from .overlay import PupilRing
 from .services import ClickLearner, Recording, SnapService, VoiceLog
 from .target_screen import TargetScreen
 from ..core.env import env
@@ -43,7 +43,7 @@ HEAT_MAX_POINTS = 24
 DASHBOARD_PORT = 8766
 
 
-class GazeApp:
+class PupilApp:
     def __init__(
         self,
         tracker: Tracker,
@@ -79,9 +79,9 @@ class GazeApp:
         self.notch = None  # the user-facing status (ui/notch.py)
         self.session: SessionWriter | None = None
         self.dashboard = None
-        self.controller = None  # voice control (gaze.control), when on
+        self.controller = None  # voice control (pupil.control), when on
         self.flows: Flows | None = None
-        self.ring: GazeRing | None = None
+        self.ring: PupilRing | None = None
         self.menu: MenuBar | None = None
         self._last_valid_ns = 0
         self._switching_camera = False
@@ -91,8 +91,8 @@ class GazeApp:
     def run(self) -> None:
         o = self.options
         NSApplication.sharedApplication().setActivationPolicy_(NSApplicationActivationPolicyAccessory)
-        self.ring = GazeRing(self.screen)
-        self.ring.heat = env("DISPLAY", "heat") == "heat"  # ring | heat (◉ → Gaze display)
+        self.ring = PupilRing(self.screen)
+        self.ring.heat = env("DISPLAY", "heat") == "heat"  # ring | heat (◉ → Look display)
         if o["session_dir"] is not None:
             self._start_session(o["session_dir"])
         self.flows = Flows(self.tracker, TargetScreen(self.screen), self.ring, self.lid.sensor,
@@ -269,9 +269,9 @@ class GazeApp:
         log.info("voice control on%s", " (typed)" if typed else "")
 
     def _start_publisher(self) -> None:
-        from ..sinks.publisher import GazePublisher
+        from ..sinks.publisher import PupilPublisher
 
-        publisher = GazePublisher(busy=lambda: self.flows.busy)
+        publisher = PupilPublisher(busy=lambda: self.flows.busy)
         self.tracker.add_listener(publisher.on_sample)
         commands = self._remote_commands()
         publisher.listen({k: commands[k] for k in ("recalibrate", "recentre", "validate")}, on_event=self.voice.add)
@@ -401,7 +401,7 @@ class GazeApp:
             Action("Measure (head still + moving)", f.measure, idle),
             SEPARATOR,
             Header("View"),
-            Choice("Gaze display", lambda: [(title, self._display() == key, lambda key=key: self._set_display(key))
+            Choice("Look display", lambda: [(title, self._display() == key, lambda key=key: self._set_display(key))
                                             for key, title in (("ring", "Ring"), ("heat", "Heat map (shows accuracy)"),
                                                                ("off", "Off"))]),
             Choice("Smoothing", lambda: [(name.capitalize(), name == self.tracker.smoothing,

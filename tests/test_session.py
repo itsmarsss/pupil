@@ -38,11 +38,11 @@ def test_writer_skips_unlabelled_and_rebuilds_canvas(tmp_path):
 def test_replay_runs_all_variants(tmp_path):
     import cv2
 
-    from pupil.core.paths import GAZE_MODEL_FILE, model_path
+    from pupil.core.paths import PUPIL_GAZE_MODEL, model_path
     from pupil.eval.replay import replay
     from pupil.face.tracker import FaceTracker
 
-    if not model_path(GAZE_MODEL_FILE).exists():
+    if not model_path(PUPIL_GAZE_MODEL).exists():
         pytest.skip("gaze model weights not present")
     from pupil.models.mnn_face_eye import MNNFaceEyeModel
 

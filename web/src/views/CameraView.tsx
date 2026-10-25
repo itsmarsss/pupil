@@ -3,7 +3,7 @@ import { C } from "../colors";
 import { useEngine } from "../engine";
 import { FitBox } from "./FitBox";
 
-const MIRROR_KEY = "gaze.camera.mirror";
+const MIRROR_KEY = "pupil.camera.mirror";
 
 function initialMirror(): boolean {
   try {
@@ -36,7 +36,13 @@ export function CameraView() {
     <div className="pane">
       <button className="corner-toggle" onClick={toggle}>{mirror ? "Mirrored" : "Not mirrored"}</button>
       <FitBox aspect={aspect} style={{ transform: mirror ? "scaleX(-1)" : undefined }}>
-        {imageUrl ? <img src={imageUrl} alt="camera" /> : <div className="placeholder">no image</div>}
+        {imageUrl ? <img src={imageUrl} alt="camera" /> : (
+          <div className="placeholder">
+            {frame?.phase === "mouse control"
+              ? "Mouse mode — no camera. Use pupil control --dashboard (eyes) or uv run pupil --voice --dashboard."
+              : "no image"}
+          </div>
+        )}
         {img && (
           <svg viewBox={`0 0 ${aspect} 1`} preserveAspectRatio="none">
             <g transform={`scale(${aspect} 1)`}>

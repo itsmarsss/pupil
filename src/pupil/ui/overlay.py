@@ -61,7 +61,7 @@ class _RingView(NSView):
         path.stroke()
 
 
-class GazeRing:
+class PupilRing:
     """Moves a small transparent window rather than redrawing a fullscreen one."""
 
     TRACKING = NSColor.colorWithCalibratedRed_green_blue_alpha_(0.15, 0.85, 0.35, 0.85)

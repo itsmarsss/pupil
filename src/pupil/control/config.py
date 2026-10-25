@@ -2,7 +2,7 @@ import os
 import re
 from pathlib import Path
 
-from ..sinks.publisher import CMD_PORT, GAZE_PORT  # noqa: F401  (shared with the tracker)
+from ..sinks.publisher import CMD_PORT, TRACKER_PUBLISH_PORT  # noqa: F401  (shared with the tracker)
 from ..core.env import env
 
 ROOT = Path(__file__).resolve().parents[3]  # repo root: src/pupil/control/config.py
@@ -64,8 +64,8 @@ GATE_TIMEOUT_S = 2.0
 GATE_RISKY_MIN = 0.65  # ask to confirm at or above this (measured: harmless clicks ~0.4-0.46, delete/send 0.84-0.97)
 
 # The tracker (`pupil --publish`, sinks/publisher.py) streams points to us over local UDP
-GAZE_STALE_S = 1.0  # no point for this long = tracker lost you
-GAZE_MIN_CONFIDENCE = 0.5  # below this (head outside its calibrated range) clicks and typing ask to confirm
+TRACKER_STALE_S = 1.0  # no point for this long = tracker lost you
+TRACKER_MIN_CONFIDENCE = 0.5  # below this (head outside its calibrated range) clicks and typing ask to confirm
 
 # Dictation ("type ...", dictation mode): a fast model turns the transcript into what was meant ("slash btw" ->
 # "/btw" in a chat box), from the app and the text before the cursor. Off: typed as heard.
@@ -101,7 +101,7 @@ TTS_MODEL = env("TTS_MODEL", "sonic-3.6")
 TTS_VOICE = env("TTS_VOICE", "db6b0ed5-d5d3-463d-ae85-518a07d3c2b4")  # Cartesia's example voice
 
 # Lip gate (lips.py): speech counts only while you face the screen and move your lips. on | shadow (log what it
-# would block, block nothing) | off. Eye tracking only; with --gaze mouse there is no face to watch.
+# would block, block nothing) | off. With --gaze mouse the webcam still feeds the gate unless --no-camera.
 LIP_GATE = env("LIP_GATE", "on")
 WAKE_WORD = env("WAKE_WORD", "").strip().lower()  # e.g. "pupil"; empty = every utterance is a command
 
