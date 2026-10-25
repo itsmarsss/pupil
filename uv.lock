@@ -267,7 +267,6 @@ control = [
     { name = "anthropic" },
     { name = "certifi" },
     { name = "faster-whisper" },
-    { name = "mss" },
     { name = "pillow" },
     { name = "pyautogui" },
     { name = "sounddevice" },
@@ -286,7 +285,6 @@ requires-dist = [
     { name = "faster-whisper", marker = "extra == 'control'", specifier = ">=1.1" },
     { name = "mediapipe", specifier = ">=1.1.1" },
     { name = "mnn", specifier = ">=3.0" },
-    { name = "mss", marker = "extra == 'control'", specifier = ">=9" },
     { name = "numpy", specifier = ">=2" },
     { name = "opencv-contrib-python", specifier = ">=4.9,<5" },
     { name = "pillow", marker = "extra == 'control'", specifier = ">=10" },
@@ -526,15 +524,6 @@ dependencies = [
     { name = "rubicon-objc", marker = "sys_platform == 'darwin'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/28/fa/b2ba8229b9381e8f6381c1dcae6f4159a7f72349e414ed19cfbbd1817173/MouseInfo-0.1.3.tar.gz", hash = "sha256:2c62fb8885062b8e520a3cce0a297c657adcc08c60952eb05bc8256ef6f7f6e7", size = 10850, upload-time = "2020-03-27T21:20:10.136Z" }
-
-[[package]]
-name = "mss"
-version = "10.2.0"
-source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/e5/5d/eee782a6d674f562c946ae6a026f4c595ea2b7b031f290bf9fbf60da09b5/mss-10.2.0.tar.gz", hash = "sha256:ab271860775545e62f29d7b11f82f279ac1048f5bbdd26cfad84830208dbd393", size = 200317, upload-time = "2026-04-23T10:44:57.305Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/f2/c3/313e14f245c79b4c05bd0f3a84a4813aa26fa10f8993aebd91d04c5fad3f/mss-10.2.0-py3-none-any.whl", hash = "sha256:e79f428899280e7e64e38365b5bfed683851ebea807eeaeadaf06eb8e0d67197", size = 67106, upload-time = "2026-04-23T10:44:56.266Z" },
-]
 
 [[package]]
 name = "numpy"

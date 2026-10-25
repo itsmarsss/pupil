@@ -3,7 +3,6 @@
 import base64
 import io
 
-import mss
 import Quartz
 from PIL import Image, ImageDraw
 
@@ -32,9 +31,16 @@ class Screen:
         return x * self.scale, y * self.scale
 
     def _grab(self):
-        with mss.mss() as sct:
-            raw = sct.grab(sct.monitors[1])  # main display, physical pixels
-        return Image.frombytes("RGB", raw.size, raw.bgra, "raw", "BGRX")
+        """The main display in physical pixels. Quartz directly (~20 ms): mss took 30 s per grab here (a timeout
+        in its macOS backend), which was most of every agent step."""
+        bounds = Quartz.CGDisplayBounds(Quartz.CGMainDisplayID())
+        image = Quartz.CGWindowListCreateImage(bounds, Quartz.kCGWindowListOptionOnScreenOnly,
+                                               Quartz.kCGNullWindowID, Quartz.kCGWindowImageDefault)
+        if image is None:
+            raise RuntimeError("screen capture failed: allow Screen Recording for your terminal")
+        w, h = Quartz.CGImageGetWidth(image), Quartz.CGImageGetHeight(image)
+        data = Quartz.CGDataProviderCopyData(Quartz.CGImageGetDataProvider(image))
+        return Image.frombuffer("RGB", (w, h), bytes(data), "raw", "BGRX", Quartz.CGImageGetBytesPerRow(image), 1)
 
     def screenshot(self, gaze=None, target=None):
         """Screenshot at Claude's size. `gaze` / `target` (screen points) are drawn on it if given."""

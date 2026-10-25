@@ -22,7 +22,6 @@ dependencies = [
 control = [
     "anthropic>=2.3",
     "typesafe-sdk>=0.7.5",
-    "mss>=9",
     "Pillow>=10",
     "pyautogui>=0.9.54",
     "sounddevice>=0.5",
