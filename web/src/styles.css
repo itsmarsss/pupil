@@ -1,0 +1,52 @@
+:root {
+  color-scheme: dark;
+  --bg: #0b0d11;
+  --card: #12151c;
+  --line: #222734;
+  --text: #d7dbe3;
+  --muted: #8b93a1;
+  font: 13px/1.4 -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif;
+}
+
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--text); }
+
+.app { height: 100vh; display: grid; grid-template-rows: auto 1fr 200px; }
+header { padding: 8px 14px; font-weight: 600; border-bottom: 1px solid var(--line); }
+
+main {
+  display: grid; gap: 8px; padding: 8px; min-height: 0;
+  grid-template-columns: 1.4fr 1fr 290px;
+  grid-template-rows: 1fr 1fr;
+  grid-template-areas: "scene camera panel" "scene screen panel";
+}
+.card { background: var(--card); border: 1px solid var(--line); border-radius: 8px; padding: 8px;
+        display: flex; flex-direction: column; min-height: 0; overflow: hidden; }
+.card h2 { margin: 0 0 6px; font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); }
+.scene { grid-area: scene; }
+.scene > div:last-child { flex: 1; min-height: 0; }
+
+.media { position: relative; max-width: 100%; max-height: 100%; margin: auto; width: 100%; }
+.media img, .media svg { position: absolute; inset: 0; width: 100%; height: 100%; }
+.placeholder { color: var(--muted); display: grid; place-items: center; height: 100%; }
+
+.panel { grid-area: panel; background: var(--card); border: 1px solid var(--line); border-radius: 8px;
+         padding: 10px 12px; overflow: auto; }
+.panel h3 { margin: 6px 0; font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); }
+.panel section { padding-bottom: 8px; border-bottom: 1px solid var(--line); margin-bottom: 8px; }
+.panel dl { display: grid; grid-template-columns: auto 1fr; gap: 3px 10px; margin: 0; }
+.panel dt { color: var(--muted); }
+.panel dd { margin: 0; text-align: right; }
+.small { font-size: 11px; color: var(--muted); }
+.ok { color: #3ddc84; } .bad { color: #ff6b6b; } .muted { color: var(--muted); }
+.legend { list-style: none; padding: 0; margin: 0; display: grid; gap: 3px; }
+.legend span { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 8px; }
+.controls { display: grid; gap: 6px; border-bottom: 0 !important; }
+.controls button { background: #1c2230; color: var(--text); border: 1px solid #2c3445; border-radius: 6px;
+                   padding: 7px; cursor: pointer; }
+.controls button:hover:not(:disabled) { background: #253046; }
+.controls button:disabled { opacity: .45; cursor: default; }
+
+.plots { display: grid; grid-template-columns: repeat(5, 1fr); gap: 8px; padding: 0 8px 8px; min-height: 0; }
+.plot { background: var(--card); border: 1px solid var(--line); border-radius: 8px; overflow: hidden; min-width: 0; }
+.plot .u-title { font-size: 11px; font-weight: 500; color: var(--muted); height: 22px; line-height: 22px; }

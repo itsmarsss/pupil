@@ -82,6 +82,7 @@ class GazeApp:
         session_dir: Path | None = None,
         measure: bool = False,
         publish: bool = False,
+        dashboard_port: int | None = None,
     ):
         self.tracker = tracker
         self.screen = tracker.screen
@@ -100,6 +101,9 @@ class GazeApp:
         self._session_dir = session_dir
         self._pending_measure = measure  # run the measurement once the launch flow finishes
         self._publish = publish  # stream gaze to the voice controller (gaze.control)
+        self._dashboard_port = dashboard_port
+        self.dashboard = None
+        self._phase: tuple[str, tuple | None] = ("idle", None)  # what's on screen, for the dashboard
         self.lid = LidSensor()
         self._lid_now: float | None = self.lid.angle()
         self.session: SessionWriter | None = None
@@ -131,6 +135,8 @@ class GazeApp:
             self._toggle_snap()
         if self._record_path is not None:
             self._start_recording(self._record_path)
+        if self._dashboard_port is not None:
+            self._start_dashboard(self._dashboard_port)
         if self._publish:
             publisher = GazePublisher(busy=lambda: self._busy)
             self.tracker.add_listener(publisher.on_sample)
@@ -176,6 +182,8 @@ class GazeApp:
             return
         self._shut_down = True
         self.tracker.stop()
+        if self.dashboard is not None:
+            self.dashboard.stop()
         self._stop_recording()
         if self.session is not None:
             delivered = getattr(self.tracker.source, "delivered", None)
@@ -320,6 +328,7 @@ class GazeApp:
         self._validate(n=3, launch_check=False)
 
     def _label(self, phase, target=None, onset_ns: int = 0) -> None:
+        self._phase = (phase or "idle", tuple(target) if target is not None else None)
         if self.session is not None:
             self.session.label(phase, target, onset_ns)
 
@@ -492,6 +501,34 @@ class GazeApp:
             self._snap = (fixation_id, None)
         finally:
             self._snap_pending = None
+
+    # ---- dashboard ------------------------------------------------------------------
+    def _start_dashboard(self, port: int) -> None:
+        from ..dashboard.server import DashboardServer
+
+        def on_main(fn):
+            return lambda: AppHelper.callAfter(fn)
+
+        self.dashboard = DashboardServer(
+            self.tracker,
+            context=self._dashboard_context,
+            commands={
+                "recalibrate": on_main(lambda: self._when_idle(self._calibrate)),
+                "check": on_main(lambda: self._when_idle(lambda: self._validate(9))),
+                "measure": on_main(lambda: self._when_idle(self._measure)),
+                "cycle_smoothing": on_main(self._cycle_smoothing),
+                "toggle_overlay": on_main(self._toggle_overlay),
+            },
+            lid=lambda: self._lid_now,
+            port=port,
+        )
+        self.dashboard.start()
+
+    def _dashboard_context(self) -> dict:
+        phase, target = self._phase
+        return {"phase": phase if self._busy or phase != "idle" else "idle", "target": target,
+                "busy": self._busy, "lid_deg": self._lid_now, "smoothing": self.tracker.smoothing,
+                "overlay": self.overlay_on}
 
     # ---- recording ------------------------------------------------------------------
     def _start_recording(self, path: Path | None = None) -> None:

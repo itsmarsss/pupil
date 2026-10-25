@@ -55,6 +55,12 @@ def cmd_run(args) -> int:
     if lock is None:
         print("gaze is already running (◉ in the menu bar). Quit it first: ◉ → Quit.", file=sys.stderr)
         return 1
+    if args.dashboard:
+        import threading
+        import webbrowser
+
+        url = f"http://127.0.0.1:{args.dashboard_port}/"
+        threading.Timer(2.0, webbrowser.open, args=(url,)).start()
 
     tracker = _build_tracker(args)
     GazeApp(
@@ -69,6 +75,7 @@ def cmd_run(args) -> int:
         session_dir=_session_dir(args.save_session),
         measure=args.measure,
         publish=args.publish,
+        dashboard_port=args.dashboard_port if args.dashboard else None,
     ).run()
     return 0
 
@@ -241,6 +248,8 @@ def main(argv: list[str] | None = None) -> int:
                        help="save calibration/validation frames for `gaze replay`")
         p.add_argument("--measure", action="store_true", help="run the head-still + head-moving accuracy measurement")
         p.add_argument("--publish", action="store_true", help="stream gaze over local UDP for `gaze control`")
+        p.add_argument("--dashboard", action="store_true", help="serve the web dashboard on 127.0.0.1 and open it")
+        p.add_argument("--dashboard-port", type=int, default=8766)
         p.add_argument("--appearance", choices=["network", "patches"], default="network",
                        help="eye appearance features: the pretrained network (default) or eye patches "
                             "fitted per person (no pretrained weights; less accurate)")
