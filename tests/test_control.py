@@ -72,3 +72,80 @@ def test_tracker_gaze_reads_samples_in_process():
     g.send({"cmd": "recentre"})
     g.report("heard", "click this")
     assert calls == ["recentre"] and reports == [{"event": "heard", "text": "click this"}]
+
+
+def test_split_clauses():
+    assert router.split_clauses("open Safari and then make a new tab") == ["open Safari", "make a new tab"]
+    assert router.split_clauses("copy this, then switch to Notes") == ["copy this", "switch to Notes"]
+    assert router.split_clauses("select all and copy") == ["select all", "copy"]
+
+
+class _A:
+    def __init__(self, **kw):
+        self.__dict__.update(kw)
+
+
+def _answers(choices=None, **nouls):
+    base = dict(is_command=0.95, enough_context=0.9, is_compound=0.05, needs_agent=0.05, wants_element=0.05,
+                wants_app=0.05, wants_shortcut=0.05, wants_scroll=0.05, risky=0.05)
+    base.update(nouls)
+    ch = {"missing": "who", "app": "Notes", "shortcut": "copy", "scroll_direction": "down",
+          "element_action": "activate", **(choices or {})}
+    return _A(nouls={k: _A(noul=v) for k, v in base.items()}, choices={k: _A(choice=v) for k, v in ch.items()})
+
+
+def test_truth_table_clarify_and_compound():
+    from gaze.control.gate import _decide
+
+    assert _decide(_answers(enough_context=0.04), [], None, {})[0] == "clarify"
+    assert _decide(_answers(enough_context=0.04), [], None, {}, allow_clarify=False)[0] == "agent"  # asks once
+    assert _decide(_answers(enough_context=0.24, wants_shortcut=0.9), [], None, {})[0] == "shortcut"  # terse is fine
+    assert _decide(_answers(is_compound=0.95), [], None, {})[0] == "compound"
+    assert _decide(_answers(is_compound=0.95, wants_app=0.9), [], None, {}, allow_compound=False)[0] == "open_app"
+    assert _decide(_answers(wants_scroll=0.95, wants_shortcut=0.8), [], None, {})[0] == "scroll_down"
+
+
+def test_episodes_label_reactions_and_replay(tmp_path):
+    from gaze.control import episodes
+
+    log = episodes.EpisodeLog(tmp_path / "e.jsonl")
+    t = time.time()
+    a = log.begin("click this", t, t + 0.5, "click")
+    a.update(acted=True)
+    log.finish(a)
+    log.begin("undo", t + 1, t + 1.3, "unknown")  # a correction right after an action
+    b = log.begin("open notes", t + 2, t + 2.4, "unknown")
+    b.update(gate={"route": "open_app", "nouls": {k: v.noul for k, v in _answers(wants_app=0.9).nouls.items()},
+                   "choices": {"app": "Notes", "missing": "who", "shortcut": "copy", "scroll_direction": "down",
+                               "element_action": "activate"}}, elements=[], gaze=None)
+    log.finish(b)
+    log.begin("open notes", t + 3, t + 3.4, "unknown")  # said again: the first one didn't work
+    eps = {e["text"]: e for e in episodes.load(tmp_path / "e.jsonl")}
+    assert eps["click this"]["label"] == "corrected" and eps["open notes"]["label"] == "repeated"
+    [(ep, was, now)] = episodes.replay(list(eps.values()))
+    assert was == now == "open_app"
+
+
+def test_compound_hands_the_rest_to_the_agent(monkeypatch):
+    from gaze.control import controller as ctl
+    from gaze.control.gate import Decision
+
+    done, started = [], []
+    c = ctl.VoiceController.__new__(ctl.VoiceController)
+    c._ep, c.pending = {}, None
+    c.gaze = _A(point=lambda: (10, 10))
+    c.screen = _A(w_pt=100, h_pt=100)
+    c.agent = _A(available=True, start=lambda req, *a, **k: started.append(req))
+    c._status = lambda text: None
+    routes = {"open Notes": Decision("open_app", "", 0, app="Notes", app_path="/Applications/Notes.app"),
+              "write a shopping list": Decision("agent", "", 0)}
+    c.gate = _A(available=True, decide=lambda clause, *a, **k: routes[clause])
+    monkeypatch.setattr(ctl.snapping, "snap", lambda *a: (None, []))
+    monkeypatch.setattr(ctl.macos, "frontmost_app", lambda: "Notes")
+    monkeypatch.setattr(ctl.commands, "open_app", lambda path: done.append(path))
+    monkeypatch.setattr(ctl, "SETTLE_S", {}), monkeypatch.setattr(ctl, "DEFAULT_SETTLE_S", 0)
+    c._compound("open Notes and write a shopping list", (10, 10), None, [], "Safari")
+    assert done == ["/Applications/Notes.app"]
+    assert started == ["open Notes and write a shopping list (Already done: open Notes. "
+                       "Do the rest: write a shopping list.)"]
+    assert [s["route"] for s in c._ep["clauses"]] == ["open_app", "agent"]

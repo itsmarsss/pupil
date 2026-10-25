@@ -62,3 +62,12 @@ def route(utterance: str) -> Command | None:
         return Command("type", {"text": m[1]}, text)
 
     return Command("unknown", {"request": text}, text)
+
+
+_CLAUSE_BREAK = re.compile(r"\s*,?\s*\b(?:and then|after that|then|and)\b\s*,?\s*", re.IGNORECASE)
+
+
+def split_clauses(text: str) -> list[str]:
+    """ "open Safari and then make a new tab" -> ["open Safari", "make a new tab"]. Only used once the gate has
+    judged the command to be several actions, so "salt and pepper" inside one action isn't split."""
+    return [c.strip(" ,.") for c in _CLAUSE_BREAK.split(text) if c.strip(" ,.")]

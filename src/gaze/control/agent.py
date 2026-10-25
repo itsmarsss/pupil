@@ -40,6 +40,7 @@ class Agent:
         self._cancel = threading.Event()
         self._thread = None
         self._paused = None  # (messages, calls, request) waiting for the user's "confirm"
+        self._on_done, self._steps, self._started = None, 0, 0.0
 
     @property
     def available(self):
@@ -57,7 +58,8 @@ class Agent:
         self._cancel.set()
         self._paused = None
 
-    def start(self, request, gaze, target, candidates, app_name):
+    def start(self, request, gaze, target, candidates, app_name, on_done=None):
+        """on_done(result text, steps, seconds) when the run ends (not when it pauses for "confirm")."""
         if not (os.environ.get("ANTHROPIC_API_KEY") or os.environ.get("ANTHROPIC_AUTH_TOKEN")):
             self.on_status("This needs Claude, but ANTHROPIC_API_KEY isn't set (add it to .env).")
             return
@@ -65,6 +67,7 @@ class Agent:
             self.on_status('Still working - say "stop" to cancel.')
             return
         self._paused = None
+        self._on_done, self._steps, self._started = on_done, 0, time.time()
         messages = [self._first_message(request, gaze, target, candidates, app_name)]
         self._spawn(messages, request, None)
 
@@ -84,17 +87,20 @@ class Agent:
 
     def _run(self, messages, request, approved_calls):
         try:
-            self.on_status(self._loop(messages, request, approved_calls))
+            result = self._loop(messages, request, approved_calls)
         except anthropic.AuthenticationError:
-            self.on_status("No valid Anthropic credentials (set ANTHROPIC_API_KEY).")
+            result = "No valid Anthropic credentials (set ANTHROPIC_API_KEY)."
         except anthropic.RateLimitError:
-            self.on_status("Rate limited by the API - try again in a moment.")
+            result = "Rate limited by the API - try again in a moment."
         except anthropic.APIStatusError as e:
-            self.on_status(f"API error {e.status_code}: {e.message}")
+            result = f"API error {e.status_code}: {e.message}"
         except anthropic.APIConnectionError:
-            self.on_status("Can't reach the Anthropic API.")
+            result = "Can't reach the Anthropic API."
         except Exception as e:  # never die silently in the worker thread
-            self.on_status(f"Agent error: {e}")
+            result = f"Agent error: {e}"
+        self.on_status(result)
+        if self._on_done is not None and not self.paused:
+            self._on_done(result, self._steps, time.time() - self._started)
 
     def _first_message(self, request, gaze, target, candidates, app_name):
         lines = [f'The user said: "{request}"', f"Frontmost app: {app_name}"]
@@ -124,6 +130,7 @@ class Agent:
             if self._cancel.is_set():
                 return "Stopped."
             self.on_status(f"Claude thinking... (step {step + 1})")
+            self._steps += 1
             t0 = time.perf_counter()
             with self.client.beta.messages.stream(
                 model=config.MODEL,

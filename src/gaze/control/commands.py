@@ -30,6 +30,8 @@ SHORTCUTS = {
     "previous_tab": ("Go to the previous tab", "control+shift+tab"),
     "new_window": ("Open a new window", "command+n"),
     "private_window": ("Open a new private / incognito window", "command+shift+n"),
+    "back": ("Go back to the previous page", "command+["),
+    "forward": ("Go forward a page", "command+]"),
     "refresh": ("Reload / refresh the page", "command+r"),
     "address_bar": ("Focus the browser address bar to type a URL or search", "command+l"),
     "zoom_in": ("Zoom in / make things bigger", "command+equal"),

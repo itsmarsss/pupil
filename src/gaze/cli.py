@@ -192,6 +192,14 @@ def cmd_fov(args) -> int:
     return 0
 
 
+def cmd_episodes(args) -> int:
+    from .control import evaluate
+
+    if args.eval is not None:
+        return evaluate.evaluate(Path(args.eval)) if args.eval else evaluate.evaluate()
+    return evaluate.replay() if args.replay else evaluate.show(args.n)
+
+
 def cmd_cameras(_args) -> int:
     from .capture.camera import list_cameras
 
@@ -288,6 +296,11 @@ def main(argv: list[str] | None = None) -> int:
     fov.add_argument("--dry-run", action="store_true", help="measure and print, don't save")
     doctor = sub.add_parser("doctor", help="check camera access, models and screen")
     doctor.add_argument("--camera", default="FaceTime")
+    ep = sub.add_parser("episodes", help="logged voice commands: what was heard, decided and done")
+    ep.add_argument("-n", type=int, default=20, help="how many recent episodes to show")
+    ep.add_argument("--replay", action="store_true", help="re-run the routing rules on logged answers (offline)")
+    ep.add_argument("--eval", nargs="?", const="", metavar="CASES",
+                    help="score the gate live on labelled cases (default tests/agent_cases.jsonl)")
     rp = sub.add_parser("replay", help="score pipeline variants on a saved session")
     rp.add_argument("session")
     rp.add_argument("--modes", default="hd+roll,hd", help="e.g. hd, vga, hd+roll, hd+frontal")
@@ -302,7 +315,8 @@ def main(argv: list[str] | None = None) -> int:
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
         datefmt="%H:%M:%S",
     )
-    commands = {"cameras": cmd_cameras, "doctor": cmd_doctor, "replay": cmd_replay, "fov": cmd_fov}
+    commands = {"cameras": cmd_cameras, "doctor": cmd_doctor, "replay": cmd_replay, "fov": cmd_fov,
+                "episodes": cmd_episodes}
     return commands.get(args.command, cmd_run)(args)
 
 

@@ -1,8 +1,10 @@
 """Look at something, say what to do: voice control running inside the gaze app.
 
 Tiers: 0 = exact phrases (router.py), 1 = Jev gate (gate.py), 2 = Claude computer-use agent (agent.py).
-"This" is where the user looked while speaking, snapped to the nearest Accessibility element. Work happens on
-background threads; `tick()` (called ~30 Hz on the AppKit main thread) applies their results to the HUD.
+"This" is where the user looked while speaking, snapped to the nearest Accessibility element. The gate may also
+ask a question first (not enough to act on) or split a command into a few actions run one after another.
+Work happens on background threads; `tick()` (called ~30 Hz on the AppKit main thread) applies their results
+to the HUD. Every command is logged as an episode (episodes.py) so routing can be measured and replayed.
 """
 from __future__ import annotations
 
@@ -12,7 +14,8 @@ import time
 
 from . import actions, commands, config, macos, router, snapping
 from .agent import Agent
-from .gate import YES, Gate
+from .episodes import EpisodeLog, element_dict
+from .gate import CLARIFY_PROMPTS, MAX_CANDIDATES, YES, Gate
 from .hud import Hud
 from .screen import Screen
 from .voice import TypedInput, Voice
@@ -25,6 +28,10 @@ _ROUTE_ACTIONS = {
     "scroll_down": ("scroll", {"direction": "down", "amount": 4}),
     "scroll_up": ("scroll", {"direction": "up", "amount": 4}),
 }
+CLARIFY_WINDOW_S = 10.0  # how long an answer to "Which one?" is taken as the answer
+MAX_CLAUSES = 3  # longer chains go to the agent whole
+SETTLE_S = {"open_app": 1.5}  # wait after a compound step before deciding the next one; default below
+DEFAULT_SETTLE_S = 0.5
 
 
 class VoiceController:
@@ -39,13 +46,16 @@ class VoiceController:
         if not self.gate.available:
             self._status(f"Fast tier (Jev) off: {self.gate.error}. Unmatched commands go straight to Claude.")
         self.agent = Agent(self.screen, self.gate, self._status)
+        self.episodes = EpisodeLog(source="typed" if typed else "voice")
         self.flash_until = 0.0
         self.pending = None  # direct action waiting for "confirm"
+        self.clarifying = None  # (request, missing, deadline, episode): the gate asked a question
         self.snap = (None, [])  # (target, candidates) for the live gaze, refreshed by _snap_loop
         self.commands: queue.Queue = queue.Queue()  # commands run one at a time, off the UI thread
         self._typed = typed
         self.voice: Voice | None = None  # the mic thread (None when typing)
         self.enabled = True
+        self._ep: dict | None = None  # episode the worker is handling (one at a time)
 
     def start(self) -> None:
         threading.Thread(target=self._snap_loop, name="snap", daemon=True).start()
@@ -71,6 +81,7 @@ class VoiceController:
         else:
             self.agent.cancel()
             self._set_pending(None)
+            self.clarifying = None
             self.hud.hide()
 
     # --- callbacks from the voice threads ---
@@ -90,10 +101,14 @@ class VoiceController:
         print(f"[{time.strftime('%H:%M:%S')}] {text}", flush=True)
         self.gaze.report("status", text)
         self.events.put(("status", text))
+        if self._ep is not None:
+            self._ep["status"] = text
 
     def _set_pending(self, pending, text=""):
         """A direct action waiting for "confirm" (None clears it); the dashboard shows it."""
         self.pending = pending
+        if pending and self._ep is not None:
+            self._ep["pending"] = True
         self.gaze.report("pending", text if pending else "")
 
     # --- main thread ---
@@ -138,16 +153,33 @@ class VoiceController:
         cmd = router.route(text)
         if cmd is None:
             return
+        ep = self.episodes.begin(cmd.text, t0, t1, cmd.kind)
         self.hud.heard = cmd.text
         if cmd.kind == "cancel":  # handled immediately, even while a command is running
             self.agent.cancel()
             self._set_pending(None)
+            if self.clarifying is not None:
+                self.episodes.label(self.clarifying[3], "declined")
+                self.clarifying = None
             self.hud.status = "Cancelled."
+            ep["route"] = "cancel"
+            self.episodes.finish(ep)
             return
         if cmd.kind in ("calibrate", "recentre", "check"):
             self._tracker_command(cmd.kind)
+            ep["route"] = cmd.kind
+            self.episodes.finish(ep)
             return
-        self.commands.put((cmd, t0, t1))
+        if self.clarifying is not None and cmd.kind == "unknown":
+            original, missing, deadline, asked = self.clarifying
+            self.clarifying = None
+            if time.time() < deadline:  # the answer to our question: re-decide with it, and never ask twice
+                self.episodes.label(asked, "answered")
+                request = cmd.text if missing == "cut_off" else f"{original} ({missing}: {cmd.text})"
+                cmd = router.Command("unknown", {"request": request, "clarified": True}, request)
+                ep["clarified"] = {"from": original, "missing": missing, "answer": ep["text"]}
+                self.gaze.report("pending", "")
+        self.commands.put((cmd, t0, t1, ep))
 
     def _tracker_command(self, kind):
         """The tracker owns calibration screens: recalibrate, re-centre (1 dot) or check accuracy (9 dots)."""
@@ -164,27 +196,38 @@ class VoiceController:
 
     def _command_loop(self):
         while True:
-            cmd, t0, t1 = self.commands.get()
+            cmd, t0, t1, ep = self.commands.get()
+            self._ep = ep
             try:
                 self._handle(cmd, t0, t1)
             except Exception as e:  # keep the worker alive; show what went wrong
+                ep["error"] = str(e)
                 self._status(f"Error: {e}")
+            finally:
+                self._ep = None
+                self.episodes.finish(ep)
 
     def _handle(self, cmd, t0, t1):
+        ep = self._ep
         if cmd.kind == "confirm":
             if self.agent.resume():
+                ep["route"] = "agent_resume"
                 self._status("Confirmed: continuing...")
             elif self.pending:
                 kind, args, gaze, target = self.pending
                 self._set_pending(None)
+                ep["route"] = "confirm"
                 self._do(kind, args, gaze, target)
             else:
+                ep["route"] = "nothing_to_confirm"
                 self._status("Nothing to confirm.")
             return
         if self.agent.busy:
+            ep["route"] = "busy"
             self._status('Still working: say "stop" to cancel.')
             return
         if self.gaze.busy:
+            ep["route"] = "calibrating"
             self._status("Calibrating: finish the dots first.")
             return
 
@@ -192,11 +235,17 @@ class VoiceController:
         target, candidates = snapping.snap(*gaze, self.screen.w_pt, self.screen.h_pt) if gaze else (None, [])
         self._report_target(target)
         confidence = self.gaze.confidence_during(t0, t1)
+        ep.update(gaze=[round(v, 1) for v in gaze] if gaze else None, confidence=round(confidence, 3),
+                  target=element_dict(target, gaze),
+                  elements=[element_dict(c, gaze) for c in candidates[:MAX_CANDIDATES]])
 
         if cmd.kind == "unknown":
-            self._route_with_gate(cmd.args["request"], gaze, target, candidates)
+            ep["route"] = "gate"
+            self._route_with_gate(cmd.args["request"], gaze, target, candidates,
+                                  allow_clarify=not cmd.args.get("clarified"))
             return
 
+        ep["route"] = cmd.kind
         # Exact phrase, but several elements are close together: let Jev pick which one "this" means.
         close = [c for c in candidates if c.distance(*gaze) <= config.SNAP_RADIUS / 2] if gaze else []
         if cmd.kind in ("click", "type") and len(close) > 1 and self.gate.available:
@@ -221,52 +270,138 @@ class VoiceController:
             self.gaze.report("target", target={"x": target.x, "y": target.y, "w": target.w, "h": target.h,
                                                 "label": target.describe()})
 
-    def _route_with_gate(self, request, gaze, target, candidates):
+    def _start_agent(self, request, gaze, target, candidates, app):
+        ep = self._ep
+        ep["acted"] = True
+        ep.setdefault("agent_request", request)
+        self.agent.start(request, gaze, target, candidates, app, on_done=lambda text, steps, s: self.episodes.outcome(
+            ep, agent_result=text, agent_steps=steps, agent_s=round(s, 1)))
+
+    def _route_with_gate(self, request, gaze, target, candidates, allow_clarify=True):
+        ep = self._ep
         app = macos.frontmost_app()
+        ep["app"] = app
         if not self.gate.available:
-            self.agent.start(request, gaze, target, candidates, app)
+            ep["decision"] = "agent"
+            self._start_agent(request, gaze, target, candidates, app)
             return
         try:
-            d = self.gate.decide(request, gaze, candidates, app)
+            d = self.gate.decide(request, gaze, candidates, app, allow_clarify=allow_clarify)
         except Exception as e:
             self._status(f"Jev unavailable ({e}); asking Claude...")
-            self.agent.start(request, gaze, target, candidates, app)
+            ep["decision"] = "agent"
+            self._start_agent(request, gaze, target, candidates, app)
             return
+        ep["gate"], ep["decision"] = d.answers, d.route
         self._status(d.summary())
 
-        # gate._decide already applied the truth table; here we just carry out its decision.
         if d.route == "ignore":
             self._status(f"Ignored: {d.summary()}")
             return
+        if d.route == "clarify":
+            prompt = CLARIFY_PROMPTS.get(d.missing, "Can you say more?")
+            self.clarifying = (request, d.missing, time.time() + CLARIFY_WINDOW_S, ep)
+            self.gaze.report("pending", prompt)
+            self._status(prompt)
+            return
+        if d.route == "compound":
+            self._compound(request, gaze, target, candidates, app)
+            return
+        if self._apply(d, gaze):
+            return
+        # Needs writing, reading the screen, or nothing direct matched: Claude takes it.
+        if not self.agent.available:
+            self._status(f"Skipped: needs Claude ({d.summary()}). Add ANTHROPIC_API_KEY to .env to enable Claude.")
+            return
+        self._status(f"Asking Claude ({d.why})...")
+        self._start_agent(request, gaze, d.target or target, candidates, app)
+
+    def _apply(self, d, gaze) -> bool:
+        """Carry out a direct decision (or hold it for "confirm" if risky). False if it isn't a direct one."""
         risky = d.risky >= config.GATE_RISKY_MIN
         if d.route == "open_app" and d.app_path:
             commands.open_app(d.app_path)
+            self._acted("open_app", {"app": d.app})
             self._status(f"Opening {d.app}: {d.summary()}")
-            return
+            return True
         if d.route == "shortcut" and d.shortcut:
             desc, combo = commands.SHORTCUTS[d.shortcut]
             if risky:
                 self._set_pending(("key", {"combo": combo}, gaze, None), desc)
                 self._status(f'"{desc}" might lose work. Say "confirm" to do it.')
-                return
+                return True
             actions.press(combo)
+            self._acted("key", {"combo": combo, "shortcut": d.shortcut})
             self._status(f"{desc} ({combo}): {d.summary()}")
-            return
+            return True
         if d.route in _ROUTE_ACTIONS:
             kind, args = _ROUTE_ACTIONS[d.route]
             if risky:
                 where = d.target.describe() if d.target else "here"
                 self._set_pending((kind, args, gaze, d.target), f"{kind} {where}")
                 self._status(f'This might be irreversible ({kind} {where}). Say "confirm" to do it.')
-                return
+                return True
             self._do(kind, args, gaze, d.target)
+            return True
+        return False
+
+    def _compound(self, request, gaze, target, candidates, app):
+        """Several actions in a row. Each clause is decided just before it runs, against the screen the earlier
+        ones left; the first one that isn't a direct action hands the rest of the request to Claude."""
+        ep = self._ep
+        clauses = router.split_clauses(request)
+        ep["clauses"] = steps = []
+        if not 2 <= len(clauses) <= MAX_CLAUSES:
+            self._status(f"Asking Claude ({len(clauses)} parts)...")
+            self._start_agent(request, gaze, target, candidates, app)
             return
-        # Needs several steps or writing, or nothing direct matched: Claude takes it.
-        if not self.agent.available:
-            self._status(f"Skipped: needs Claude ({d.summary()}). Add ANTHROPIC_API_KEY to .env to enable Claude.")
+        done = []
+        for i, clause in enumerate(clauses):
+            if i:  # the screen has changed: look again where the user is looking now
+                time.sleep(SETTLE_S.get(steps[-1].get("route"), DEFAULT_SETTLE_S))
+                gaze = self.gaze.point() or gaze
+                target, candidates = snapping.snap(*gaze, self.screen.w_pt, self.screen.h_pt) if gaze else (None, [])
+                app = macos.frontmost_app()
+            step = {"clause": clause}
+            steps.append(step)
+            sub = router.route(clause)
+            if sub is not None and sub.kind in ("click", "type", "scroll", "key"):
+                step["route"] = sub.kind
+                self._do(sub.kind, sub.args, gaze, target)
+                done.append(clause)
+                continue
+            d = None
+            if sub is not None and sub.kind == "unknown" and self.gate.available:
+                try:
+                    d = self.gate.decide(clause, gaze, candidates, app, allow_clarify=False, allow_compound=False)
+                except Exception as e:
+                    step["error"] = str(e)
+            if d is not None:
+                step.update(route=d.route, gate=d.answers)
+                if d.route == "ignore":
+                    continue
+                before = self.pending
+                if self._apply(d, gaze):
+                    if self.pending is not before:  # risky: wait for "confirm" and drop the rest
+                        rest = ", ".join(clauses[i + 1:])
+                        self._status(f'Say "confirm" to {clause}' + (f" (skipping: {rest})" if rest else ""))
+                        return
+                    done.append(clause)
+                    continue
+            rest = " and then ".join(clauses[i:])
+            if not self.agent.available:
+                self._status(f'Did {len(done)} of {len(clauses)}; "{rest}" needs Claude (ANTHROPIC_API_KEY).')
+                return
+            note = f' (Already done: {"; ".join(done)}. Do the rest: {rest}.)' if done else ""
+            self._status(f"Asking Claude for: {rest}")
+            self._start_agent(request + note, gaze, target, candidates, app)
             return
-        self._status(f"Asking Claude ({d.why})...")
-        self.agent.start(request, gaze, d.target or target, candidates, app)
+        self._status(f"Done: {'; '.join(done)}")
+
+    def _acted(self, kind, args, where=None):
+        if self._ep is not None:
+            self._ep["acted"] = True
+            self._ep.setdefault("actions", []).append({"kind": kind, **args, **({"where": where} if where else {})})
 
     def _do(self, kind, args, gaze, target):
         if gaze is None and target is None:
@@ -274,6 +409,7 @@ class VoiceController:
             return
         x, y = target.center if target else gaze
         where = target.describe() if target else "there"
+        self._acted(kind, args, where)
         if kind == "click":
             actions.click(x, y, args["clicks"], args["button"])
             self.events.put(("flash", (x, y)))
