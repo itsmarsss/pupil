@@ -22,6 +22,7 @@ from AppKit import (
     NSCompositingOperationSourceOver,
     NSEvent,
     NSFont,
+    NSFontDescriptorSystemDesignRounded,
     NSFontAttributeName,
     NSForegroundColorAttributeName,
     NSGradient,
@@ -32,6 +33,7 @@ from AppKit import (
     NSPanel,
     NSScreen,
     NSScreenSaverWindowLevel,
+    NSShadow,
     NSString,
     NSView,
     NSWindowCollectionBehaviorCanJoinAllSpaces,
@@ -55,9 +57,10 @@ RADIUS = 11  # bottom corners collapsed
 RADIUS_OPEN = 22
 PEEK_H = 30  # the line it grows for something to read
 PEEK_W = 380
-OPEN_W = 440
-OPEN_BODY_H = 176  # below the notch band, open
-MAX_W, MAX_H = OPEN_W + 2 * SHOULDER + 8, FALLBACK_H + OPEN_BODY_H + 8
+OPEN_W = 456
+OPEN_BODY_H = 188  # below the notch band, open
+SHADOW_ROOM = 40  # around the shape, for its shadow
+MAX_W, MAX_H = OPEN_W + 2 * SHOULDER + 2 * SHADOW_ROOM, FALLBACK_H + OPEN_BODY_H + SHADOW_ROOM
 
 # ---- feel ----
 STIFFNESS, DAMPING = 340.0, 30.0  # spring: a little bounce, settles in ~0.35 s
@@ -78,7 +81,7 @@ WHITE = _rgb("#ffffff")
 DIM = _rgb("#ffffff", 0.55)
 FAINT = _rgb("#ffffff", 0.32)
 HAIR = _rgb("#ffffff", 0.08)
-TILE = _rgb("#ffffff", 0.06)
+TILE = _rgb("#ffffff", 0.07)
 TONES = {"ok": _rgb("#3ddc84"), "warn": _rgb("#ffc43d"), "bad": _rgb("#ff6b6b"), None: _rgb("#ffffff", 0.5)}
 NAMED = {"green": _rgb("#3ddc84"), "amber": _rgb("#ffc43d"), "grey": _rgb("#8b93a1"), "blue": _rgb("#4dabf7")}
 # voice states: the gaze pill's palette (control/indicator.py), so both speak the same colours
@@ -91,18 +94,24 @@ GLYPH = {"listening": "waveform", "hearing": "waveform", "thinking": "sparkle", 
 ANIMATED = {"listening", "hearing", "thinking", "agent", "speaking", "dictating", "waiting"}
 
 
-def _font(size, weight=0.0, mono=False):
-    return (NSFont.monospacedDigitSystemFontOfSize_weight_(size, weight) if mono
-            else NSFont.systemFontOfSize_weight_(size, weight))
+def _font(size, weight=0.0, rounded=False):
+    font = NSFont.systemFontOfSize_weight_(size, weight)
+    if rounded:  # SF Pro Rounded for numbers, like Apple's widgets
+        descriptor = font.fontDescriptor().fontDescriptorWithDesign_(NSFontDescriptorSystemDesignRounded)
+        font = NSFont.fontWithDescriptor_size_(descriptor, size) if descriptor is not None else font
+    return font
 
 
 F_EAR = _font(12, 0.35)
-F_TITLE = _font(14, 0.4)
-F_SUB = _font(12, 0.0)
-F_SMALL = _font(10.5, 0.2)
-F_TILE_TITLE = _font(10.5, 0.4)
-F_TILE_VALUE = _font(20, 0.45, mono=True)
-F_PEEK = _font(12.5, 0.2)
+F_HEADER = _font(11.5, 0.4)
+F_TITLE = _font(15, 0.45)
+F_SUB = _font(12.5, 0.0)
+F_SMALL = _font(10.5, 0.15)
+F_TILE_TITLE = _font(11, 0.35)
+F_TILE_VALUE = _font(24, 0.4, rounded=True)
+F_UNIT = _font(11, 0.3)
+F_PEEK = _font(13, 0.25)
+F_CHIP = _font(11, 0.4)
 
 _symbols: dict = {}
 
@@ -369,19 +378,28 @@ class Notch:
         NSColor.clearColor().set()
         NSBezierPath.fillRect_(NSMakeRect(0, 0, view_w, MAX_H))
         cx, w, h = view_w / 2, self._w.x, self._h.x
-        BLACK.set()
-        shape_path(cx, w, h, self._radius.x).fill()
         left, right = cx - w / 2, cx + w / 2
         nh = self._notch_h
         open_amount = max(0.0, min((h - nh - PEEK_H) / (OPEN_BODY_H - PEEK_H), 1.0))
         peek_amount = max(0.0, min((h - nh) / PEEK_H, 1.0)) * (1 - open_amount)
+        shape = shape_path(cx, w, h, self._radius.x)
+        NSGraphicsContext.saveGraphicsState()
+        if h > nh + 2:  # lifted off the screen: a soft shadow, deeper as it opens
+            shadow = NSShadow.alloc().init()
+            shadow.setShadowBlurRadius_(10 + 18 * open_amount)
+            shadow.setShadowOffset_((0, -(3 + 7 * open_amount)))
+            shadow.setShadowColor_(NSColor.colorWithCalibratedWhite_alpha_(0, 0.3 + 0.25 * open_amount))
+            shadow.set()
+        BLACK.set()
+        shape.fill()
+        NSGraphicsContext.restoreGraphicsState()
         self._view.buttons = []
         self._draw_ears(left, right, nh, 1.0)
         if peek_amount > 0.05:
             self._draw_peek(left, right, nh, peek_amount)
         if open_amount > 0.05:
             NSGraphicsContext.saveGraphicsState()
-            shape_path(cx, w, h, self._radius.x).addClip()
+            shape.addClip()
             self._draw_open(left, right, nh, open_amount ** 2)
             NSGraphicsContext.restoreGraphicsState()
 
@@ -390,11 +408,13 @@ class Notch:
         color = _rgb(STATE.get(state, "#ffffff"))
         t = time.time()
         if state in ("listening", "speaking", "dictating", "hearing"):
+            scale = size / 13
             for i in range(4):
-                bar_h = 3 + 9 * (0.5 + 0.5 * math.sin(t * 9 + i * 1.3)) * (1 if state != "hearing" else 0.5)
+                bar_h = (3 + 9 * (0.5 + 0.5 * math.sin(t * 9 + i * 1.3)) * (1 if state != "hearing" else 0.5)) * scale
                 color.colorWithAlphaComponent_(alpha).set()
                 NSBezierPath.bezierPathWithRoundedRect_xRadius_yRadius_(
-                    NSMakeRect(cx - 8 + i * 4.6, cy - bar_h / 2, 2.6, bar_h), 1.3, 1.3).fill()
+                    NSMakeRect(cx + (-8 + i * 4.6) * scale, cy - bar_h / 2, 2.6 * scale, bar_h), 1.3 * scale,
+                    1.3 * scale).fill()
             return
         pulse = 0.55 + 0.45 * (0.5 + 0.5 * math.sin(t * 5)) if state in ANIMATED else 1.0
         _draw_symbol(GLYPH.get(state, "circle.fill"), size, color, cx, cy, alpha * pulse)
@@ -402,26 +422,26 @@ class Notch:
     def _draw_ears(self, left, right, nh, alpha):
         m = self.model
         cy = nh / 2
-        ear_l = left + (self._w.x - self._notch_w) / 4  # middle of the left ear
-        label = content.ear_label(m)
-        if label and self._mode != "open":
-            self._glyph(m.state, left + 22, cy)  # inset like the label on the right
-            _text(label, F_EAR, _rgb(STATE.get(m.state, "#ffffff")), right - 12, cy - 8, alpha, align="right",
-                  max_w=EAR_ACTIVE_MAX - 18)
-            return
         if self._mode == "open":
             return  # the open body has its own header
+        label = content.ear_label(m)
+        if label:
+            self._glyph(m.state, left + 22, cy)  # inset like the label on the right
+            _text(label, F_EAR, _rgb(STATE.get(m.state, "#ffffff")), right - 13, cy - 8, alpha, align="right",
+                  max_w=EAR_ACTIVE_MAX - 18)
+            return
         # idle: tracking on the left, a small fatigue ring on the right
-        _draw_symbol("eye.fill", 11, NAMED[content.TRACKING_COLOURS.get(m.tracking, "grey")], ear_l, cy, alpha)
+        ear = (self._w.x - self._notch_w) / 2
+        _draw_symbol("eye.fill", 11, NAMED[content.TRACKING_COLOURS.get(m.tracking, "grey")], left + ear / 2 + 2, cy,
+                     alpha)
         fatigue = m.health.get("fatigue")
-        rx = right - (self._w.x - self._notch_w) / 4
         tone = {"low": "ok", "moderate": "warn", "high": "bad"}.get(m.health.get("level"))
-        self._ring(rx, cy, 6.5, None if fatigue is None else fatigue / 100, TONES[tone], 2.2)
+        self._ring(right - ear / 2 - 2, cy, 6.5, None if fatigue is None else fatigue / 100, TONES[tone], 2.2)
 
-    def _ring(self, cx, cy, r, progress, color, width):
+    def _ring(self, cx, cy, r, progress, color, width, alpha=1.0):
         track = NSBezierPath.bezierPathWithOvalInRect_(NSMakeRect(cx - r, cy - r, 2 * r, 2 * r))
         track.setLineWidth_(width)
-        HAIR.colorWithAlphaComponent_(0.18).set()
+        color.colorWithAlphaComponent_(0.18 * alpha).set()
         track.stroke()
         if progress:
             arc = NSBezierPath.bezierPath()
@@ -430,8 +450,21 @@ class Notch:
                 (cx, cy), r, -90, -90 + 360 * min(progress, 1.0), False)
             arc.setLineWidth_(width)
             arc.setLineCapStyle_(1)  # round
-            color.set()
+            color.colorWithAlphaComponent_(alpha).set()
             arc.stroke()
+
+    def _badge(self, x, y, d, color, alpha):
+        """A tinted circle for a leading symbol, like a Live Activity's."""
+        color.colorWithAlphaComponent_(0.18 * alpha).set()
+        NSBezierPath.bezierPathWithOvalInRect_(NSMakeRect(x, y, d, d)).fill()
+
+    def _chip(self, text, x_right, cy, color, alpha):
+        """A small capsule label ending at x_right; returns its width."""
+        w = text_width(text, F_CHIP) + 18
+        color.colorWithAlphaComponent_(0.16 * alpha).set()
+        NSBezierPath.bezierPathWithRoundedRect_xRadius_yRadius_(NSMakeRect(x_right - w, cy - 10, w, 20), 10, 10).fill()
+        _text(text, F_CHIP, color, x_right - w / 2, cy - 7.5, alpha, align="center")
+        return w
 
     def _draw_peek(self, left, right, nh, alpha):
         line = content.peek_line(self.model, time.time())
@@ -440,79 +473,102 @@ class Notch:
         kind, text = line
         icon, color = {"confirm": ("hand.raised.fill", _rgb(STATE["waiting"])),
                        "speech": ("sparkles", _rgb(STATE["agent"])),
-                       "reminder": ("eye", TONES["warn"])}[kind]
-        y = nh + 6
-        _draw_symbol(icon, 11, color, left + 22, y + 8, alpha)
-        x0, avail = left + 36, (right - left) - 36 - 16
+                       "reminder": ("eye.fill", TONES["warn"])}[kind]
+        cy = nh + PEEK_H / 2 - 1
+        self._badge(left + 12, cy - 11, 22, color, alpha)
+        _draw_symbol(icon, 10.5, color, left + 23, cy, alpha)
+        x0 = left + 42
+        x1 = right - 14
+        if kind == "confirm":
+            x1 -= self._chip("say “confirm”", x1, cy, color, alpha) + 8
+        avail = x1 - x0
         width = text_width(text, F_PEEK)
         if width <= avail or kind != "speech":
-            _text(text, F_PEEK, WHITE, x0, y, alpha, max_w=avail)
+            _text(text, F_PEEK, WHITE, x0, cy - 8, alpha, max_w=avail)
             return
         started = self.model.caption[1] if self.model.caption else time.time()
         offset = max(0.0, min((time.time() - started - 0.8) * 45, width - avail + 12))
         NSGraphicsContext.saveGraphicsState()
-        NSBezierPath.clipRect_(NSMakeRect(x0, y - 2, avail, 20))
-        _text(text, F_PEEK, WHITE, x0 - offset, y, alpha)
+        NSBezierPath.clipRect_(NSMakeRect(x0, cy - 10, avail, 20))
+        _text(text, F_PEEK, WHITE, x0 - offset, cy - 8, alpha)
         NSGraphicsContext.restoreGraphicsState()
+
+    def _button(self, cx, cy, symbol, on, action, alpha):
+        WHITE.colorWithAlphaComponent_((0.14 if on else 0.06) * alpha).set()
+        NSBezierPath.bezierPathWithOvalInRect_(NSMakeRect(cx - 12, cy - 12, 24, 24)).fill()
+        _draw_symbol(symbol, 10.5, WHITE if on else FAINT, cx, cy, alpha)
+        self._view.buttons.append(((cx - 14, cy - 14, 28, 28), action))
 
     def _draw_open(self, left, right, nh, alpha):
         m = self.model
-        pad = 20
+        pad = 18
         x0, x1 = left + pad, right - pad
         cy = nh / 2
-        # header in the notch band: app name left, toggles right
-        _draw_symbol("eye.fill", 11, NAMED[content.TRACKING_COLOURS.get(m.tracking, "grey")], x0 + 6, cy, alpha)
-        _text("Gaze", F_SMALL, DIM, x0 + 16, cy - 7, alpha)
-        bx = x1 - 6
+        tracking_color = NAMED[content.TRACKING_COLOURS.get(m.tracking, "grey")]
+        # header in the notch band: a tracking dot and the name left, toggles right
+        tracking_color.colorWithAlphaComponent_(alpha).set()
+        NSBezierPath.bezierPathWithOvalInRect_(NSMakeRect(x0 + 2, cy - 3, 6, 6)).fill()
+        _text("Gaze", F_HEADER, DIM, x0 + 14, cy - 7.5, alpha)
+        bx = x1 - 12
         if self._on_reminders is not None:
-            name = "bell.fill" if m.reminders_on else "bell.slash"
-            _draw_symbol(name, 11, WHITE if m.reminders_on else FAINT, bx, cy, alpha)
-            self._view.buttons.append(((bx - 12, 0, 24, nh), self._on_reminders))
-            bx -= 28
+            self._button(bx, cy, "bell.fill" if m.reminders_on else "bell.slash.fill", m.reminders_on,
+                         self._on_reminders, alpha)
+            bx -= 32
         if self._on_voice is not None and m.voice_on is not None:
-            name = "mic.fill" if m.voice_on else "mic.slash.fill"
-            _draw_symbol(name, 11, WHITE if m.voice_on else FAINT, bx, cy, alpha)
-            self._view.buttons.append(((bx - 12, 0, 24, nh), self._on_voice))
+            self._button(bx, cy, "mic.fill" if m.voice_on else "mic.slash.fill", m.voice_on, self._on_voice, alpha)
 
-        # status row
-        y = nh + 14
+        # status row: a tinted badge, what it's doing, what it heard or said
+        y = nh + 12
         title, sub = content.headline(m)
+        color = _rgb(STATE[m.state]) if m.state in STATE else tracking_color
+        self._badge(x0, y, 38, color, alpha)
         if m.state:
-            self._glyph(m.state, x0 + 12, y + 17, size=17, alpha=alpha)
+            self._glyph(m.state, x0 + 19, y + 19, size=15, alpha=alpha)
         else:
-            _draw_symbol("eye" if m.tracking == "tracking" else "eye.slash", 16,
-                         NAMED[content.TRACKING_COLOURS.get(m.tracking, "grey")], x0 + 12, y + 17, alpha)
-        tx = x0 + 34
-        _text(title, F_TITLE, WHITE, tx, y, alpha, max_w=x1 - tx)
+            _draw_symbol("eye.fill" if m.tracking == "tracking" else "eye.slash.fill", 14, color, x0 + 19, y + 19, alpha)
+        tx = x0 + 50
+        _text(title, F_TITLE, WHITE, tx, y + 1, alpha, max_w=x1 - tx)
         if sub:
-            _text(sub, F_SUB, DIM, tx, y + 19, alpha, max_w=x1 - tx)
+            _text(sub, F_SUB, DIM, tx, y + 21, alpha, max_w=x1 - tx)
 
-        # health tiles
-        y += 52
+        # health: three small widgets
+        y += 38 + 14
         tiles = content.tiles(m)
-        gap = 8
+        gap, th = 8, 84
         tw = (x1 - x0 - gap * (len(tiles) - 1)) / len(tiles)
-        th = 72
         for i, tile in enumerate(tiles):
             tx = x0 + i * (tw + gap)
+            box = NSBezierPath.bezierPathWithRoundedRect_xRadius_yRadius_(NSMakeRect(tx, y, tw, th), 14, 14)
             TILE.colorWithAlphaComponent_(TILE.alphaComponent() * alpha).set()
-            NSBezierPath.bezierPathWithRoundedRect_xRadius_yRadius_(NSMakeRect(tx, y, tw, th), 12, 12).fill()
-            _text(tile.title.upper(), F_TILE_TITLE, FAINT, tx + 12, y + 10, alpha)
-            color = TONES[tile.tone] if tile.tone else WHITE
+            box.fill()
+            HAIR.colorWithAlphaComponent_(HAIR.alphaComponent() * alpha).set()
+            box.setLineWidth_(0.5)
+            box.stroke()
+            color = TONES[tile.tone] if tile.tone else DIM
+            _draw_symbol(tile.icon, 9.5, color, tx + 17, y + 15, alpha)
+            _text(tile.title, F_TILE_TITLE, DIM, tx + 26, y + 8, alpha)
             value_color = color if tile.title == "Fatigue" or tile.tone in ("warn", "bad") else WHITE
-            _text(tile.value, F_TILE_VALUE, value_color, tx + 12, y + 24, alpha)
-            _text(tile.detail, F_SMALL, DIM, tx + 12, y + 52, alpha, max_w=tw - 20)
+            vw = _text(tile.value, F_TILE_VALUE, value_color, tx + 12, y + 26, alpha)
+            if tile.unit:
+                _text(tile.unit, F_UNIT, DIM, tx + 12 + vw + 3, y + 38, alpha)
+            _text(tile.detail, F_SMALL, DIM, tx + 12, y + 62, alpha, max_w=tw - 22)
             if tile.title == "Fatigue":  # its last 30 minutes, beside the score
-                self._sparkline(tx + tw - 62, y + 26, 50, 22, color, alpha)
+                self._sparkline(tx + tw - 66, y + 30, 54, 24, color, alpha)
             elif tile.progress is not None:
-                self._ring(tx + tw - 22, y + 20, 9, tile.progress, color, 3)
+                self._ring(tx + tw - 22, y + 40, 10, tile.progress, color, 3.5, alpha)
 
-        # footer
+        # footer: tracking quality left, the model being called (or the mic) right
         y += th + 12
         foot_l, foot_r = content.footer(m)
-        _text(foot_l, F_SMALL, FAINT, x0, y, alpha, max_w=(x1 - x0) * 0.6)
+        state, _, rest = foot_l.partition(" · ")
+        tracking_color.colorWithAlphaComponent_(alpha).set()
+        NSBezierPath.bezierPathWithOvalInRect_(NSMakeRect(x0 + 2, y + 5, 5, 5)).fill()
+        sw = _text(state, F_SMALL, DIM, x0 + 12, y, alpha)
+        if rest:
+            _text(rest, F_SMALL, FAINT, x0 + 12 + sw + 6, y, alpha, max_w=(x1 - x0) * 0.55 - sw)
         if foot_r:
-            _text(foot_r, F_SMALL, FAINT, x1, y, alpha, max_w=(x1 - x0) * 0.38, align="right")
+            rw = _text(foot_r, F_SMALL, FAINT, x1, y, alpha, max_w=(x1 - x0) * 0.36, align="right")
+            _draw_symbol("sparkles" if m.model else "mic.fill", 9, FAINT, x1 - rw - 9, y + 7, alpha)
 
     def _sparkline(self, x, y, w, h, color, alpha):
         pts = content.sparkline(self.model.fatigue_series, time.time())

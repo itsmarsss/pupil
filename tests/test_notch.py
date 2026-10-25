@@ -20,7 +20,7 @@ def test_peek_shows_what_needs_reading_most_urgent_first():
     m = nc.NotchModel(caption=("Done. 3 results.", 99.0, None), reminder=("Blink a few times.", 105.0))
     assert nc.peek_line(m, now) == ("speech", "Done. 3 results.")
     m.pending = "Quit Chrome"
-    assert nc.peek_line(m, now) == ("confirm", "Say “confirm” to quit Chrome")
+    assert nc.peek_line(m, now) == ("confirm", "Quit Chrome?")
     m.pending, m.caption = None, ("old", 90.0, 95.0)  # said a while ago: gone
     assert nc.peek_line(m, now) == ("reminder", "Blink a few times.")
     assert nc.peek_line(m, 106.0) is None
@@ -28,7 +28,7 @@ def test_peek_shows_what_needs_reading_most_urgent_first():
 
 def test_headline_reads_like_a_sentence():
     assert nc.headline(nc.NotchModel(voice_on=False))[0] == "Voice control off"
-    assert nc.headline(nc.NotchModel(voice_on=True, tracking="no face"))[0] == "Can't see you"
+    assert nc.headline(nc.NotchModel(voice_on=True, tracking="no face"))[0] == "Can’t see you"
     title, sub = nc.headline(nc.NotchModel(voice_on=True, state="agent", label="Agent · step 2", heard="book a table"))
     assert title == "Agent · step 2" and sub == "“book a table”"
     assert nc.headline(nc.NotchModel(voice_on=True, tracking="tracking"))[0] == "Ready"
@@ -36,13 +36,13 @@ def test_headline_reads_like_a_sentence():
 
 def test_health_tiles_explain_the_score():
     fatigue, blinks, brk = nc.tiles(nc.NotchModel(health=_health()))
-    assert (fatigue.value, fatigue.detail, fatigue.tone) == ("42", "few blinks", "warn")
+    assert (fatigue.value, fatigue.unit, fatigue.detail, fatigue.tone) == ("42", "", "few blinks", "warn")
     assert (blinks.value, blinks.tone) == ("7", "bad")
-    assert (brk.value, brk.tone) == ("8m", "ok") and abs(brk.progress - 0.6) < 1e-9
+    assert (brk.value, brk.unit, brk.tone) == ("8", "min", "ok") and abs(brk.progress - 0.6) < 1e-9
     _, _, due = nc.tiles(nc.NotchModel(health=_health(minutes_on_screen=21.0)))
-    assert due.value == "now" and due.tone == "warn"
+    assert due.value == "Now" and due.tone == "warn"
     fatigue, _, _ = nc.tiles(nc.NotchModel(health={}))
-    assert fatigue.value == "–" and fatigue.detail == "measuring"
+    assert fatigue.value == "–" and fatigue.detail == "measuring…"
 
 
 def test_sparkline_keeps_the_last_half_hour():
