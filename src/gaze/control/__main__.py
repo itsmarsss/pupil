@@ -180,7 +180,7 @@ class App:
         if state != self._panel_state:
             self._log_gate("state", gate_open=gate_open, reason=reason, rec=rec, voice=voiced)
             self._panel_state = state
-        if voiced and not rec:  # speech at the mic for a while, nothing sent: a miss, unless it wasn't you
+        if voiced and not rec and not self.gaze.busy:  # speech at the mic, nothing sent: a miss, unless it wasn't you
             self._unsent_since = self._unsent_since or now
             if now - self._unsent_since >= 0.3 and not self._miss_counted:
                 self.misses += 1
