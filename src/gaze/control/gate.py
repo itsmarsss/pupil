@@ -13,7 +13,6 @@ import time
 from dataclasses import dataclass
 
 from . import commands, config, heat
-from .router import DEICTIC
 from .snapping import Element
 
 try:
@@ -95,6 +94,14 @@ CUT_OFF = Noul(
     criteria=NoulCriteria(
         true="e.g. \"open the\", \"move it to\", \"put this in the\", \"send it to\"",
         false="A complete sentence, however short: \"open\", \"zoom in\", \"turn it on\", \"click this\"",
+    ),
+)
+POINTS_AT_GAZE = Noul(
+    instructions="Does `command` pick out what it acts on by pointing (it, this, that, here, these, the one I'm "
+                 "looking at) rather than by naming it or not needing anything on screen?",
+    criteria=NoulCriteria(
+        true="e.g. \"close this\", \"open that\", \"click here\", \"delete these\", \"what's this?\"",
+        false="e.g. \"open Safari\", \"close the Gemini tab\", \"scroll down\", \"copy\", \"that was quick\"",
     ),
 )
 FOLLOWS_UP = Noul(
@@ -265,8 +272,8 @@ def _decide(a, elements, gaze, apps, allow_clarify=True, allow_compound=True, co
     # A specific on-screen control wins over apps/shortcuts ("close this" on a window's close button), and since
     # the command is clearly about some element, the best match only needs to be more likely than not. "This" /
     # "that" point at what's under the gaze too: Cmd+W for "close this" on a popup would close the window behind.
-    deictic = bool(DEICTIC & set(re.findall(r"[a-z]+", command.lower())))
-    if (p("wants_element") >= YES or deictic and sure) and element_p and element_p[0][0] >= 0.5:
+    pointing = p("points_at_gaze") >= YES if "points_at_gaze" in nouls else False
+    if (p("wants_element") >= YES or pointing and sure) and element_p and element_p[0][0] >= 0.5:
         return _element_route(element_p, gaze, choices, f"control {p('wants_element'):.2f}", cloud)
     # Clearly "close" something, but no one element clearly meant: close what's under the gaze (its own or its
     # dialog's close control, its tab, or its window), rather than a shortcut that may hit something else.
@@ -340,6 +347,7 @@ class Gate:
         apps = commands.available_apps()
         questions = {
             "is_command": IS_COMMAND, "enough_context": ENOUGH_CONTEXT, "cut_off": CUT_OFF,
+            "points_at_gaze": POINTS_AT_GAZE,
             **({"follows_up": FOLLOWS_UP} if self.recent else {}), "missing": MISSING, "is_compound": IS_COMPOUND,
             "needs_agent": NEEDS_AGENT, "wants_element": WANTS_ELEMENT, "wants_app": WANTS_APP,
             "wants_shortcut": WANTS_SHORTCUT, "wants_scroll": WANTS_SCROLL, "risky": RISKY,

@@ -1,0 +1,11 @@
+// misheard commands and the chatter the old fuzzy corrector turned into commands (.logs, 2026-10-24/25)
+{"text": "closed time.", "expect": ["shortcut", "close", "clarify", "maybe"], "app": "Google Chrome", "gaze": [700, 400]}
+{"text": "go bag", "expect": ["shortcut", "maybe"], "app": "Google Chrome", "gaze": [700, 400]}
+{"text": "scroll dawn a lot", "expect": ["scroll_down"], "app": "Google Chrome", "gaze": [700, 400]}
+{"text": "click search repose", "expect": ["click"], "app": "Google Chrome", "gaze": [640, 60], "elements": [{"role": "AXButton", "label": "Search repositories", "x": 560, "y": 45, "w": 200, "h": 30}, {"role": "AXLink", "label": "Pull requests", "x": 800, "y": 45, "w": 110, "h": 30}, {"role": "AXLink", "label": "Issues", "x": 920, "y": 45, "w": 70, "h": 30}]}
+{"text": "Please.", "expect": "ignore", "app": "Google Chrome", "gaze": [700, 400]}
+{"text": "Friends.", "expect": "ignore", "app": "Google Chrome", "gaze": [700, 400]}
+{"text": "All right.", "expect": "ignore", "app": "Google Chrome", "gaze": [700, 400]}
+{"text": "Castle.", "expect": "ignore", "app": "Google Chrome", "gaze": [700, 400]}
+{"text": "Move to never mind.", "expect": "ignore", "app": "Google Chrome", "gaze": [700, 400]}
+{"text": "Previous desktop.", "expect": ["shortcut", "agent"], "app": "Finder", "gaze": [700, 400]}

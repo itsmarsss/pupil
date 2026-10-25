@@ -148,8 +148,8 @@ transcripts from a visible face whose lips never moved (someone else, a video); 
 panel shows it live. Speech goes to Cartesia Ink-2 when `CARTESIA_API_KEY` is set (streamed, so the turn
 ends ~1 s after you stop; only while the gate is open, since it bills per second), otherwise to on-
 device Whisper `base.en` behind a Silero speech detector. `GAZE_LIP_GATE=shadow` logs what the gate
-would block; `GAZE_VOICE_PROCESSING=1` turns voice isolation on at start. Misheard commands and on-
-screen labels are snapped to what was meant ("closed time" → "close tab").
+would block; `GAZE_VOICE_PROCESSING=1` turns voice isolation on at start. Misheard words are left for
+Jev to read in context, with no fuzzy matching to a phrase list.
 
 Which model: Jev routes each agent task to a tier (fast: Sonnet at low effort, for quick questions and
 real-time games; standard; deep: Opus, for writing, building and multi-app work) and a step budget (quick,
