@@ -12,7 +12,8 @@ const LEVEL_COLOR = { low: GOOD, moderate: MID, high: BAD } as const;
 const pct = (ratio: number | null | undefined, invert = false) =>
   ratio == null ? "–" : `${(invert ? 1 - ratio : ratio - 1) >= 0 ? "+" : ""}${Math.round(((invert ? 1 - ratio : ratio - 1)) * 100)}%`;
 
-const FATIGUE_PLOT: PlotSpec = { id: "fatigue", title: "Fatigue", series: [{ key: "fatigue", label: "fatigue", color: BAD }] };
+const FATIGUE_PLOT: PlotSpec = { id: "fatigue", title: "Fatigue", series: [{ key: "fatigue", label: "fatigue", color: BAD }],
+  range: [0, 100] };
 
 type SignalKey = keyof NonNullable<HealthState["signals"]>;
 const SIGNALS: { key: SignalKey; label: string; value: (h: HealthState) => string }[] = [

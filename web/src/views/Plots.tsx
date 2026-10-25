@@ -7,6 +7,7 @@ export interface PlotSpec {
   id: string;
   title: string;
   series: { key: string; label: string; color: string }[];
+  range?: [number, number]; // fixed y range (default: auto)
 }
 
 export const PLOTS: PlotSpec[] = [
@@ -47,7 +48,7 @@ export function Plot({ spec, source = () => engine.series, unit = "s" }: { spec:
         { stroke: "#8b93a1", grid: { stroke: "#232833" }, size: 46, values: (_u, vals) => vals.map(compact) },
       ],
       series: [{}, ...spec.series.map((s) => ({ label: s.label, stroke: s.color, width: 1.5 }))],
-      scales: { x: { time: false } },
+      scales: { x: { time: false }, ...(spec.range ? { y: { range: spec.range } } : {}) },
     };
     plot.current = new uPlot(opts, [[], ...spec.series.map(() => [])], el);
     const ro = new ResizeObserver(() => plot.current?.setSize({ width: el.clientWidth, height: Math.max(el.clientHeight, 60) }));
