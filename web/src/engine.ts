@@ -24,6 +24,7 @@ class EngineStore {
   calibration: CalibrationInfo | null = null;
   frame: FrameState | null = null;
   imageUrl: string | null = null;
+  cropsUrl: string | null = null; // the gaze network's inputs: face crop + both eye crops
   trail: [number, number][] = [];
   series: Series = { t: [], ...Object.fromEntries(SERIES_KEYS.map((k) => [k, [] as (number | null)[]])) };
   version = 0; // bumped on every update; panels poll it
@@ -61,10 +62,15 @@ class EngineStore {
   private receive(data: string | ArrayBuffer) {
     if (data instanceof ArrayBuffer) {
       const head = new TextDecoder().decode(data.slice(0, 4));
+      const url = URL.createObjectURL(new Blob([data.slice(4)], { type: "image/jpeg" }));
       if (head === "JPG0") {
-        const url = URL.createObjectURL(new Blob([data.slice(4)], { type: "image/jpeg" }));
         if (this.imageUrl) URL.revokeObjectURL(this.imageUrl);
         this.imageUrl = url;
+      } else if (head === "CRP0") {
+        if (this.cropsUrl) URL.revokeObjectURL(this.cropsUrl);
+        this.cropsUrl = url;
+      } else {
+        URL.revokeObjectURL(url);
       }
       return;
     }
