@@ -35,6 +35,19 @@ def test_low_confidence_samples_spread_wider():
     assert unsure.mass(-40, -40, 80, 80) < sure.mass(-40, -40, 80, 80)
 
 
+def test_attention_weights_favour_the_final_fixation_and_round_trip():
+    els = [Element("AXButton", "first", 0, 0, 100, 100), Element("AXButton", "second", 300, 0, 100, 100)]
+    points = [(50.0, 50.0, 1.0)] * 4 + [(350.0, 50.0, 1.0)] * 4
+    baseline = scores(els, GazeCloud(points, sigma=25))
+    cloud = GazeCloud(points, sigma=25, weights=[1.0] * 4 + [2.0] * 4)
+    weighted = scores(els, cloud)
+    assert abs(baseline[0] - baseline[1]) < 1e-6
+    assert weighted[1] > weighted[0]
+    summary = cloud.summary()
+    restored = GazeCloud([tuple(p) for p in summary["points"]], summary["sigma"], summary["weights"])
+    assert scores(els, restored) == weighted
+
+
 def test_neighbours_stay_in_the_row_and_kind():
     els = tabs() + [Element("AXButton", "Back", 210, 80, 30, 30)]
     t1 = els[1]

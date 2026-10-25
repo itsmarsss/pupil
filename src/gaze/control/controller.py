@@ -15,6 +15,7 @@ import subprocess
 import urllib.parse
 import threading
 import time
+from dataclasses import dataclass
 
 from . import actions, apps, commands, config, dictation, heat, macos, router, settings, snapping, uitree
 from .agent import Agent
@@ -45,6 +46,17 @@ CHOOSE_WINDOW_S = 12.0  # how long "which one?" waits for an answer
 RELATIVE_WINDOW_S = 20.0  # "no, the left one" refers to the last target this recently
 NUMBERS = ["one", "two", "three"]
 _ORDINALS = [("one", "1", "first"), ("two", "2", "second", "too", "to"), ("three", "3", "third")]  # as heard
+
+
+@dataclass
+class TargetReference:
+    action: str
+    target: object
+    candidates: list
+    args: dict
+    app: str
+    window: str
+    t: float
 
 
 def pick_option(text, options):
@@ -93,7 +105,7 @@ class VoiceController:
         self._agent_route = ("standard", "normal")  # Jev's model tier and step budget for the agent
         self.choosing = None  # "which one?" asked: options, action, deadline
         self._cloud = None  # gaze heat for the command being handled
-        self._last_target = None  # what the last element action hit, for "no, the left one"
+        self._last_target: TargetReference | None = None  # last target-bearing action, for corrections/follow-ups
         self.indicator = Indicator()  # status pill trailing the gaze
         self._busy_with: Status | None = None  # the worker is waiting on Jev / the dictation model
         self._flash: tuple[Status, float] | None = None  # brief "done" / error, until the time given
@@ -166,6 +178,7 @@ class VoiceController:
             self.agent.cancel()
             self._set_pending(None)
             self.clarifying = None
+            self._last_target = None
             self.hud.hide()
 
     # --- callbacks from the voice threads ---
@@ -303,6 +316,7 @@ class VoiceController:
                 self.hud.status = "Dictation off."
             self.agent.cancel()
             self._set_pending(None)
+            self._last_target = None
             if self.clarifying is not None:
                 self.episodes.label(self.clarifying[3], "declined")
                 self.clarifying = None
@@ -318,7 +332,7 @@ class VoiceController:
             self.episodes.finish(ep)
             return
         if cmd.kind == "relative" and (self._last_target is None
-                                       or time.time() - self._last_target["t"] > RELATIVE_WINDOW_S):
+                                       or time.time() - self._last_target.t > RELATIVE_WINDOW_S):
             cmd = router.Command("unknown", {"request": text}, text)  # no recent target: "left" is just a command
         if self.choosing is not None and cmd.kind != "cancel":
             if time.time() < self.choosing["deadline"]:  # the answer to "which one?"
@@ -349,6 +363,7 @@ class VoiceController:
         if not self.gaze.calibratable:
             self.hud.status = "Using the mouse as gaze: nothing to calibrate."
             return
+        self._last_target = None
         cmd = {"calibrate": "recalibrate", "recentre": "recentre", "check": "validate"}[kind]
         self.gaze.send({"cmd": cmd})
         self._status({"recalibrate": "Calibrating: look at each dot until it shrinks away.",
@@ -438,6 +453,9 @@ class VoiceController:
             return
         if cmd.kind == "relative":
             self._relative(cmd.args["direction"])
+            return
+        if cmd.kind == "reference":
+            self._reference(cmd.args["mode"], gaze, cloud, candidates)
             return
 
         if cmd.kind == "unknown":
@@ -701,36 +719,93 @@ class VoiceController:
             kind, extra = _ROUTE_ACTIONS.get(action, ("click", {"clicks": 1, "button": "left"}))
             self._do(kind, {**extra, **(args if action == "click" else {})}, None, target)
 
+    def _new_reference(self, action, target, args=None) -> TargetReference:
+        app, window = uitree.front_context()
+        return TargetReference(action, target, list(self._candidates), dict(args or {}), app, window, time.time())
+
+    @staticmethod
+    def _same_element(wanted, candidate) -> bool:
+        return (candidate.role == wanted.role and candidate.label == wanted.label
+                and candidate.parent == wanted.parent and candidate.parent_role == wanted.parent_role
+                and candidate.subrole == wanted.subrole)
+
+    def _resolve_reference(self, reference: TargetReference):
+        if time.time() - reference.t > RELATIVE_WINDOW_S:
+            return None, []
+        app, window = uitree.front_context()
+        if (reference.app and app != reference.app) or (reference.window and window != reference.window):
+            return None, []
+        fresh = snapping.candidates_near(*reference.target.center, self.screen.w_pt, self.screen.h_pt)
+        matches = [candidate for candidate in fresh if self._same_element(reference.target, candidate)]
+        target = min(matches, key=lambda candidate: candidate.distance(*reference.target.center), default=None)
+        return target, fresh
+
+    def _reference(self, mode, gaze, cloud, candidates):
+        reference = self._last_target
+        if reference is None or time.time() - reference.t > RELATIVE_WINDOW_S:
+            self._status("Nothing recent to refer to.")
+            return
+        app, window = uitree.front_context()
+        if (reference.app and app != reference.app) or (reference.window and window != reference.window):
+            self._last_target = None
+            self._status("That reference belongs to a different app or window.")
+            return
+        if mode == "same_here":
+            if not cloud or not candidates:
+                self._status("I can't tell where you mean by here.")
+                return
+            shares = heat.scores(candidates[:MAX_CANDIDATES], cloud)
+            ranked = sorted(zip(shares, candidates[:MAX_CANDIDATES]), key=lambda item: -item[0])
+            if heat.ambiguous(shares):
+                self._ask_which([(share, target) for share, target in ranked[:3] if share >= 0.1],
+                                reference.action, reference.args)
+                return
+            self._candidates = candidates
+            self._act_on(reference.action, reference.args, ranked[0][1])
+            return
+        target, fresh = self._resolve_reference(reference)
+        if target is None:
+            self._last_target = None
+            self._status("That target is no longer available.")
+            return
+        self._candidates = fresh
+        if mode == "close_last":
+            self._close(target) or self._status(f"Couldn't find how to close {target.describe()}.")
+        else:
+            self._act_on(reference.action, reference.args, target)
+
     def _relative(self, direction):
         """ "No, the left one" / "the next one": redo the last action on the target's neighbour."""
         last = self._last_target
-        if last is None or time.time() - last["t"] > RELATIVE_WINDOW_S:
+        if last is None or time.time() - last.t > RELATIVE_WINDOW_S:
             self._status("Nothing recent to move from.")
             return
-        target = last["target"]
-        other = heat.neighbour(target, last["candidates"], direction)
+        target = last.target
+        other = heat.neighbour(target, last.candidates, direction)
         if other is None:
             self._status(f"There's nothing {direction} of {target.describe()}.")
             return
-        self._candidates = last["candidates"]
-        if last["action"] == "close":  # the wrong one is already closed: bring it back first
+        self._candidates = last.candidates
+        if last.action == "close":  # the wrong one is already closed: bring it back first
             self._shortcut("reopen_tab")
             time.sleep(0.4)
-        self._act_on(last["action"], last.get("args") or {}, other)
+        self._act_on(last.action, last.args, other)
 
     def _close(self, target) -> bool:
         """Close what the user means, in any app: the target if it is a close control; its own close control; the
         close control of the dialog or panel it's in; or a tab by selecting it and pressing Cmd+W (closes the current
         tab in browsers, editors, Finder, terminals). False otherwise: the agent takes it."""
-        self._last_target = {"action": "close", "target": target, "candidates": self._candidates, "t": time.time()}
+        reference = self._new_reference("close", target)
         if target.is_close:  # it is the close control
             self._do("click", {"clicks": 1, "button": "left"}, None, target)
+            self._last_target = reference
             self._status(f"Closed ({target.describe()})")
             return True
         own = [c for c in self._candidates if c.is_close and c.parent and c.parent == target.label]
         sibling = [c for c in self._candidates if c.is_close and target.parent and c.parent == target.parent]
         if own or sibling:  # its own close control, else the close control of the dialog or panel it's in
             self._do("click", {"clicks": 1, "button": "left"}, None, (own or sibling)[0])
+            self._last_target = reference
             self._status(f"Closed {target.describe() if own else target.parent}")
             return True
         if target.is_tab:
@@ -738,12 +813,14 @@ class VoiceController:
             time.sleep(0.15)  # let the tab become the current one
             actions.press("command+w")
             self._acted("key", {"combo": "command+w"})
+            self._last_target = reference
             self._status(f"Closed {target.describe()}")
             return True
         if target.role == "AXWindow":
             button = snapping.window_close_button(*target.center)
             if button is not None:
                 self._do("click", {"clicks": 1, "button": "left"}, None, button)
+                self._last_target = reference
                 self._status("Closed the window")
                 return True
         # Not a close control, doesn't have one, not a tab: closing its whole window is too big a guess (a row in
@@ -879,7 +956,7 @@ class VoiceController:
         self._acted(kind, args, where)
         if target is not None and kind == "click":
             action = {(2, "left"): "double_click", (1, "right"): "right_click"}.get((args.get("clicks"), args.get("button")), "click")
-            self._last_target = {"action": action, "target": target, "candidates": self._candidates, "args": args, "t": time.time()}
+            self._last_target = self._new_reference(action, target, args)
         if kind == "click":
             actions.click(x, y, args["clicks"], args["button"])
             self.events.put(("flash", (x, y)))

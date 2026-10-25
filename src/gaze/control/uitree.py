@@ -40,6 +40,16 @@ def _app(name: str | None = None):
     return AXUIElementCreateApplication(app.processIdentifier()), str(app.localizedName())
 
 
+def front_context() -> tuple[str, str]:
+    """Frontmost app and focused-window title, for validating short-lived voice references."""
+    try:
+        app_element, app_name = _app()
+        window = _attr(app_element, "AXFocusedWindow") or (_attr(app_element, "AXWindows") or [None])[0]
+        return app_name, _text(window, "AXTitle") if window is not None else ""
+    except Exception:
+        return "", ""
+
+
 # ---- menus ---------------------------------------------------------------------------
 
 def _children(element):

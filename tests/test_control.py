@@ -74,6 +74,30 @@ def test_tracker_gaze_reads_samples_in_process():
     assert calls == ["recentre"] and reports == [{"event": "heard", "text": "click this"}]
 
 
+def test_tracker_gaze_boosts_only_a_sustained_final_fixation():
+    from gaze.control.sources import TrackerGaze
+    from gaze.core.types import GazePoint, Sample, TrackingState
+
+    g = TrackerGaze(busy=lambda: False, commands={})
+    now_ns = time.monotonic_ns()
+    for i in range(8):
+        fixation = 1 if i < 4 else 2
+        x = 100.0 if fixation == 1 else 300.0
+        t_ns = now_ns + i * 33_000_000
+        g.on_sample(Sample(t_ns, None, None, GazePoint(t_ns, TrackingState.TRACKING, x, 50.0, x, 50.0,
+                                                       fixation_id=fixation)))
+    cloud = g.cloud_during(time.time() - 5, time.time() + 5)
+    assert cloud.weights == [1.0] * 4 + [2.0] * 4
+
+    g2 = TrackerGaze(busy=lambda: False, commands={})
+    for i in range(4):
+        fixation = 1 if i < 2 else 2
+        t_ns = now_ns + i * 33_000_000
+        g2.on_sample(Sample(t_ns, None, None, GazePoint(t_ns, TrackingState.TRACKING, i * 100.0, 50.0,
+                                                        i * 100.0, 50.0, fixation_id=fixation)))
+    assert g2.cloud_during(time.time() - 5, time.time() + 5).weights == [1.0] * 4
+
+
 def test_split_clauses():
     assert router.split_clauses("open Safari and then make a new tab") == ["open Safari", "make a new tab"]
     assert router.split_clauses("copy this, then switch to Notes") == ["copy this", "switch to Notes"]
@@ -448,10 +472,10 @@ def test_relative_correction_redoes_the_action_on_the_neighbour(monkeypatch):
     c._close = lambda target: done.append(("close", target.label)) or True
     c._shortcut = lambda name, times=1: shortcuts.append(name)
     monkeypatch.setattr(ctl.time, "sleep", lambda s: None)
-    c._last_target = {"action": "click", "target": tabs[1], "candidates": tabs, "args": {}, "t": ctl.time.time()}
+    c._last_target = ctl.TargetReference("click", tabs[1], tabs, {}, "", "", ctl.time.time())
     c._relative("left")
     assert done[-1] == ("click", "t0")
-    c._last_target = {"action": "close", "target": tabs[1], "candidates": tabs, "t": ctl.time.time()}
+    c._last_target = ctl.TargetReference("close", tabs[1], tabs, {}, "", "", ctl.time.time())
     c._relative("right")  # closed the wrong tab: reopen it, then close the right one
     assert shortcuts == ["reopen_tab"] and done[-1] == ("close", "t2")
 
@@ -548,3 +572,44 @@ def test_chosen_voice_is_remembered(monkeypatch, tmp_path):
     s.voices = [{"id": "v1", "name": "Daniel", "tagline": "Modern Assistant"}]
     s.set_voice("v1", preview=False)
     assert speech.Speaker().voice == "v1" and s.voice_name == "Daniel"  # a new session starts with it
+
+
+def test_action_reference_revalidates_context_and_target(monkeypatch):
+    from gaze.control import controller as ctl
+    from gaze.control.snapping import Element
+
+    old = Element("AXButton", "Run", 100, 100, 80, 30, parent="Toolbar")
+    fresh = Element("AXButton", "Run", 102, 100, 80, 30, parent="Toolbar")
+    done, status = [], []
+    c = ctl.VoiceController.__new__(ctl.VoiceController)
+    c.screen = _A(w_pt=1000, h_pt=800)
+    c._last_target = ctl.TargetReference("click", old, [old], {"clicks": 1, "button": "left"},
+                                         "Editor", "Project", ctl.time.time())
+    c._status = status.append
+    c._act_on = lambda action, args, target: done.append((action, target))
+    monkeypatch.setattr(ctl.uitree, "front_context", lambda: ("Editor", "Project"))
+    monkeypatch.setattr(ctl.snapping, "candidates_near", lambda *args: [fresh])
+    c._reference("again", None, None, [])
+    assert done == [("click", fresh)]
+
+    monkeypatch.setattr(ctl.uitree, "front_context", lambda: ("Browser", "Other"))
+    c._reference("again", None, None, [])
+    assert status[-1] == "That reference belongs to a different app or window." and c._last_target is None
+
+
+def test_same_here_reuses_action_with_current_heat():
+    from gaze.control import controller as ctl
+    from gaze.control.heat import GazeCloud
+    from gaze.control.snapping import Element
+
+    old = Element("AXButton", "Old", 0, 0, 80, 30)
+    left = Element("AXButton", "Left", 100, 100, 80, 30)
+    right = Element("AXButton", "Right", 400, 100, 80, 30)
+    done = []
+    c = ctl.VoiceController.__new__(ctl.VoiceController)
+    c._last_target = ctl.TargetReference("double_click", old, [old], {}, "", "", ctl.time.time())
+    c._status = lambda text: None
+    c._act_on = lambda action, args, target: done.append((action, target.label))
+    c._ask_which = lambda *args: None
+    c._reference("same_here", (440, 115), GazeCloud([(440.0, 115.0, 1.0)], 25), [left, right])
+    assert done == [("double_click", "Right")]

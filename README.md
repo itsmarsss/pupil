@@ -176,6 +176,10 @@ what was heard and what happened; the dashboard's "Voice & agent" panel logs it 
 Say "stop" to cancel, "confirm" to approve. All settings are in `.env.example`. This drives your real
 Mac: use a test browser profile.
 
+The heat map gives extra weight to your final stable fixation. For a recent clicked target, say
+"again" to repeat the action, "do the same here" while looking somewhere else, or
+"close the one I just clicked". References expire after `RELATIVE_WINDOW_S` (20 s) and never cross apps or windows.
+
 Every command is logged to `.logs/episodes.jsonl` with what was seen, decided and done, and labelled by
 your reaction ("stop" / "undo" right after = corrected, saying it again = repeated). `gaze episodes` lists
 them with latency per route, `--replay` re-runs the routing rules on the logged answers offline, and

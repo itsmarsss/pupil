@@ -13,7 +13,9 @@ from typing import Callable
 
 from ..core.types import Sample
 from . import config
-from .heat import GazeCloud
+from .heat import FINAL_FIXATION_BOOST, GazeCloud
+
+MIN_FINAL_FIXATION_SAMPLES = 3
 
 
 class TrackerGaze:
@@ -26,7 +28,7 @@ class TrackerGaze:
         """sigma(): the tracker's current accuracy as a Gaussian width in screen points (heat.GazeCloud)."""
         self._busy, self._commands, self._report, self.sigma = busy, commands, report, sigma
         self._lock = threading.Lock()
-        self._history: deque = deque(maxlen=900)  # (wall t, x, y, confidence), ~30 s at 30 Hz
+        self._history: deque = deque(maxlen=900)  # (wall t, x, y, confidence, fixation id), ~30 s at 30 Hz
         self.lips = None  # a lips.LipGate fed with every frame
         self._last_seen = self._last_point = 0.0
         self._offset = time.time() - time.monotonic_ns() / 1e9  # speech is timestamped with time.time()
@@ -42,7 +44,7 @@ class TrackerGaze:
             self.lips.update(msg, now)
         if p.valid:
             with self._lock:
-                self._history.append((self._offset + s.t_ns / 1e9, p.x, p.y, float(p.confidence)))
+                self._history.append((self._offset + s.t_ns / 1e9, p.x, p.y, float(p.confidence), p.fixation_id))
             self._last_point = now
 
     def frame_time(self, t: float) -> float:
@@ -67,7 +69,7 @@ class TrackerGaze:
     def point_during(self, t0, t1):
         """Median gaze while the user was speaking: what "this" / "that" refers to."""
         with self._lock:
-            window = [(x, y) for t, x, y, _ in self._history if t0 <= t <= t1]
+            window = [(x, y) for t, x, y, _, _ in self._history if t0 <= t <= t1]
         if not window:
             return self.point()
         return statistics.median(p[0] for p in window), statistics.median(p[1] for p in window)
@@ -75,14 +77,23 @@ class TrackerGaze:
     def cloud_during(self, t0, t1) -> GazeCloud:
         """Every gaze sample while the user spoke, as a heat map (heat.GazeCloud): what "this" could be."""
         with self._lock:
-            points = [(x, y, c) for t, x, y, c in self._history if t0 <= t <= t1] or \
-                [(x, y, c) for _, x, y, c in list(self._history)[-5:]]
-        return GazeCloud(points, self.sigma())
+            samples = [(x, y, c, fixation) for t, x, y, c, fixation in self._history if t0 <= t <= t1] or \
+                [(x, y, c, fixation) for _, x, y, c, fixation in list(self._history)[-5:]]
+        points = [(x, y, c) for x, y, c, _ in samples]
+        weights = [1.0] * len(samples)
+        final_fixation = next((fixation for *_, fixation in reversed(samples) if fixation is not None), None)
+        if final_fixation is not None:
+            indices = [i for i, (*_, fixation) in enumerate(samples) if fixation == final_fixation]
+            if len(indices) >= MIN_FINAL_FIXATION_SAMPLES:
+                for i in indices:
+                    weights[i] = FINAL_FIXATION_BOOST
+        return GazeCloud(points, self.sigma(), weights)
 
     def confidence_during(self, t0, t1) -> float:
         """Median tracker confidence while speaking (lower = head turned past what calibration covered)."""
         with self._lock:
-            window = [c for t, _, _, c in self._history if t0 <= t <= t1] or [c for *_, c in list(self._history)[-5:]]
+            window = [c for t, _, _, c, _ in self._history if t0 <= t <= t1] or \
+                [c for _, _, _, c, _ in list(self._history)[-5:]]
         return statistics.median(window) if window else 0.0
 
     def send(self, cmd: dict) -> None:
