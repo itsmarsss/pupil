@@ -26,6 +26,12 @@ from .target_screen import ESC, RETURN, SPACE, TargetScreen, TargetSequence
 log = logging.getLogger(__name__)
 
 LAUNCH_CHECK_MAX_DEG = 4.0  # saved calibration is reused if the quick check beats this
+REACTION_TRIALS = 8
+REACTION_GAP_S = (1.0, 2.2)  # random waits, so the dots can't be anticipated
+REACTION_TIMEOUT_S = 1.5  # no gaze on the dot by then: a miss
+REACTION_MIN_JUMP_DEG = 12.0  # each dot this far from the last: a real eye movement
+REACTION_DOT_R = 14.0
+REACH_DEG = 5.0  # gaze within this of the dot has reached it
 MIN_SAMPLES_PER_TARGET = 8
 MOTION_TIMING = TargetTiming(dwell_s=6.5, settle_s=0.8, tail_s=0.1)
 MOTION_CHUNK = 15  # score the head-motion sweep in half-second pieces
@@ -107,6 +113,71 @@ class Flows:
             return
         self.targets.hide()
         self.busy = False
+
+    # ---- alertness check -------------------------------------------------------------------
+    def alertness_check(self, record) -> None:
+        """How fast the eyes react: dots appear at random moments and places; each reaction is the time until gaze
+        lands within REACH_DEG of the dot (camera lag included, the same every check). record(latencies_ms, misses)
+        stores it and returns {"ms", "baseline_ms", ...} for the result screen."""
+        self._begin()
+        rng = np.random.default_rng()
+        w, h = self.screen.width_pt, self.screen.height_pt
+        latencies: list[float] = []
+        state = {"trial": 0, "misses": 0, "dot": None, "onset": 0, "next": time.monotonic() + 1.2, "timer": None}
+
+        def place():
+            last = state["dot"] or (w / 2, h / 2)
+            for _ in range(50):
+                p = (rng.uniform(0.1, 0.9) * w, rng.uniform(0.12, 0.88) * h)
+                if np.hypot(p[0] - last[0], p[1] - last[1]) >= REACTION_MIN_JUMP_DEG * self.tracker.pt_per_deg:
+                    return p
+            return p
+
+        def finish(cancelled=False):
+            if state["timer"] is not None:
+                state["timer"].invalidate()
+            self.targets.set_dot(None)
+            if cancelled:
+                self.after_cancel()
+                return
+            result = record(latencies, state["misses"])
+            ms, base = result.get("ms"), result.get("baseline_ms")
+            first = f"Reaction {ms:.0f} ms" if ms else "Couldn't measure it"
+            second = (f"usually {base:.0f} ms" if base else "first check: the next ones compare with it") + \
+                f"  ·  {state['misses']} missed"
+            log.info("alertness check: %s, %s", first, second)
+            self.message([first, second, "Return to continue"], {RETURN: self.done, ESC: self.done, SPACE: self.done},
+                         auto_continue=4)
+
+        def tick(_timer):
+            now = time.monotonic()
+            if state["dot"] is None:
+                if now >= state["next"]:
+                    if state["trial"] >= REACTION_TRIALS:
+                        finish()
+                        return
+                    state["dot"] = place()
+                    self.targets.set_dot(*state["dot"], REACTION_DOT_R)
+                    state["onset"] = time.monotonic_ns()
+                return
+            x, y = state["dot"]
+            reach = REACH_DEG * self.tracker.pt_per_deg
+            near = [s.t_ns for s in self.tracker.samples_between(state["onset"], time.monotonic_ns())
+                    if s.point.state is TrackingState.TRACKING and np.isfinite(s.point.raw_x)
+                    and np.hypot(s.point.raw_x - x, s.point.raw_y - y) <= reach]
+            elapsed = now - state["onset"] / 1e9
+            if near or elapsed > REACTION_TIMEOUT_S:
+                if near:
+                    latencies.append((near[0] - state["onset"]) / 1e6)
+                else:
+                    state["misses"] += 1
+                state["trial"] += 1
+                state["dot"] = None
+                self.targets.set_dot(None)
+                state["next"] = now + rng.uniform(*REACTION_GAP_S)
+
+        self.targets.show(["Look at each dot as soon as it appears"], on_key=lambda c: c == ESC and finish(True))
+        state["timer"] = NSTimer.scheduledTimerWithTimeInterval_repeats_block_(1 / 60, True, tick)
 
     # ---- launch ------------------------------------------------------------------------
     def launch(self, force_recalibrate: bool) -> None:

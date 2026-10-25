@@ -57,3 +57,42 @@ def test_looking_away_long_enough_is_a_break():
     t = stream(h, 25, blinking(4.0), t0=t, face=False)  # away 25 s
     stream(h, 30, blinking(4.0), t0=t)
     assert h.breaks == 1 and h.snapshot()["minutes_on_screen"] < 1
+
+
+def test_eye_movements_show_slower_jumps_and_more_drift_when_tired():
+    from gaze.health.eyemove import BASELINE_S, EyeMovement
+
+    rng = np.random.default_rng(0)
+    em, t, fid, x = EyeMovement(), 0.0, 0, 0.0
+    ppd = 40.0  # points per degree
+
+    def look(seconds, saccade_frames, jitter_deg):
+        nonlocal t, fid, x
+        end = t + seconds
+        while t < end:
+            fid += 1
+            for _ in range(24):  # a 0.8 s fixation
+                em.update(t, (x + rng.normal(0, jitter_deg)) * ppd, rng.normal(0, jitter_deg) * ppd, True, fid, ppd)
+                t += 1 / 30
+            target = 12.0 if x < 6 else 0.0  # then a 12-degree jump, over `saccade_frames` frames
+            for k in range(1, saccade_frames + 1):
+                em.update(t, (x + (target - x) * k / saccade_frames) * ppd, 0.0, True, None, ppd)
+                t += 1 / 30
+            x = target
+
+    look(BASELINE_S + 5, saccade_frames=2, jitter_deg=0.15)  # fresh: quick jumps, steady fixations
+    fresh = em.snapshot(t)
+    assert 0.85 <= fresh["saccade_speed"] <= 1.15 and 0.8 <= fresh["gaze_drift"] <= 1.25
+    look(130, saccade_frames=3, jitter_deg=0.35)  # tired: slower jumps, wobblier fixations
+    tired = em.snapshot(t)
+    assert tired["saccade_speed"] < 0.8 and tired["gaze_drift"] > 1.5
+
+
+def test_reaction_checks_compare_with_earlier_ones(tmp_path):
+    h = HealthTracker(log_dir=tmp_path)
+    h.record_reaction([300, 320, 310], misses=0)
+    h.record_reaction([290, 300, 305], misses=0)
+    r = h.record_reaction([420, 450, 430], misses=1)  # much slower than before
+    assert r["ms"] == 430 and r["baseline_ms"] == 305
+    assert h.snapshot()["signals"]["reaction"] > 0.5
+    assert HealthTracker(log_dir=tmp_path)._reaction_history == [310, 300, 430]  # kept across sessions

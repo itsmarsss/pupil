@@ -97,7 +97,12 @@ export interface HealthState {
   breaks?: number;
   fatigue?: number | null; // 0-100
   level?: "low" | "moderate" | "high" | null;
-  signals?: Partial<Record<"blink_rate" | "blink_duration" | "perclos" | "droop" | "screen_time", number | null>>;
+  signals?: Partial<Record<"blink_rate" | "blink_duration" | "perclos" | "droop" | "screen_time" | "gaze_drift" |
+    "saccade_speed" | "saccade_rate" | "reaction", number | null>>;
+  eyes?: { gaze_drift: number | null; saccade_speed: number | null; saccade_rate: number | null;
+           saccades_per_min: number | null; drift_deg: number | null };
+  reaction_ms?: number | null;
+  reaction_baseline_ms?: number | null;
   break_every_min?: number;
 }
 
@@ -134,5 +139,5 @@ export interface LipVerdict {
 export type EngineMessage = SceneInfo | CalibrationInfo | FrameState;
 
 export type Command =
-  | "recalibrate" | "recentre" | "check" | "measure" | "cycle_smoothing" | "toggle_overlay" // live app
+  | "recalibrate" | "recentre" | "check" | "measure" | "cycle_smoothing" | "toggle_overlay" | "alertness" // live app
   | "play" | "pause" | "seek" | "step" | "speed"; // replay

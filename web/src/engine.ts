@@ -6,6 +6,7 @@ import { SCHEMA } from "./protocol";
 // throttled rate. Keeping 30 Hz updates out of React state keeps the page smooth.
 
 const HISTORY_S = 20;
+const HEALTH_HISTORY_S = 30 * 60;
 
 // uPlot draws a gap at null (NaN would break its auto-scaling)
 export interface Series {
@@ -43,6 +44,8 @@ class EngineStore {
   cropsUrl: string | null = null; // the gaze network's inputs: face crop + both eye crops
   trail: [number, number][] = [];
   series: Series = { t: [], ...Object.fromEntries(SERIES_KEYS.map((k) => [k, [] as (number | null)[]])) };
+  // Slow health measures, one point a second for HEALTH_HISTORY_S (fatigue changes over minutes, not seconds)
+  healthSeries: Series = { t: [], fatigue: [], blink_rate: [] };
   version = 0; // bumped on every update; panels poll it
 
   private ws: WebSocket | null = null;
@@ -134,6 +137,13 @@ class EngineStore {
     push("mouth", f.mouth_open);
     push("blink_rate", f.health?.blink_rate);
     push("fatigue", f.health?.fatigue);
+    const hs = this.healthSeries;
+    if (f.health && (!hs.t.length || f.t - hs.t[hs.t.length - 1] >= 1)) {
+      hs.t.push(f.t);
+      hs.fatigue.push(f.health.fatigue ?? null);
+      hs.blink_rate.push(f.health.blink_rate ?? null);
+      while (hs.t.length && hs.t[hs.t.length - 1] - hs.t[0] > HEALTH_HISTORY_S) for (const k of Object.keys(hs)) hs[k].shift();
+    }
     push("mouth_motion", lipMotion(s.t, s.mouth));
     const gate = f.voice?.lip_gate;
     push("lip_open", gate ? (gate.open ? 1 : 0) : null);

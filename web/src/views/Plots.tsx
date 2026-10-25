@@ -1,7 +1,7 @@
 import { useEffect, useRef } from "react";
 import uPlot from "uplot";
 import "uplot/dist/uPlot.min.css";
-import { engine, useEngine } from "../engine";
+import { engine, useEngine, type Series } from "../engine";
 
 export interface PlotSpec {
   id: string;
@@ -32,7 +32,8 @@ function compact(v: number): string {
   return `${+v.toFixed(a < 1 && a > 0 ? 2 : 1)}`;
 }
 
-export function Plot({ spec }: { spec: PlotSpec }) {
+/** `source` picks the data (default: the live 20 s series; the Health panel passes its 30-minute one). */
+export function Plot({ spec, source = () => engine.series, unit = "s" }: { spec: PlotSpec; source?: () => Series; unit?: "s" | "min" }) {
   const box = useRef<HTMLDivElement>(null);
   const plot = useRef<uPlot | null>(null);
   const { version } = useEngine();
@@ -42,7 +43,7 @@ export function Plot({ spec }: { spec: PlotSpec }) {
     const opts: uPlot.Options = {
       width: el.clientWidth, height: Math.max(el.clientHeight, 60), legend: { show: false },
       axes: [
-        { stroke: "#8b93a1", grid: { stroke: "#232833" }, values: (_u, vals) => vals.map((v) => `${v}s`) },
+        { stroke: "#8b93a1", grid: { stroke: "#232833" }, values: (_u, vals) => vals.map((v) => (unit === "min" ? `${+(v / 60).toFixed(1)}m` : `${v}s`)) },
         { stroke: "#8b93a1", grid: { stroke: "#232833" }, size: 46, values: (_u, vals) => vals.map(compact) },
       ],
       series: [{}, ...spec.series.map((s) => ({ label: s.label, stroke: s.color, width: 1.5 }))],
@@ -58,7 +59,7 @@ export function Plot({ spec }: { spec: PlotSpec }) {
   }, [spec]);
 
   useEffect(() => {
-    const s = engine.series;
+    const s = source();
     if (!s.t.length) return;
     const t0 = s.t[s.t.length - 1];
     plot.current?.setData([s.t.map((t) => (t as number) - t0), ...spec.series.map((x) => s[x.key])] as uPlot.AlignedData);
