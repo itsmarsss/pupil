@@ -817,3 +817,29 @@ def test_keep_going_routes_to_the_interrupted_task_and_location_asks_first():
     a.gate = NS(available=False)
     call = NS(type="tool_use", id="l1", name="location", input={})
     assert a._risk_check("what's my postal code", [call]) == "look up where you are (your location)"
+
+
+def test_outline_is_one_closed_smooth_stroke_past_the_edge():
+    import math
+
+    from pupil.control import actions
+
+    box = actions.shape_points(box=[100, 100, 200, 100])
+    path = actions.outline_path(box, pad=10)
+    assert path[0] == path[-1]  # closed: back to where it started
+    gaps = [math.hypot(x1 - x0, y1 - y0) for (x0, y0), (x1, y1) in zip(path, path[1:])]
+    assert max(gaps) <= actions.OUTLINE_STEP + 1e-6  # evenly sampled: no jumps an erase brush would skip
+    xs, ys = [x for x, _ in path], [y for _, y in path]
+    assert min(xs) < 100 and max(xs) > 300 and min(ys) < 100 and max(ys) > 200  # a little past the edge
+    assert len(actions.shape_points(ellipse=[50, 50, 20, 10])) == 24
+
+
+def test_replies_are_said_once():
+    from types import SimpleNamespace as NS
+
+    from pupil.control.agent import _reply
+
+    text = lambda t: NS(type="text", text=t)  # noqa: E731
+    assert _reply([text("Photos is already showing in front.\n\nDone.")]) == "Photos is already showing in front."
+    assert _reply([text("Sent."), text("Sent.")]) == "Sent."
+    assert _reply([text("Done.")]) == "Done."

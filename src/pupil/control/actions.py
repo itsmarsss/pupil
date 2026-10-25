@@ -1,5 +1,6 @@
 """Mouse/keyboard on the real Mac. Direct helpers for the fast path + an executor for Claude's computer toolset."""
 
+import math
 import time
 
 import pyautogui
@@ -133,6 +134,51 @@ def drag(points, button="left", modifiers=(), duration=0.5):
     finally:
         for m in reversed(mods):
             pyautogui.keyUp(m)
+
+
+OUTLINE_SPEED = 700.0  # points per second along the stroke: steady enough for apps that sample the brush
+OUTLINE_STEP = 6.0  # points between samples on the path
+
+
+def outline_path(points, pad=8.0, step=OUTLINE_STEP):
+    """A closed, padded, evenly sampled path around `points` (a rough polygon): pushed `pad` points outward from
+    its centre, corners softened (Chaikin), and back to the start, so an erase or lasso tool gets one clean ring."""
+    pts = [(float(x), float(y)) for x, y in points]
+    if len(pts) < 3:
+        raise ValueError("an outline needs at least 3 points")
+    cx, cy = sum(x for x, _ in pts) / len(pts), sum(y for _, y in pts) / len(pts)
+    padded = []
+    for x, y in pts:
+        d = math.hypot(x - cx, y - cy) or 1.0
+        padded.append((x + (x - cx) / d * pad, y + (y - cy) / d * pad))
+    ring = padded
+    for _ in range(2):  # Chaikin corner cutting: a smooth closed curve through the polygon's shape
+        ring = [p for a, b in zip(ring, ring[1:] + ring[:1])
+                for p in ((0.75 * a[0] + 0.25 * b[0], 0.75 * a[1] + 0.25 * b[1]),
+                          (0.25 * a[0] + 0.75 * b[0], 0.25 * a[1] + 0.75 * b[1]))]
+    ring.append(ring[0])
+    path = [ring[0]]
+    for (x0, y0), (x1, y1) in zip(ring, ring[1:]):
+        n = max(1, math.ceil(math.hypot(x1 - x0, y1 - y0) / step))
+        path.extend((x0 + (x1 - x0) * i / n, y0 + (y1 - y0) * i / n) for i in range(1, n + 1))
+    return path
+
+
+def shape_points(box=None, ellipse=None, n=24):
+    """A polygon for a box [x, y, w, h] or an ellipse [cx, cy, rx, ry]."""
+    if box is not None:
+        x, y, w, h = box
+        return [(x, y), (x + w, y), (x + w, y + h), (x, y + h)]
+    cx, cy, rx, ry = ellipse
+    return [(cx + rx * math.cos(2 * math.pi * i / n), cy + ry * math.sin(2 * math.pi * i / n)) for i in range(n)]
+
+
+def outline(points, pad=8.0, button="left", modifiers=()):
+    """Draw one continuous closed stroke around `points` (screen points): erase or select an object in one go."""
+    path = outline_path(points, pad)
+    length = sum(math.hypot(x1 - x0, y1 - y0) for (x0, y0), (x1, y1) in zip(path, path[1:]))
+    drag(path, button, modifiers, duration=max(1.0, length / OUTLINE_SPEED))
+    return length
 
 
 def move_held(x, y, button="left"):
