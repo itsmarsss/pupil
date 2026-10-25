@@ -25,7 +25,7 @@ from .gate import YES, Gate
 from .gaze_client import GazeClient, MouseGaze
 from .overlay import Overlay
 from .screen import Screen
-from .voice import TypedInput, Voice
+from .voice import CartesiaVoice, TypedInput, Voice
 
 # Gate routes -> the direct action they map to.
 _ROUTE_ACTIONS = {
@@ -78,7 +78,8 @@ class App:
             TypedInput(on_utterance).start()
             self.overlay.mic = "typing in terminal"
         else:
-            Voice(on_utterance, on_mic_state, lambda name: self.events.put(("mic_device", name))).start()
+            voice = CartesiaVoice if config.STT == "cartesia" else Voice
+            voice(on_utterance, on_mic_state, lambda name: self.events.put(("mic_device", name))).start()
             self.overlay.mic = "loading"
 
         self.timer = QTimer()

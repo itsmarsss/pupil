@@ -34,7 +34,13 @@ GATE_RISKY_MIN = 0.65  # ask to confirm at or above this (measured: harmless cli
 # The tracker (`gaze --publish`, sinks/publisher.py) streams points to us over local UDP
 GAZE_STALE_S = 1.0  # no point for this long = tracker lost you
 
-# Voice
+# Voice: Cartesia Ink-2 streaming speech-to-text when CARTESIA_API_KEY is set; on-device Whisper otherwise or offline
+CARTESIA_API_KEY = os.environ.get("CARTESIA_API_KEY", "")
+STT = os.environ.get("GAZE_STT", "cartesia" if CARTESIA_API_KEY else "whisper")  # cartesia | whisper
+CARTESIA_MODEL = os.environ.get("GAZE_CARTESIA_MODEL", "ink-2")
+# How sure Ink-2 must be that you're done before ending the turn (0.05-0.5, Cartesia's default 0.2). 0.5 = end
+# soonest: measured ~0.95 s after speech vs ~1.45 s at 0.2; a long mid-sentence pause may split a request.
+CARTESIA_END_THRESHOLD = os.environ.get("GAZE_CARTESIA_END_THRESHOLD", "0.5")
 _LOCAL_WHISPER = ROOT / "models" / "whisper-base.en"  # downloaded with curl; HF's downloader stalls on bad wifi
 WHISPER_MODEL = os.environ.get(
     "GAZE_WHISPER", str(_LOCAL_WHISPER) if (_LOCAL_WHISPER / "model.bin").exists() else "base.en")

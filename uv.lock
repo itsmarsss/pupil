@@ -1,5 +1,5 @@
 version = 1
-revision = 3
+revision = 5
 requires-python = "==3.11.*"
 resolution-markers = [
     "sys_platform == 'darwin'",
@@ -265,6 +265,7 @@ dependencies = [
 [package.optional-dependencies]
 control = [
     { name = "anthropic" },
+    { name = "certifi" },
     { name = "faster-whisper" },
     { name = "mss" },
     { name = "pillow" },
@@ -272,6 +273,7 @@ control = [
     { name = "pyqt6" },
     { name = "sounddevice" },
     { name = "typesafe-sdk" },
+    { name = "websockets" },
 ]
 
 [package.dev-dependencies]
@@ -282,6 +284,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "anthropic", marker = "extra == 'control'", specifier = ">=2.3" },
+    { name = "certifi", marker = "extra == 'control'" },
     { name = "faster-whisper", marker = "extra == 'control'", specifier = ">=1.1" },
     { name = "mediapipe", specifier = ">=1.1.1" },
     { name = "mnn", specifier = ">=3.0" },
@@ -299,6 +302,7 @@ requires-dist = [
     { name = "sounddevice", marker = "extra == 'control'", specifier = ">=0.5" },
     { name = "typesafe-sdk", marker = "extra == 'control'", specifier = ">=0.7.5" },
     { name = "websockets", specifier = ">=13" },
+    { name = "websockets", marker = "extra == 'control'", specifier = ">=13" },
 ]
 provides-extras = ["control"]
 

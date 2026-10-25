@@ -1,0 +1,888 @@
+{
+  "calibration": {
+    "config": {
+      "iris_mode": "center",
+      "per_eye": false,
+      "rigid_pose": false,
+      "residual": "quad",
+      "blink_reject": false,
+      "head_comp": true
+    },
+    "eyes": {
+      "right": {
+        "kappa_yaw_deg": -0.8647433665246635,
+        "kappa_pitch_deg": -27.992976575434295,
+        "gain_yaw": 0.9698696814503424,
+        "gain_pitch": 2.363457404696047
+      },
+      "left": {
+        "kappa_yaw_deg": -0.8647433665246635,
+        "kappa_pitch_deg": -27.992976575434295,
+        "gain_yaw": 0.9698696814503424,
+        "gain_pitch": 2.363457404696047
+      }
+    },
+    "residual": {
+      "kind": "quad",
+      "center": [
+        0.0,
+        -9.45828779569396
+      ],
+      "half": [
+        14.528404451065956,
+        9.122256672335972
+      ],
+      "coef": [
+        [
+          0.7844618086625149,
+          -0.46541967030005266
+        ],
+        [
+          0.08995859433107002,
+          0.9961835522536128
+        ],
+        [
+          -1.0354026184641723,
+          0.55320564291082
+        ],
+        [
+          -1.7390395180737497,
+          -0.1425090682204714
+        ],
+        [
+          -0.3819162441298641,
+          1.4087764906890612
+        ],
+        [
+          -1.8592175658740964,
+          1.6410249713677003
+        ]
+      ]
+    },
+    "affine": null,
+    "rigid_ref": null,
+    "head_comp": {
+      "ref": [
+        0.8255615162539558,
+        -5.987798653493702,
+        1.1065399840604133,
+        -8.628571414595799
+      ],
+      "scale": [
+        1.3628996851217765,
+        1.628684847396772,
+        0.6972363494057637,
+        0.4071595958266671
+      ],
+      "coef": [
+        [
+          0.08876405343250791,
+          -0.16759520590621038
+        ],
+        [
+          -0.16007416735303553,
+          -0.2770542221768012
+        ],
+        [
+          -0.30804714782739767,
+          0.1695602625824305
+        ],
+        [
+          0.24470729886075723,
+          0.6172596801891092
+        ]
+      ]
+    },
+    "ear_ref": 0.24520620301897222,
+    "rms_cm": 1.0169326431215457
+  },
+  "hfov_deg": 62.0,
+  "capture": [
+    1920,
+    1080
+  ],
+  "screen": {
+    "width_cm": 29.056808902131912,
+    "height_cm": 18.244513344671944,
+    "width_px": 1470,
+    "height_px": 923,
+    "cam_to_top_cm": 0.3360311233579881,
+    "cam_x_offset_cm": 0.0
+  },
+  "uncalibrated": {
+    "summary": {
+      "accuracy_cm": 17.225403685355293,
+      "accuracy_deg": 13.976032516617485,
+      "median_deg": 13.596965488711469,
+      "precision_sd_deg": 0.50806250780833,
+      "eye_distance_cm": 69.08877054065532,
+      "points": "12/12",
+      "by_region": {
+        "corner": {
+          "accuracy_cm": 17.453479849328147,
+          "accuracy_deg": 14.063697809137542,
+          "points": 4
+        },
+        "edge": {
+          "accuracy_cm": 17.53895571480079,
+          "accuracy_deg": 14.190110432708718,
+          "points": 4
+        },
+        "interior": {
+          "accuracy_cm": 16.68377549193694,
+          "accuracy_deg": 13.674289308006191,
+          "points": 4
+        }
+      }
+    },
+    "points": [
+      {
+        "target": [
+          0.08,
+          0.08
+        ],
+        "region": "corner",
+        "n": 18,
+        "mean_hit_px": [
+          50.03638601678499,
+          -526.6117961936404
+        ],
+        "accuracy_cm": 11.92593037571132,
+        "accuracy_deg": 9.379671067643114,
+        "mean_sample_err_deg": 9.42617736311913,
+        "precision_sd_deg": 1.6839197528041456,
+        "eye_distance_cm": 70.10972495358946
+      },
+      {
+        "target": [
+          0.92,
+          0.08
+        ],
+        "region": "corner",
+        "n": 17,
+        "mean_hit_px": [
+          1239.2080619593303,
+          -606.7037048940056
+        ],
+        "accuracy_cm": 13.619117194719168,
+        "accuracy_deg": 10.919274308128818,
+        "mean_sample_err_deg": 10.921712157129775,
+        "precision_sd_deg": 0.25909312758333614,
+        "eye_distance_cm": 68.83862596609836
+      },
+      {
+        "target": [
+          0.08,
+          0.92
+        ],
+        "region": "corner",
+        "n": 17,
+        "mean_hit_px": [
+          -181.72213747445198,
+          -214.72273687570907
+        ],
+        "accuracy_cm": 21.839482524993564,
+        "accuracy_deg": 17.66403200420228,
+        "mean_sample_err_deg": 17.66730132827242,
+        "precision_sd_deg": 0.40600467313641675,
+        "eye_distance_cm": 68.67426989446024
+      },
+      {
+        "target": [
+          0.92,
+          0.92
+        ],
+        "region": "corner",
+        "n": 17,
+        "mean_hit_px": [
+          1193.2255505974101,
+          -274.55205669602657
+        ],
+        "accuracy_cm": 22.429389301888534,
+        "accuracy_deg": 18.291813856575956,
+        "mean_sample_err_deg": 18.29275219964265,
+        "precision_sd_deg": 0.3802868226998608,
+        "eye_distance_cm": 68.71481853344082
+      },
+      {
+        "target": [
+          0.3,
+          0.06
+        ],
+        "region": "edge",
+        "n": 18,
+        "mean_hit_px": [
+          398.26637395465445,
+          -494.69577926621895
+        ],
+        "accuracy_cm": 10.898365855837095,
+        "accuracy_deg": 8.826260357015984,
+        "mean_sample_err_deg": 8.840067126064733,
+        "precision_sd_deg": 0.6384468023209422,
+        "eye_distance_cm": 68.8473555247542
+      },
+      {
+        "target": [
+          0.94,
+          0.3
+        ],
+        "region": "edge",
+        "n": 18,
+        "mean_hit_px": [
+          1252.7229392377226,
+          -481.5285175662028
+        ],
+        "accuracy_cm": 15.186881855141966,
+        "accuracy_deg": 12.333865913891128,
+        "mean_sample_err_deg": 12.334580440442569,
+        "precision_sd_deg": 0.1873101844724011,
+        "eye_distance_cm": 68.43405703101391
+      },
+      {
+        "target": [
+          0.7,
+          0.94
+        ],
+        "region": "edge",
+        "n": 17,
+        "mean_hit_px": [
+          899.6937871120689,
+          -367.4206757923322
+        ],
+        "accuracy_cm": 24.53372414884372,
+        "accuracy_deg": 20.046575096582497,
+        "mean_sample_err_deg": 20.05590992845454,
+        "precision_sd_deg": 0.651150740487511,
+        "eye_distance_cm": 69.20863676016306
+      },
+      {
+        "target": [
+          0.06,
+          0.7
+        ],
+        "region": "edge",
+        "n": 16,
+        "mean_hit_px": [
+          -134.81021857068237,
+          -316.9386167576757
+        ],
+        "accuracy_cm": 19.536850999380373,
+        "accuracy_deg": 15.553740363345254,
+        "mean_sample_err_deg": 15.55419783696574,
+        "precision_sd_deg": 0.17353717315617298,
+        "eye_distance_cm": 69.734692291883
+      },
+      {
+        "target": [
+          0.4,
+          0.4
+        ],
+        "region": "interior",
+        "n": 18,
+        "mean_hit_px": [
+          571.8242539044022,
+          -452.53943294123974
+        ],
+        "accuracy_cm": 16.242136774742164,
+        "accuracy_deg": 13.212603027191253,
+        "mean_sample_err_deg": 13.214027436166761,
+        "precision_sd_deg": 0.25573837276486383,
+        "eye_distance_cm": 69.42005235921741
+      },
+      {
+        "target": [
+          0.62,
+          0.4
+        ],
+        "region": "interior",
+        "n": 18,
+        "mean_hit_px": [
+          793.6311870012971,
+          -446.6774020076112
+        ],
+        "accuracy_cm": 16.28917414878308,
+        "accuracy_deg": 13.289232075786018,
+        "mean_sample_err_deg": 13.29174222470911,
+        "precision_sd_deg": 0.5287779361809583,
+        "eye_distance_cm": 69.26262010134288
+      },
+      {
+        "target": [
+          0.38,
+          0.62
+        ],
+        "region": "interior",
+        "n": 17,
+        "mean_hit_px": [
+          504.51898134574776,
+          -280.20753884654465
+        ],
+        "accuracy_cm": 16.878329664466584,
+        "accuracy_deg": 13.90469890163692,
+        "mean_sample_err_deg": 13.908874024297464,
+        "precision_sd_deg": 0.4477348182555731,
+        "eye_distance_cm": 68.95810284783435
+      },
+      {
+        "target": [
+          0.6,
+          0.6
+        ],
+        "region": "interior",
+        "n": 17,
+        "mean_hit_px": [
+          779.4273506490796,
+          -317.48219958550817
+        ],
+        "accuracy_cm": 17.32546137975595,
+        "accuracy_deg": 14.29062322741058,
+        "mean_sample_err_deg": 14.29677506736897,
+        "precision_sd_deg": 0.4847496898377781,
+        "eye_distance_cm": 68.8622902240662
+      }
+    ]
+  },
+  "calibrated": {
+    "summary": {
+      "accuracy_cm": 2.7243329617026446,
+      "accuracy_deg": 2.2024188068041397,
+      "median_deg": 2.30686995927349,
+      "precision_sd_deg": 0.6382468734406815,
+      "eye_distance_cm": 69.08877054065532,
+      "points": "12/12",
+      "by_region": {
+        "corner": {
+          "accuracy_cm": 2.6467056530944775,
+          "accuracy_deg": 2.1083906904075143,
+          "points": 4
+        },
+        "edge": {
+          "accuracy_cm": 3.3191477589889966,
+          "accuracy_deg": 2.679815763521746,
+          "points": 4
+        },
+        "interior": {
+          "accuracy_cm": 2.2071454730244597,
+          "accuracy_deg": 1.8190499664831594,
+          "points": 4
+        }
+      }
+    },
+    "points": [
+      {
+        "target": [
+          0.08,
+          0.08
+        ],
+        "region": "corner",
+        "n": 18,
+        "mean_hit_px": [
+          303.8552944170399,
+          250.8126616653066
+        ],
+        "accuracy_cm": 5.098549818998585,
+        "accuracy_deg": 4.099320991925555,
+        "mean_sample_err_deg": 4.54406195006566,
+        "precision_sd_deg": 2.096859959490415,
+        "eye_distance_cm": 70.10972495358946
+      },
+      {
+        "target": [
+          0.92,
+          0.08
+        ],
+        "region": "corner",
+        "n": 17,
+        "mean_hit_px": [
+          1356.2027143527537,
+          121.85286734435962
+        ],
+        "accuracy_cm": 0.9692187132493136,
+        "accuracy_deg": 0.7913572504767526,
+        "mean_sample_err_deg": 0.8279494484928904,
+        "precision_sd_deg": 0.29543037132307953,
+        "eye_distance_cm": 68.83862596609836
+      },
+      {
+        "target": [
+          0.08,
+          0.92
+        ],
+        "region": "corner",
+        "n": 17,
+        "mean_hit_px": [
+          -55.74793329980807,
+          958.8309150481267
+        ],
+        "accuracy_cm": 4.046335024493398,
+        "accuracy_deg": 3.1648927117252335,
+        "mean_sample_err_deg": 3.172954148888404,
+        "precision_sd_deg": 0.29770742937373657,
+        "eye_distance_cm": 68.67426989446024
+      },
+      {
+        "target": [
+          0.92,
+          0.92
+        ],
+        "region": "corner",
+        "n": 17,
+        "mean_hit_px": [
+          1328.230886982473,
+          851.6385852897052
+        ],
+        "accuracy_cm": 0.472719055636614,
+        "accuracy_deg": 0.37799180750251676,
+        "mean_sample_err_deg": 0.6084876234238854,
+        "precision_sd_deg": 0.5267821773242459,
+        "eye_distance_cm": 68.71481853344082
+      },
+      {
+        "target": [
+          0.3,
+          0.06
+        ],
+        "region": "edge",
+        "n": 18,
+        "mean_hit_px": [
+          571.7777812557325,
+          224.11349822022714
+        ],
+        "accuracy_cm": 4.225704769367033,
+        "accuracy_deg": 3.4989382378295315,
+        "mean_sample_err_deg": 3.5279353220100003,
+        "precision_sd_deg": 0.6632527837230731,
+        "eye_distance_cm": 68.8473555247542
+      },
+      {
+        "target": [
+          0.94,
+          0.3
+        ],
+        "region": "edge",
+        "n": 18,
+        "mean_hit_px": [
+          1379.4513238458665,
+          309.89007589583633
+        ],
+        "accuracy_cm": 0.6705885011875767,
+        "accuracy_deg": 0.5502045906311401,
+        "mean_sample_err_deg": 0.6346743695751501,
+        "precision_sd_deg": 0.5063115846303391,
+        "eye_distance_cm": 68.43405703101391
+      },
+      {
+        "target": [
+          0.7,
+          0.94
+        ],
+        "region": "edge",
+        "n": 17,
+        "mean_hit_px": [
+          973.535037490227,
+          683.9612846906024
+        ],
+        "accuracy_cm": 3.780503660876192,
+        "accuracy_deg": 3.053500900981727,
+        "mean_sample_err_deg": 3.156423749384093,
+        "precision_sd_deg": 0.8424607507828672,
+        "eye_distance_cm": 69.20863676016306
+      },
+      {
+        "target": [
+          0.06,
+          0.7
+        ],
+        "region": "edge",
+        "n": 16,
+        "mean_hit_px": [
+          -4.062596717946807,
+          859.7208875229089
+        ],
+        "accuracy_cm": 4.599794104525184,
+        "accuracy_deg": 3.616619324644584,
+        "mean_sample_err_deg": 3.6191072424557427,
+        "precision_sd_deg": 0.20597746387302135,
+        "eye_distance_cm": 69.734692291883
+      },
+      {
+        "target": [
+          0.4,
+          0.4
+        ],
+        "region": "interior",
+        "n": 18,
+        "mean_hit_px": [
+          680.3267073608289,
+          430.641932393887
+        ],
+        "accuracy_cm": 2.194348104042414,
+        "accuracy_deg": 1.8097510565733763,
+        "mean_sample_err_deg": 1.8256639786137194,
+        "precision_sd_deg": 0.3688731246115398,
+        "eye_distance_cm": 69.42005235921741
+      },
+      {
+        "target": [
+          0.62,
+          0.4
+        ],
+        "region": "interior",
+        "n": 18,
+        "mean_hit_px": [
+          889.8986166438397,
+          428.87075752103925
+        ],
+        "accuracy_cm": 1.2547899587554434,
+        "accuracy_deg": 1.035995504341517,
+        "mean_sample_err_deg": 1.1240146716236497,
+        "precision_sd_deg": 0.6696203293527359,
+        "eye_distance_cm": 69.26262010134288
+      },
+      {
+        "target": [
+          0.38,
+          0.62
+        ],
+        "region": "interior",
+        "n": 17,
+        "mean_hit_px": [
+          579.3023782320661,
+          743.1988947179747
+        ],
+        "accuracy_cm": 3.4101058611985215,
+        "accuracy_deg": 2.8039888619736035,
+        "mean_sample_err_deg": 2.8316480964483786,
+        "precision_sd_deg": 0.5900017093050608,
+        "eye_distance_cm": 68.95810284783435
+      },
+      {
+        "target": [
+          0.6,
+          0.6
+        ],
+        "region": "interior",
+        "n": 17,
+        "mean_hit_px": [
+          866.8842496185113,
+          651.4765455383824
+        ],
+        "accuracy_cm": 1.9693379681014591,
+        "accuracy_deg": 1.62646444304414,
+        "mean_sample_err_deg": 1.6796010306877036,
+        "precision_sd_deg": 0.595684797498064,
+        "eye_distance_cm": 68.8622902240662
+      }
+    ]
+  },
+  "ablation": [
+    {
+      "config": "baseline",
+      "summary": {
+        "accuracy_cm": 3.073406080413548,
+        "accuracy_deg": 2.495534721243207,
+        "median_deg": 2.1637671191744494,
+        "precision_sd_deg": 0.596221880580706,
+        "eye_distance_cm": 69.08877054065532,
+        "points": "12/12",
+        "by_region": {
+          "corner": {
+            "accuracy_cm": 3.4401714253084057,
+            "accuracy_deg": 2.7698050201784343,
+            "points": 4
+          },
+          "edge": {
+            "accuracy_cm": 3.9473136998082015,
+            "accuracy_deg": 3.202412470240919,
+            "points": 4
+          },
+          "interior": {
+            "accuracy_cm": 1.8327331161240368,
+            "accuracy_deg": 1.5143866733102682,
+            "points": 4
+          }
+        }
+      }
+    },
+    {
+      "config": "blink",
+      "summary": {
+        "accuracy_cm": 3.066939917889096,
+        "accuracy_deg": 2.4904881529607974,
+        "median_deg": 2.1537128702979595,
+        "precision_sd_deg": 0.5942993256409402,
+        "eye_distance_cm": 69.08877054065532,
+        "points": "12/12",
+        "by_region": {
+          "corner": {
+            "accuracy_cm": 3.437507842281652,
+            "accuracy_deg": 2.767879893934581,
+            "points": 4
+          },
+          "edge": {
+            "accuracy_cm": 3.938836168763741,
+            "accuracy_deg": 3.1960321035656998,
+            "points": 4
+          },
+          "interior": {
+            "accuracy_cm": 1.8244757426218934,
+            "accuracy_deg": 1.5075524613821114,
+            "points": 4
+          }
+        }
+      }
+    },
+    {
+      "config": "equator+blink",
+      "summary": {
+        "accuracy_cm": 2.9757409471149683,
+        "accuracy_deg": 2.4134539543788995,
+        "median_deg": 2.162590184666826,
+        "precision_sd_deg": 0.5840002813053029,
+        "eye_distance_cm": 69.08877054065532,
+        "points": "12/12",
+        "by_region": {
+          "corner": {
+            "accuracy_cm": 3.399739636712652,
+            "accuracy_deg": 2.7346539144595043,
+            "points": 4
+          },
+          "edge": {
+            "accuracy_cm": 3.932960359648708,
+            "accuracy_deg": 3.1881803822480057,
+            "points": 4
+          },
+          "interior": {
+            "accuracy_cm": 1.594522844983546,
+            "accuracy_deg": 1.3175275664291886,
+            "points": 4
+          }
+        }
+      }
+    },
+    {
+      "config": "equator+per-eye+blink",
+      "summary": {
+        "accuracy_cm": 2.9268093800704453,
+        "accuracy_deg": 2.375565739690565,
+        "median_deg": 1.9928969357371296,
+        "precision_sd_deg": 0.5758799047995122,
+        "eye_distance_cm": 69.08877054065532,
+        "points": "12/12",
+        "by_region": {
+          "corner": {
+            "accuracy_cm": 3.3354563113606805,
+            "accuracy_deg": 2.683921887116237,
+            "points": 4
+          },
+          "edge": {
+            "accuracy_cm": 3.849087371332182,
+            "accuracy_deg": 3.1241296539614667,
+            "points": 4
+          },
+          "interior": {
+            "accuracy_cm": 1.5958844575184734,
+            "accuracy_deg": 1.3186456779939904,
+            "points": 4
+          }
+        }
+      }
+    },
+    {
+      "config": "equator+per-eye+rigid+blink",
+      "summary": {
+        "accuracy_cm": 2.8740021297980003,
+        "accuracy_deg": 2.331839560130591,
+        "median_deg": 1.9852878404481435,
+        "precision_sd_deg": 0.5773607008060334,
+        "eye_distance_cm": 69.08877249043665,
+        "points": "12/12",
+        "by_region": {
+          "corner": {
+            "accuracy_cm": 3.28106512157894,
+            "accuracy_deg": 2.6394062897350357,
+            "points": 4
+          },
+          "edge": {
+            "accuracy_cm": 3.8188920174886825,
+            "accuracy_deg": 3.0984926266733903,
+            "points": 4
+          },
+          "interior": {
+            "accuracy_cm": 1.5220492503263785,
+            "accuracy_deg": 1.257619763983346,
+            "points": 4
+          }
+        }
+      }
+    },
+    {
+      "config": "equator+per-eye+rigid+affine+blink",
+      "summary": {
+        "accuracy_cm": 2.800001820985131,
+        "accuracy_deg": 2.271414571532269,
+        "median_deg": 1.91867456069998,
+        "precision_sd_deg": 0.5798132542326935,
+        "eye_distance_cm": 69.08877249043665,
+        "points": "12/12",
+        "by_region": {
+          "corner": {
+            "accuracy_cm": 3.1785605348469135,
+            "accuracy_deg": 2.5560868766115985,
+            "points": 4
+          },
+          "edge": {
+            "accuracy_cm": 3.7037599052434254,
+            "accuracy_deg": 3.0042467617420257,
+            "points": 4
+          },
+          "interior": {
+            "accuracy_cm": 1.517685022865055,
+            "accuracy_deg": 1.2539100762431843,
+            "points": 4
+          }
+        }
+      }
+    },
+    {
+      "config": "quad",
+      "summary": {
+        "accuracy_cm": 2.9000060628860083,
+        "accuracy_deg": 2.3482539354338687,
+        "median_deg": 2.0519404635662872,
+        "precision_sd_deg": 0.6419451130229835,
+        "eye_distance_cm": 69.08877054065532,
+        "points": "12/12",
+        "by_region": {
+          "corner": {
+            "accuracy_cm": 3.228287601104536,
+            "accuracy_deg": 2.5875749621787674,
+            "points": 4
+          },
+          "edge": {
+            "accuracy_cm": 3.569292480601704,
+            "accuracy_deg": 2.8852273472428616,
+            "points": 4
+          },
+          "interior": {
+            "accuracy_cm": 1.9024381069517833,
+            "accuracy_deg": 1.5719594968799773,
+            "points": 4
+          }
+        }
+      }
+    },
+    {
+      "config": "equator+per-eye+rigid+quad+blink",
+      "summary": {
+        "accuracy_cm": 2.713696564879985,
+        "accuracy_deg": 2.1922393457951226,
+        "median_deg": 1.8143860816889905,
+        "precision_sd_deg": 0.6216942752046558,
+        "eye_distance_cm": 69.08877249043665,
+        "points": "12/12",
+        "by_region": {
+          "corner": {
+            "accuracy_cm": 3.0080384397975637,
+            "accuracy_deg": 2.4049038833393883,
+            "points": 4
+          },
+          "edge": {
+            "accuracy_cm": 3.471894453954747,
+            "accuracy_deg": 2.799666226423148,
+            "points": 4
+          },
+          "interior": {
+            "accuracy_cm": 1.6611568008876452,
+            "accuracy_deg": 1.3721479276228306,
+            "points": 4
+          }
+        }
+      }
+    },
+    {
+      "config": "quad+headcomp",
+      "summary": {
+        "accuracy_cm": 2.7243329617026446,
+        "accuracy_deg": 2.2024188068041397,
+        "median_deg": 2.30686995927349,
+        "precision_sd_deg": 0.6382468734406815,
+        "eye_distance_cm": 69.08877054065532,
+        "points": "12/12",
+        "by_region": {
+          "corner": {
+            "accuracy_cm": 2.6467056530944775,
+            "accuracy_deg": 2.1083906904075143,
+            "points": 4
+          },
+          "edge": {
+            "accuracy_cm": 3.3191477589889966,
+            "accuracy_deg": 2.679815763521746,
+            "points": 4
+          },
+          "interior": {
+            "accuracy_cm": 2.2071454730244597,
+            "accuracy_deg": 1.8190499664831594,
+            "points": 4
+          }
+        }
+      }
+    },
+    {
+      "config": "refined+quad",
+      "summary": {
+        "accuracy_cm": 5.780108420667104,
+        "accuracy_deg": 4.720797770916797,
+        "median_deg": 4.037411883220951,
+        "precision_sd_deg": 3.221249659117479,
+        "eye_distance_cm": 69.08877054065532,
+        "points": "12/12",
+        "by_region": {
+          "corner": {
+            "accuracy_cm": 5.808221491538635,
+            "accuracy_deg": 4.7020208399155194,
+            "points": 4
+          },
+          "edge": {
+            "accuracy_cm": 6.283192543715466,
+            "accuracy_deg": 5.121636120510287,
+            "points": 4
+          },
+          "interior": {
+            "accuracy_cm": 5.248911226747209,
+            "accuracy_deg": 4.338736352324585,
+            "points": 4
+          }
+        }
+      }
+    },
+    {
+      "config": "refined+quad+headcomp",
+      "summary": {
+        "accuracy_cm": 8.41316653452269,
+        "accuracy_deg": 6.863249103827702,
+        "median_deg": 6.4399399224496445,
+        "precision_sd_deg": 3.2096784672305514,
+        "eye_distance_cm": 69.08877054065532,
+        "points": "12/12",
+        "by_region": {
+          "corner": {
+            "accuracy_cm": 8.047427841264719,
+            "accuracy_deg": 6.502060265413121,
+            "points": 4
+          },
+          "edge": {
+            "accuracy_cm": 9.260781868975192,
+            "accuracy_deg": 7.539420276958743,
+            "points": 4
+          },
+          "interior": {
+            "accuracy_cm": 7.9312898933281595,
+            "accuracy_deg": 6.548266769111239,
+            "points": 4
+          }
+        }
+      }
+    }
+  ]
+}

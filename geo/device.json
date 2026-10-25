@@ -1,0 +1,79 @@
+{
+  "display": {
+    "builtin": true,
+    "panel_mm": [
+      290.5680890213191,
+      188.968090547198
+    ],
+    "frame_pt": [
+      1470.0,
+      956.0
+    ],
+    "pixels": [
+      2940,
+      1912
+    ],
+    "backing_scale": 2.0,
+    "safe_area_top_pt": 32.0,
+    "mm_per_pt": 0.19766536668116946,
+    "px_per_cm_pt": 50.59055194089622,
+    "usable_pt": [
+      1470.0,
+      924.0
+    ],
+    "usable_cm": [
+      29.056808902131912,
+      18.26427988134006
+    ]
+  },
+  "cameras": [
+    {
+      "name": "FaceTime HD Camera",
+      "model_id": "FaceTime HD Camera",
+      "unique_id": "FDF90FEB-59E5-4FCF-AABD-DA03C4E19BFB",
+      "formats": [
+        {
+          "width": 640,
+          "height": 480,
+          "hfov_deg": 0.0
+        },
+        {
+          "width": 1080,
+          "height": 1920,
+          "hfov_deg": 0.0
+        },
+        {
+          "width": 1280,
+          "height": 720,
+          "hfov_deg": 0.0
+        },
+        {
+          "width": 1328,
+          "height": 1760,
+          "hfov_deg": 0.0
+        },
+        {
+          "width": 1552,
+          "height": 1552,
+          "hfov_deg": 0.0
+        },
+        {
+          "width": 1760,
+          "height": 1328,
+          "hfov_deg": 0.0
+        },
+        {
+          "width": 1920,
+          "height": 1080,
+          "hfov_deg": 0.0
+        }
+      ]
+    }
+  ],
+  "camera_placement": {
+    "cam_to_top_cm": 0.316,
+    "cam_x_offset_cm": 0.0,
+    "note": "estimated from the notch; measure to refine"
+  },
+  "camera_hfov_deg": null
+}

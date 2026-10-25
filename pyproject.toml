@@ -28,6 +28,8 @@ control = [
     "pyautogui>=0.9.54",
     "sounddevice>=0.5",
     "faster-whisper>=1.1",
+    "websockets>=13",  # Cartesia streaming speech-to-text
+    "certifi",
 ]
 
 [project.scripts]

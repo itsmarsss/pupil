@@ -1,8 +1,14 @@
-"""Always-on mic -> energy-based utterance detection -> on-device Whisper transcript (with start/end times)."""
+"""Always-on mic -> transcript with start/end times.
+
+CartesiaVoice streams to Cartesia Ink-2, which transcribes while you speak and detects the end of the turn itself.
+Voice is the on-device fallback: energy-based utterance detection, then Whisper.
+"""
 
 import ctypes
 import ctypes.util
+import json
 import queue
+import urllib.parse
 import threading
 import time
 from collections import deque
@@ -143,6 +149,119 @@ class Voice(threading.Thread):
             if text.lower().strip(" .!?,") not in HALLUCINATIONS:
                 self.on_utterance(text, started, ended)
             self.on_state("idle")
+
+
+CARTESIA_URL = "wss://api.cartesia.ai/stt/turns/websocket"
+CARTESIA_VERSION = "2026-03-01"
+CHUNK_S = 0.1  # Cartesia recommends ~100 ms audio chunks
+SPEECH_LEAD_S = 0.3  # turn.start arrives a little after speech begins
+MAX_FAILURES = 3  # consecutive connection failures before falling back to Whisper
+# Phrases the recognizer should expect (Cartesia keyterms: up to 100 terms, 1200 characters). Running and installed
+# app names fill the rest, so "open Blender" isn't heard as "open blunder".
+KEYTERMS = [
+    "click", "double click", "right click", "scroll up", "scroll down", "scroll left", "scroll right", "a lot",
+    "a little", "go back", "go forward", "new tab", "close tab", "reopen tab", "next tab", "previous tab",
+    "new window", "full screen", "zoom in", "zoom out", "select all", "undo", "redo", "copy", "paste", "refresh",
+    "minimize", "Spotlight", "Mission Control", "stop", "cancel", "never mind", "confirm", "calibrate", "type",
+]
+
+
+def keyterms():
+    from .commands import available_apps  # AppKit; running apps come first
+
+    terms = list(dict.fromkeys(KEYTERMS + ([config.WAKE_WORD] if config.WAKE_WORD else [])))
+    for name in available_apps():
+        if len(terms) >= 100:
+            break
+        if sum(map(len, terms)) + len(name) <= 1200:
+            terms.append(name)
+    return terms
+
+
+class CartesiaVoice(Voice):
+    """Streams the mic to Cartesia Ink-2 (same callbacks as Voice). No local silence wait: Ink-2 sends the final
+    transcript as soon as it decides the turn is over. Falls back to on-device Whisper if Cartesia is unreachable."""
+
+    def run(self):
+        import ssl
+
+        import certifi  # python.org builds ship without CA certificates
+        from websockets.sync.client import connect
+
+        tls = ssl.create_default_context(cafile=certifi.where())
+        self._failures = 0
+        while self._failures < MAX_FAILURES:
+            sd._terminate()  # see Voice.run: pick up newly connected mics
+            sd._initialize()
+            mic, name = pick_mic()
+            watched = default_input_id()
+            print(f"Microphone: {name} (Cartesia {config.CARTESIA_MODEL})", flush=True)
+            self.on_device(name)
+            try:
+                with connect(self._url(), additional_headers={"X-API-Key": config.CARTESIA_API_KEY,
+                                                              "Cartesia-Version": CARTESIA_VERSION},
+                             ssl=tls, open_timeout=5) as ws:
+                    self._stream(ws, mic, watched)
+            except Exception as e:  # network down, bad key, mic vanished: retry, then fall back
+                self._failures += 1
+                print(f"Cartesia error ({e}); retrying...", flush=True)
+                time.sleep(1)
+        print("Cartesia unavailable; switching to on-device Whisper.", flush=True)
+        super().run()
+
+    def _url(self):
+        params = [("model", config.CARTESIA_MODEL), ("encoding", "pcm_s16le"), ("sample_rate", str(RATE)),
+                  ("turn_end_threshold", config.CARTESIA_END_THRESHOLD)]
+        params += [("keyterm", term) for term in keyterms()]
+        return f"{CARTESIA_URL}?{urllib.parse.urlencode(params, quote_via=urllib.parse.quote)}"
+
+    def _stream(self, ws, mic, watched):
+        """Send audio and handle turn events until the connection drops or the default mic changes."""
+        blocks, stop = queue.Queue(), threading.Event()
+
+        def send_audio():  # off the audio callback, which must never block on the network
+            while not stop.is_set():
+                try:
+                    ws.send(blocks.get(timeout=0.5))
+                except queue.Empty:
+                    continue
+                except Exception:
+                    stop.set()
+
+        with sd.InputStream(device=mic, samplerate=RATE, channels=1, dtype="int16", blocksize=int(RATE * CHUNK_S),
+                            callback=lambda data, *_: blocks.put(data.tobytes())):
+            threading.Thread(target=send_audio, daemon=True).start()
+            self.on_state("idle")
+            started = last_word = None
+            try:
+                while not stop.is_set():
+                    try:
+                        msg = json.loads(ws.recv(timeout=1.0))
+                    except TimeoutError:
+                        if started is None and default_input_id() != watched:
+                            return
+                        continue
+                    kind = msg.get("type")
+                    if kind == "connected":
+                        self._failures = 0
+                    elif kind == "turn.start":
+                        started, last_word = time.time() - SPEECH_LEAD_S, time.time()
+                        self.on_state("listening")
+                    elif kind == "turn.update":
+                        last_word = time.time()
+                    elif kind == "turn.end":
+                        text = msg.get("transcript", "").strip()
+                        now = time.time()
+                        if text:
+                            self.on_utterance(text, started or now - 1.0, last_word or now)
+                        started = last_word = None
+                        self.on_state("idle")
+                    elif kind == "error":
+                        raise RuntimeError(f"{msg.get('error_code', 'error')}: {msg.get('message')}")
+            finally:
+                stop.set()
+        if stop.is_set():
+            raise ConnectionError("audio upload stopped")
 
 
 class TypedInput(threading.Thread):
