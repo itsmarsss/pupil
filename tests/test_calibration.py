@@ -142,3 +142,29 @@ def test_each_camera_gets_its_own_profile(tmp_path, monkeypatch):
     (tmp_path / "default" / "meta.json").write_text(json.dumps({"camera": "FaceTime HD Camera"}))
     assert flows._profile_name_for("FaceTime HD Camera") == "default"
     assert flows._profile_name_for("OBS Virtual Camera") == "default-obs-virtual-camera"
+
+
+def test_profile_save_is_atomic_and_damaged_files_load_as_none(tmp_path, monkeypatch):
+    import numpy as np
+    import pytest
+
+    from gaze.calibration import profile as profile_mod
+    from gaze.calibration.profile import Profile, ProfileMeta
+
+    p = Profile(ProfileMeta("p", "m", "cam", (100.0, 100.0)), 4)
+    p.add(np.ones((3, 4), np.float32), (10.0, 20.0), profile_mod.EXPLICIT)
+    p.save(tmp_path)
+    good = (tmp_path / "p" / "samples.npz").read_bytes()
+
+    def disk_full(*a, **k):
+        raise OSError(28, "No space left on device")
+
+    monkeypatch.setattr(profile_mod.np, "savez_compressed", disk_full)
+    with pytest.raises(OSError):
+        p.save(tmp_path)
+    assert (tmp_path / "p" / "samples.npz").read_bytes() == good  # the old profile survives
+    assert not list((tmp_path / "p").glob("*.tmp"))
+    monkeypatch.undo()
+
+    (tmp_path / "p" / "samples.npz").write_bytes(b"PK\x05\x06" + b"\0" * 18)  # an empty zip, as the full disk left
+    assert Profile.load("p", tmp_path) is None

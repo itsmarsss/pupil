@@ -105,7 +105,7 @@ class GazeApp:
         NSTimer.scheduledTimerWithTimeInterval_repeats_block_(1.0, True, lambda _t: None)
         NSEvent.addGlobalMonitorForEventsMatchingMask_handler_(NSEventMaskLeftMouseDown, self._on_click)
         # start the launch flow once the run loop is going
-        NSTimer.scheduledTimerWithTimeInterval_repeats_block_(0.1, False, lambda _t: self.flows.launch(o["recalibrate"]))
+        NSTimer.scheduledTimerWithTimeInterval_repeats_block_(0.1, False, lambda _t: self._launch())
         # Python only runs signal handlers while the main thread executes Python code; the empty 1 s timer
         # guarantees that, so Ctrl+C and kill quit cleanly.
         for sig in (signal.SIGINT, signal.SIGTERM):
@@ -114,6 +114,15 @@ class GazeApp:
             AppHelper.runEventLoop()
         finally:
             self._shutdown()
+
+    def _launch(self) -> None:
+        """The launch flow; an exception in an NSTimer block vanishes silently, which once left the app sitting
+        uncalibrated with no screen up, so log it and fall back to a fresh calibration."""
+        try:
+            self.flows.launch(self.options["recalibrate"])
+        except Exception:
+            log.exception("launch failed; starting a fresh calibration")
+            self.flows.launch(True)
 
     def quit(self) -> None:
         self._shutdown()

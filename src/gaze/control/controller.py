@@ -38,6 +38,7 @@ DEFAULT_SETTLE_S = 0.5
 class VoiceController:
     def __init__(self, gaze, typed: bool = False):
         """gaze: control.sources.TrackerGaze (eyes) or MouseGaze."""
+        self._ep: dict | None = None  # episode the worker is handling (one at a time); first: _status reads it
         self.gaze = gaze
         self.screen = Screen()
         self.hud = Hud()
@@ -56,7 +57,6 @@ class VoiceController:
         self._typed = typed
         self.voice: Voice | None = None  # the mic thread (None when typing)
         self.enabled = True
-        self._ep: dict | None = None  # episode the worker is handling (one at a time)
         self.lips = LipGate(config.LIP_GATE) if gaze.calibratable and config.LIP_GATE != "off" else None
         gaze.lips = self.lips
         self._lip_state = None  # last lip-gate state sent to the dashboard

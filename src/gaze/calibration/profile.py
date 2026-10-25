@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import threading
 import time
 from dataclasses import asdict, dataclass, field
@@ -229,8 +230,10 @@ class Profile:
         d.mkdir(parents=True, exist_ok=True)
         with self._lock:
             arrays = dict(X=self.X, M=self.M, Y=self.Y, groups=self.groups, subs=self.subs, sources=self.sources, t=self.t)
-        np.savez_compressed(d / "samples.npz", **arrays)
-        (d / "meta.json").write_text(json.dumps(asdict(self.meta), indent=2))
+        # Write beside the old files and swap them in only once complete: a full disk mid-save once left an
+        # empty samples.npz in place of a good profile.
+        _replace(d / "samples.npz", lambda f: np.savez_compressed(f, **arrays))
+        _replace(d / "meta.json", lambda f: f.write(json.dumps(asdict(self.meta), indent=2).encode()))
         return d
 
     @classmethod
@@ -241,8 +244,11 @@ class Profile:
             raw.setdefault("features", "")  # profiles from before head-pose features
             meta = ProfileMeta(**raw)
             data = np.load(d / "samples.npz")
-        except (FileNotFoundError, ValueError, TypeError) as e:
-            log.info("no usable profile %r: %s", name, e)
+            missing = {"X", "Y", "groups", "sources", "t"} - set(data.files)
+            if missing:
+                raise KeyError(f"samples.npz lacks {sorted(missing)}")
+        except (OSError, ValueError, TypeError, KeyError) as e:  # missing, or damaged (e.g. an interrupted save)
+            log.warning("no usable profile %r: %s", name, e)
             return None
         p = cls(meta, data["X"].shape[1])
         p.X, p.Y, p.groups, p.sources, p.t = data["X"], data["Y"], data["groups"], data["sources"], data["t"]
@@ -253,3 +259,17 @@ class Profile:
         if meta.features == FEATURE_SET:
             p.fit()
         return p
+
+
+def _replace(path: Path, write) -> None:
+    """Atomically replace `path` with what `write(file)` writes; on any failure the old file stays."""
+    tmp = path.with_name(path.name + ".tmp")
+    try:
+        with open(tmp, "wb") as f:
+            write(f)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp, path)
+    except BaseException:
+        tmp.unlink(missing_ok=True)
+        raise
