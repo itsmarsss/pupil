@@ -99,6 +99,9 @@ class Hud:
     def show(self) -> None:
         self._win.orderFrontRegardless()
 
+    def hide(self) -> None:
+        self._win.orderOut_(None)
+
     def line(self) -> str:
         mic = f"mic: {self.mic_device} · {self.mic}" if self.mic_device else f"mic: {self.mic}"
         parts = [self.warning, mic, f'heard: "{self.heard}"' if self.heard else "", self.status]

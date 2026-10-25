@@ -8,21 +8,24 @@ from __future__ import annotations
 import json
 import logging
 import signal
+import threading
 import time
 from pathlib import Path
 
 import numpy as np
-from AppKit import NSApplication, NSApplicationActivationPolicyAccessory, NSEvent, NSEventMaskLeftMouseDown, NSTimer
+from AppKit import (NSURL, NSApplication, NSApplicationActivationPolicyAccessory, NSEvent, NSEventMaskLeftMouseDown,
+                    NSTimer, NSWorkspace)
 from PyObjCTools import AppHelper
 
 from ..calibration.profile import CLICK
 from ..calibration.targets import TargetTiming
+from ..capture.camera import CameraSource, list_cameras
 from ..core.lid import LidMonitor
 from ..core.paths import APP_SUPPORT
 from ..eval.session import SessionWriter
 from ..tracker import Tracker
 from .flows import MOTION_TIMING, Flows
-from .menu import MenuBar
+from .menu import SEPARATOR, Action, Choice, Header, MenuBar, Toggle
 from .overlay import GazeRing
 from .services import ClickLearner, Recording, SnapService, VoiceLog
 from .target_screen import TargetScreen
@@ -31,6 +34,7 @@ log = logging.getLogger(__name__)
 
 LID_MOVED_DEG = 4.0  # hinge change since calibration that flags the fit as suspect
 SMOOTHING_ORDER = ["off", "light", "medium", "strong"]
+DASHBOARD_PORT = 8766
 
 
 class GazeApp:
@@ -70,6 +74,7 @@ class GazeApp:
         self.ring: GazeRing | None = None
         self.menu: MenuBar | None = None
         self._last_valid_ns = 0
+        self._switching_camera = False
         self._shut_down = False
 
     # ---- lifecycle --------------------------------------------------------------------
@@ -85,10 +90,9 @@ class GazeApp:
         self.flows.pending_measure = o["measure"]
         self._build_menu()
         if o["snap"]:
-            self._toggle_snap()
+            self.snapping.toggle()
         if o["record_path"] is not None:
             self.recording.start(o["record_path"])
-            self.menu.set_checked("record", True)
         if o["dashboard_port"] is not None:
             self._start_dashboard(o["dashboard_port"])
         if o["publish"]:
@@ -98,11 +102,11 @@ class GazeApp:
         self.tracker.start()
         self.lid.start()
         NSTimer.scheduledTimerWithTimeInterval_repeats_block_(1 / 60, True, self._tick)
-        NSTimer.scheduledTimerWithTimeInterval_repeats_block_(1.0, True, self._update_status)
+        NSTimer.scheduledTimerWithTimeInterval_repeats_block_(1.0, True, lambda _t: None)
         NSEvent.addGlobalMonitorForEventsMatchingMask_handler_(NSEventMaskLeftMouseDown, self._on_click)
         # start the launch flow once the run loop is going
         NSTimer.scheduledTimerWithTimeInterval_repeats_block_(0.1, False, lambda _t: self.flows.launch(o["recalibrate"]))
-        # Python only runs signal handlers while the main thread executes Python code; the 1 s status timer
+        # Python only runs signal handlers while the main thread executes Python code; the empty 1 s timer
         # guarantees that, so Ctrl+C and kill quit cleanly.
         for sig in (signal.SIGINT, signal.SIGTERM):
             signal.signal(sig, lambda *_: self.quit())
@@ -260,24 +264,49 @@ class GazeApp:
 
     # ---- menu ------------------------------------------------------------------------
     def _build_menu(self) -> None:
-        f = self.flows
-        self.menu = MenuBar([
-            ("calibrate", "Recalibrate", f.calibrate),
-            ("recentre", "Re-centre (1 dot)", f.recentre),
-            ("validate", "Check accuracy", lambda: f.validate(9)),
-            ("measure", "Measure (head still + moving)", f.measure),
-            ("overlay", "Show gaze ring", self._toggle_overlay),
-            ("smoothing", f"Smoothing: {self.tracker.smoothing}", self._cycle_smoothing),
-            ("clicks", "Learn from clicks", self._toggle_clicks),
-            ("snap", "Snap to buttons", self._toggle_snap),
-            ("record", "Record gaze", self._toggle_recording),
-            ("-", "", None),
-            ("quit", "Quit", self.quit),
-        ])
-        self.menu.set_checked("overlay", self.overlay_on)
-        self.menu.set_checked("clicks", self.clicks.enabled)
+        self.menu = MenuBar(self._menu_items, status=self._status_line)
 
-    def _update_status(self, _timer) -> None:
+    def _menu_items(self) -> list:
+        """The ◉ menu, rebuilt each time it opens."""
+        f = self.flows
+        idle = lambda: not f.busy and not self._switching_camera  # noqa: E731
+        items = [
+            Header("Calibration"),
+            Action("Recalibrate", f.calibrate, idle),
+            Action("Re-centre (1 dot)", f.recentre, idle),
+            Action("Check accuracy", lambda: f.validate(9), idle),
+            Action("Measure (head still + moving)", f.measure, idle),
+            SEPARATOR,
+            Header("View"),
+            Toggle("Show gaze ring", lambda: self.overlay_on, self._toggle_overlay),
+            Choice("Smoothing", lambda: [(name.capitalize(), name == self.tracker.smoothing,
+                                          lambda name=name: self.tracker.set_smoothing(name))
+                                         for name in SMOOTHING_ORDER]),
+            Toggle("Snap to buttons", lambda: self.snapping.enabled, self.snapping.toggle),
+            Action("Open dashboard", self._open_dashboard),
+            SEPARATOR,
+            Header("Input"),
+            Choice("Camera", self._camera_options),
+        ]
+        if not self.options["voice_typed"]:
+            items.append(Toggle("Voice control", lambda: self.controller is not None and self.controller.enabled,
+                                self._toggle_voice))
+        voice = self.controller.voice if self.controller is not None else None
+        if voice is not None and self.controller.enabled:
+            items.append(Choice("Microphone", lambda: self._mic_options(voice)))
+        items += [
+            SEPARATOR,
+            Header("Learning & data"),
+            Toggle("Learn from clicks", lambda: self.clicks.enabled, self._toggle_clicks),
+            Toggle("Record gaze", lambda: self.recording.on, self.recording.toggle),
+            SEPARATOR,
+            Action("Quit", self.quit),
+        ]
+        return items
+
+    def _status_line(self) -> str:
+        if self._switching_camera:
+            return "Switching camera…"
         p = self.tracker.last_point
         parts = [(p.state.value.replace("_", " ") if p is not None else "starting").capitalize(),
                  f"{self.tracker.fps:.0f} fps", f"{self.tracker.distance_mm / 10:.0f} cm"]
@@ -289,23 +318,74 @@ class GazeApp:
             parts.append(f"last check {last.accuracy_deg:.1f}°")
         if self.lid_moved:
             parts.append(f"lid moved {self.lid_moved:+.0f}° since calibration: check accuracy")
-        self.menu.set_status("  ·  ".join(parts))
+        return "  ·  ".join(parts)
 
     def _toggle_overlay(self) -> None:
         self.overlay_on = not self.overlay_on
-        self.menu.set_checked("overlay", self.overlay_on)
 
     def _cycle_smoothing(self) -> None:
         name = SMOOTHING_ORDER[(SMOOTHING_ORDER.index(self.tracker.smoothing) + 1) % len(SMOOTHING_ORDER)]
         self.tracker.set_smoothing(name)
-        self.menu.set_title("smoothing", f"Smoothing: {name}")
 
     def _toggle_clicks(self) -> None:
         self.clicks.enabled = not self.clicks.enabled
-        self.menu.set_checked("clicks", self.clicks.enabled)
 
-    def _toggle_snap(self) -> None:
-        self.menu.set_checked("snap", self.snapping.toggle())
+    def _open_dashboard(self) -> None:
+        if self.dashboard is None:
+            self._start_dashboard(self.options["dashboard_port"] or DASHBOARD_PORT)
+        NSWorkspace.sharedWorkspace().openURL_(NSURL.URLWithString_(self.dashboard.url))
 
-    def _toggle_recording(self) -> None:
-        self.menu.set_checked("record", self.recording.toggle())
+    # ---- inputs --------------------------------------------------------------------------
+    def _camera_options(self) -> list:
+        source = self.tracker.source
+        if not isinstance(source, CameraSource):  # replaying a file
+            return [(source.source_id, True, lambda: None)]
+        return [(name, name == source.source_id, lambda i=i: self._switch_camera(i))
+                for i, name in enumerate(list_cameras())]
+
+    def _switch_camera(self, index: int) -> None:
+        """Reopen the tracker on another camera (off the main thread: opening one takes a second), then load
+        that camera's calibration or start one; each camera keeps its own profile."""
+        old = self.tracker.source
+        if self.flows.busy or self._switching_camera or list_cameras()[index] == old.source_id:
+            return
+        prof = self.tracker.profile
+        if prof is not None and prof.calibrated:
+            prof.save()
+        self._switching_camera = True
+
+        def work():
+            try:
+                self.tracker.switch_source(CameraSource(mode=old.mode.name, camera=index))
+                ok = True
+            except RuntimeError as e:
+                log.error("%s", e)
+                self.tracker.switch_source(old)  # it was released cleanly, so it reopens
+                ok = False
+            AppHelper.callAfter(done, ok)
+
+        def done(ok):
+            self._switching_camera = False
+            log.info("camera: %s", self.tracker.source.source_id)
+            if ok:
+                self.flows.launch(False)
+
+        threading.Thread(target=work, name="switch-camera", daemon=True).start()
+
+    def _mic_options(self, voice) -> list:
+        from ..control.voice import input_devices  # voice extras are only there when voice control is
+
+        try:
+            names = input_devices()
+        except Exception:  # PortAudio may be re-initialising on the voice thread
+            names = [voice.device] if voice.device else []
+        follow = voice.choice is None
+        default = f"System default ({voice.device})" if follow and voice.device else "System default"
+        return [(default, follow, lambda: voice.use(None))] + [
+            (name, not follow and name == voice.device, lambda name=name: voice.use(name)) for name in names]
+
+    def _toggle_voice(self) -> None:
+        if self.controller is None:
+            self._start_voice(typed=False)
+        else:
+            self.controller.set_enabled(not self.controller.enabled)

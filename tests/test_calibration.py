@@ -126,3 +126,19 @@ def test_recentre_shifts_predictions_onto_the_dot():
     assert np.allclose(p.predict(X[0]), before - [40, -25])
     with pytest.raises(ValueError):
         p.recentre(np.tile(before + [900.0, 0.0], (5, 1)), tuple(before))  # too far: recalibrate instead
+
+
+def test_each_camera_gets_its_own_profile(tmp_path, monkeypatch):
+    import json
+
+    from gaze.calibration import profile as profile_mod
+    from gaze.ui.flows import Flows
+
+    monkeypatch.setattr(profile_mod, "profiles_dir", lambda: tmp_path)
+    flows = Flows.__new__(Flows)  # only the naming logic, no UI
+    flows.base_profile = "default"
+    assert flows._profile_name_for("FaceTime HD Camera") == "default"  # nothing saved yet: base name
+    (tmp_path / "default").mkdir()
+    (tmp_path / "default" / "meta.json").write_text(json.dumps({"camera": "FaceTime HD Camera"}))
+    assert flows._profile_name_for("FaceTime HD Camera") == "default"
+    assert flows._profile_name_for("OBS Virtual Camera") == "default-obs-virtual-camera"

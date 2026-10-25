@@ -44,6 +44,8 @@ class VoiceController:
         self.snap = (None, [])  # (target, candidates) for the live gaze, refreshed by _snap_loop
         self.commands: queue.Queue = queue.Queue()  # commands run one at a time, off the UI thread
         self._typed = typed
+        self.voice: Voice | None = None  # the mic thread (None when typing)
+        self.enabled = True
 
     def start(self) -> None:
         threading.Thread(target=self._snap_loop, name="snap", daemon=True).start()
@@ -52,15 +54,30 @@ class VoiceController:
             TypedInput(self._on_utterance).start()
             self.hud.mic = "typing in terminal"
         else:
-            Voice(self._on_utterance, self._on_mic_state, lambda name: self.events.put(("mic_device", name))).start()
+            self.voice = Voice(self._on_utterance, self._on_mic_state, lambda name: self.events.put(("mic_device", name)))
+            self.voice.start()
             self.hud.mic = "loading"
         if not macos.has_accessibility():
             self.hud.status = "Grant Accessibility permission to your terminal (System Settings > Privacy & Security)."
         self.hud.show()
 
+    def set_enabled(self, on: bool) -> None:
+        """Pause or resume: off releases the mic, hides the HUD and stops looking for targets."""
+        self.enabled = on
+        if self.voice is not None:
+            self.voice.set_enabled(on)
+        if on:
+            self.hud.show()
+        else:
+            self.agent.cancel()
+            self._set_pending(None)
+            self.hud.hide()
+
     # --- callbacks from the voice threads ---
 
     def _on_utterance(self, text, t0, t1):
+        if not self.enabled:
+            return
         print(f"[{time.strftime('%H:%M:%S')}] heard: \"{text}\"", flush=True)
         self.gaze.report("heard", text)
         self.events.put(("speech", (text, t0, t1)))
@@ -109,6 +126,10 @@ class VoiceController:
 
     def _snap_loop(self):
         while True:
+            if not self.enabled:
+                self.snap = (None, [])
+                time.sleep(0.5)
+                continue
             point = self.gaze.point()
             self.snap = snapping.snap(*point, self.screen.w_pt, self.screen.h_pt) if point else (None, [])
             time.sleep(0.15)

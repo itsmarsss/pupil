@@ -53,11 +53,20 @@ def find_mic(name):
     return None
 
 
-def pick_mic():
-    """(device index, name): GAZE_MIC if set, else the system default input, unless that's a silent virtual
-    device, in which case the built-in mic."""
-    if config.MIC_NAME:
-        index = find_mic(config.MIC_NAME)
+def input_devices():
+    """Names of the microphones PortAudio knows about (refreshed whenever the voice thread switches mics)."""
+    names = []
+    for device in sd.query_devices():
+        if device["max_input_channels"] > 0 and device["name"] not in names:
+            names.append(device["name"])
+    return names
+
+
+def pick_mic(preferred=None):
+    """(device index, name): `preferred` if it's connected, else the system default input, unless that's a
+    silent virtual device, in which case the built-in mic."""
+    if preferred:
+        index = find_mic(preferred)
         if index is not None:
             return index, sd.query_devices(index)["name"]
     try:
@@ -78,18 +87,40 @@ class Voice(threading.Thread):
         self.on_utterance = on_utterance
         self.on_state = on_state
         self.on_device = on_device
+        self.choice = config.MIC_NAME or None  # None: follow the system default input
+        self.device = ""  # name of the mic in use
+        self._restart = threading.Event()  # reopen the stream (another mic chosen, or turned on/off)
+        self._enabled = threading.Event()
+        self._enabled.set()
+
+    def use(self, name):
+        """Switch to the mic named `name`, or None to follow the system default (callable from any thread)."""
+        self.choice = name
+        self._restart.set()
+
+    def set_enabled(self, on):
+        """Off closes the stream, so macOS shows the mic as unused; Whisper stays loaded."""
+        (self._enabled.set if on else self._enabled.clear)()
+        self._restart.set()
 
     def run(self):
         from faster_whisper import WhisperModel  # slow import; keep it off the UI thread
 
         model = WhisperModel(config.WHISPER_MODEL, device="cpu", compute_type="int8")
         while True:
+            if not self._enabled.is_set():
+                self.device = ""
+                self.on_device("")
+                self.on_state("off")
+                self._enabled.wait()
+            self._restart.clear()
             # PortAudio caches the device list at startup; re-initialize so newly connected devices show up.
             sd._terminate()
             sd._initialize()
-            mic, name = pick_mic()
-            watched = default_input_id()
+            mic, name = pick_mic(self.choice)
+            watched = default_input_id() if self.choice is None else None  # only follow the default when unset
             print(f"Microphone: {name}", flush=True)
+            self.device = name
             self.on_device(name)
             blocks = queue.Queue()
             try:
@@ -103,13 +134,16 @@ class Voice(threading.Thread):
                 time.sleep(1)
 
     def _listen(self, model, blocks, watched):
-        """Detect utterances until the system default input changes (then return so run() switches mics)."""
+        """Detect utterances until the system default input changes or a restart is asked for (then return so
+        run() switches mics)."""
         noise = 0.01
         preroll = deque(maxlen=10)
         speaking, voiced, silence, buf, started = False, 0, 0, [], 0.0
         last_check = time.time()
         while True:
-            if not speaking and time.time() - last_check > 1.0:
+            if self._restart.is_set():
+                return
+            if watched is not None and not speaking and time.time() - last_check > 1.0:
                 last_check = time.time()
                 if default_input_id() != watched:
                     return

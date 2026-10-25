@@ -216,6 +216,14 @@ class Profile:
     def path_for(name: str, root: Path | None = None) -> Path:
         return (root or profiles_dir()) / name
 
+    @classmethod
+    def saved_camera(cls, name: str, root: Path | None = None) -> str | None:
+        """Which camera a saved profile was calibrated with, without loading its samples."""
+        try:
+            return json.loads((cls.path_for(name, root) / "meta.json").read_text()).get("camera")
+        except (FileNotFoundError, ValueError):
+            return None
+
     def save(self, root: Path | None = None) -> Path:
         d = self.path_for(self.meta.name, root)
         d.mkdir(parents=True, exist_ok=True)

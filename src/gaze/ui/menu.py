@@ -1,55 +1,116 @@
-"""The ◉ menu-bar item: a disabled status line, then actions."""
+"""The ◉ menu-bar item: a status line, then sections of actions, toggles and submenus.
+
+Items are declared as data (`Action`, `Toggle`, `Choice`, `Header`, `SEPARATOR`) and the whole menu is rebuilt
+each time it opens, so checkmarks, titles and device lists are always current.
+"""
 from __future__ import annotations
 
-from typing import Callable
+from dataclasses import dataclass
+from typing import Callable, Union
 
 import objc
 from AppKit import NSMenu, NSMenuItem, NSObject, NSStatusBar, NSVariableStatusItemLength
 
 
-class _MenuTarget(NSObject):
-    """Bridges menu actions (Objective-C selectors) to Python callables."""
+@dataclass
+class Action:
+    title: str | Callable[[], str]
+    run: Callable[[], None]
+    enabled: Callable[[], bool] = lambda: True
 
-    def initWithActions_(self, actions):
-        self = objc.super(_MenuTarget, self).init()
+
+@dataclass
+class Toggle:
+    title: str
+    is_on: Callable[[], bool]
+    run: Callable[[], None]
+    enabled: Callable[[], bool] = lambda: True
+
+
+@dataclass
+class Choice:
+    """A submenu of options, one of them checked. `options()` → [(title, selected, run)]."""
+    title: str
+    options: Callable[[], list[tuple[str, bool, Callable[[], None]]]]
+
+
+@dataclass
+class Header:
+    title: str
+
+
+SEPARATOR = None
+Item = Union[Action, Toggle, Choice, Header, None]
+
+
+class _Target(NSObject):
+    """Bridges Objective-C menu callbacks to Python: actions by tag, and rebuilding on open."""
+
+    def initWithOwner_(self, owner):
+        self = objc.super(_Target, self).init()
         if self is not None:
-            self.actions = actions
+            self.owner = owner
         return self
 
     def run_(self, sender):
-        self.actions[sender.tag()]()
+        self.owner._run(sender.tag())
+
+    def menuNeedsUpdate_(self, menu):
+        self.owner._rebuild(menu)
 
 
 class MenuBar:
-    """`items`: (key, title, action) in order; a key of "-" adds a separator."""
-
-    def __init__(self, items: list[tuple[str, str, Callable[[], None] | None]]):
-        actions = [action for key, _, action in items if key != "-"]
-        self._target = _MenuTarget.alloc().initWithActions_(actions)
-        menu = NSMenu.alloc().init()
-        self._status = menu.addItemWithTitle_action_keyEquivalent_("Starting…", None, "")
-        self._status.setEnabled_(False)
-        menu.addItem_(NSMenuItem.separatorItem())
-        self._items: dict[str, NSMenuItem] = {}
-        tag = 0
-        for key, title, _ in items:
-            if key == "-":
-                menu.addItem_(NSMenuItem.separatorItem())
-                continue
-            item = menu.addItemWithTitle_action_keyEquivalent_(title, "run:", "")
-            item.setTarget_(self._target)
-            item.setTag_(tag)
-            self._items[key] = item
-            tag += 1
+    def __init__(self, items: Callable[[], list[Item]], status: Callable[[], str]):
+        """items() is called each time the menu opens, so entries can come and go."""
+        self.items, self.status = items, status
+        self._actions: list[Callable[[], None]] = []
+        self._target = _Target.alloc().initWithOwner_(self)
+        self._menu = NSMenu.alloc().init()
+        self._menu.setDelegate_(self._target)
+        self._menu.setAutoenablesItems_(False)
+        self._rebuild(self._menu)
         self._status_item = NSStatusBar.systemStatusBar().statusItemWithLength_(NSVariableStatusItemLength)
         self._status_item.button().setTitle_("◉")
-        self._status_item.setMenu_(menu)
+        self._status_item.setMenu_(self._menu)
 
-    def set_status(self, text: str) -> None:
-        self._status.setTitle_(text)
+    def _run(self, tag: int) -> None:
+        if 0 <= tag < len(self._actions):
+            self._actions[tag]()
 
-    def set_checked(self, key: str, on: bool) -> None:
-        self._items[key].setState_(1 if on else 0)
+    def _add(self, menu, title: str, run: Callable[[], None] | None, checked: bool | None = None,
+             enabled: bool = True) -> NSMenuItem:
+        item = menu.addItemWithTitle_action_keyEquivalent_(title, "run:" if run else None, "")
+        if run:
+            item.setTarget_(self._target)
+            item.setTag_(len(self._actions))
+            self._actions.append(run)
+        if checked is not None:
+            item.setState_(1 if checked else 0)
+        item.setEnabled_(enabled and run is not None)
+        return item
 
-    def set_title(self, key: str, title: str) -> None:
-        self._items[key].setTitle_(title)
+    def _rebuild(self, menu) -> None:
+        menu.removeAllItems()
+        self._actions = []
+        self._add(menu, self.status(), None)
+        menu.addItem_(NSMenuItem.separatorItem())
+        for item in self.items():
+            if item is SEPARATOR:
+                menu.addItem_(NSMenuItem.separatorItem())
+            elif isinstance(item, Header):
+                if hasattr(NSMenuItem, "sectionHeaderWithTitle_"):  # macOS 14+
+                    menu.addItem_(NSMenuItem.sectionHeaderWithTitle_(item.title))
+                else:
+                    self._add(menu, item.title, None)
+            elif isinstance(item, Action):
+                title = item.title() if callable(item.title) else item.title
+                self._add(menu, title, item.run, enabled=item.enabled())
+            elif isinstance(item, Toggle):
+                self._add(menu, item.title, item.run, checked=item.is_on(), enabled=item.enabled())
+            elif isinstance(item, Choice):
+                parent = menu.addItemWithTitle_action_keyEquivalent_(item.title, None, "")
+                sub = NSMenu.alloc().init()
+                sub.setAutoenablesItems_(False)
+                for title, selected, run in item.options():
+                    self._add(sub, title, run, checked=selected)
+                parent.setSubmenu_(sub)

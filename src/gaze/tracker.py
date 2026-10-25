@@ -80,6 +80,21 @@ class Tracker:
             self._thread = None
         self.source.stop()
 
+    def switch_source(self, source: FrameSource) -> None:
+        """Swap the camera while running (blocks while the new one opens): the old one is released first so
+        the same device can be reopened, and face and filter state start fresh."""
+        running = self._running
+        self.stop()
+        self.source = source
+        self.face_tracker.reset()
+        self._filter.reset()
+        self._fixations.reset()
+        self._last_point = None
+        with self._lock:
+            self._history.clear()
+        if running:
+            self.start()
+
     def add_listener(self, fn: Listener) -> None:
         self._listeners.append(fn)
 

@@ -6,6 +6,7 @@ it shows (`phase`, for saved sessions and the dashboard). Everything runs on the
 from __future__ import annotations
 
 import logging
+import re
 import time
 from pathlib import Path
 from typing import Callable
@@ -39,6 +40,7 @@ class Flows:
         self.tracker, self.targets, self.ring, self.lid = tracker, targets, ring, lid
         self.screen = tracker.screen
         self.profile_name, self.n_targets, self.results_csv = profile_name, n_targets, results_csv
+        self.base_profile = profile_name
         self.quit, self.session_label = quit, session_label
         self.timing = TargetTiming()
         self.busy = False  # a fullscreen screen is up
@@ -112,6 +114,7 @@ class Flows:
         model_id = self.tracker.model.model_id
         camera = self.tracker.source.source_id
         screen_pt = (self.screen.width_pt, self.screen.height_pt)
+        self.profile_name = self._profile_name_for(camera)
         profile = None if force_recalibrate else Profile.load(self.profile_name, plane=self.tracker.plane)
         matches = profile is not None and profile.meta.matches(model_id, camera, screen_pt)
         if matches and profile.calibrated:
@@ -120,9 +123,15 @@ class Flows:
             self.tracker.profile = profile
             self.validate(n=3, launch_check=True)
             return
-        if matches:
-            self.tracker.profile = profile  # keep its click samples
+        self.tracker.profile = profile if matches else None  # a matching one keeps its click samples
         self.intro()
+
+    def _profile_name_for(self, camera: str) -> str:
+        """One profile per camera: the base name belongs to the first camera calibrated, others get their own."""
+        if Profile.saved_camera(self.base_profile) in (None, camera):
+            return self.base_profile
+        slug = re.sub(r"[^a-z0-9]+", "-", camera.lower()).strip("-") or "camera"
+        return f"{self.base_profile}-{slug}"
 
     def intro(self) -> None:
         self._begin()

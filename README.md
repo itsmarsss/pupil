@@ -45,10 +45,12 @@ replayed sessions, or recalibrate.
 **While you work,** clicks are used as extra calibration samples, but only when you were
 already looking near what you clicked.
 
-The ◉ menu-bar item has Recalibrate, Re-centre (1 dot), Check accuracy (9 dots), Measure
-(9 dots head still + 9 moving), and toggles for the ring, smoothing, click learning,
-snapping to buttons and recording. Esc leaves any fullscreen screen; Ctrl+C (or ◉ → Quit)
-quits and saves. Only one copy runs at a time.
+The ◉ menu-bar item is grouped into Calibration (Recalibrate, Re-centre, Check accuracy,
+Measure), View (gaze ring, smoothing, snap to buttons, open the dashboard), Input (camera,
+voice control on/off, microphone) and Learning & data (click learning, recording). Cameras
+and mics switch live; each camera keeps its own calibration, so a new one asks for a
+calibration the first time. Esc leaves any fullscreen screen; Ctrl+C (or ◉ → Quit) quits
+and saves. Only one copy runs at a time.
 
 ### Dashboard
 
