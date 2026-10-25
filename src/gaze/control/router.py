@@ -12,7 +12,7 @@ from . import config
 
 @dataclass
 class Command:
-    kind: str  # click | scroll | key | type | cancel | confirm | calibrate | unknown
+    kind: str  # click | scroll | key | type | cancel | confirm | calibrate | recentre | check | unknown
     args: dict = field(default_factory=dict)
     text: str = ""
 
@@ -30,6 +30,8 @@ _PATTERNS = [
     (r"^(?:stop|cancel|never ?mind|abort)$", lambda m: Command("cancel")),
     (r"^(?:confirm|yes|yes please|do it|go ahead)$", lambda m: Command("confirm")),
     (r"^(?:re)?calibrate$", lambda m: Command("calibrate")),
+    (r"^re[ -]?cent(?:re|er)(?: (?:gaze|tracking))?$", lambda m: Command("recentre")),
+    (r"^(?:check|test) (?:the )?(?:accuracy|tracking|gaze)$", lambda m: Command("check")),
 ]
 
 

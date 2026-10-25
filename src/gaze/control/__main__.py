@@ -4,6 +4,7 @@
     gaze control --typed        # type commands in the terminal instead (dev)
     gaze control --gaze mouse   # the mouse cursor stands in for gaze
     gaze control --calibrate    # recalibrate the tracker on start
+    gaze control --dashboard    # also open the web dashboard (shows what was heard and done)
 
 Tiers: 0 = exact phrases (router.py), 1 = Jev gate (gate.py), 2 = Claude computer-use agent (agent.py).
 """
@@ -67,11 +68,13 @@ class App:
 
         def on_utterance(text, t0, t1):
             print(f"[{time.strftime('%H:%M:%S')}] heard: \"{text}\"", flush=True)
+            self.gaze.report("heard", text)
             self.events.put(("speech", (text, t0, t1)))
 
         def on_mic_state(state):
             if state in ("listening", "transcribing"):
                 print(f"[{time.strftime('%H:%M:%S')}] {state}...", flush=True)
+            self.gaze.report("mic", state)
             self.events.put(("mic", state))
 
         if args.typed:
@@ -95,12 +98,19 @@ class App:
     def _start_tracker(self):
         """The tracker runs as its own AppKit app (menu bar ◉, calibration screens) next to our Qt one."""
         cmd = [sys.executable, "-m", "gaze.cli", "--publish"] + (["--recalibrate"] if self.args.calibrate else [])
+        cmd += ["--dashboard"] if self.args.dashboard else []
         tracker = subprocess.Popen(cmd + self.args.tracker_args)
         atexit.register(tracker.terminate)
 
     def _status(self, text):
         print(f"[{time.strftime('%H:%M:%S')}] {text}", flush=True)
+        self.gaze.report("status", text)
         self.events.put(("status", text))
+
+    def _set_pending(self, pending, text=""):
+        """A direct action waiting for "confirm" (None clears it); the dashboard shows it."""
+        self.pending = pending
+        self.gaze.report("pending", text if pending else "")
 
     # --- UI thread ---
 
@@ -144,11 +154,14 @@ class App:
         self.overlay.heard = cmd.text
         if cmd.kind == "cancel":  # handled immediately, even while a command is running
             self.agent.cancel()
-            self.pending = None
+            self._set_pending(None)
             self.overlay.status = "Cancelled."
             return
         if cmd.kind == "calibrate":
             self.calibrate()
+            return
+        if cmd.kind in ("recentre", "check"):
+            self.tracker_command(cmd.kind)
             return
         self.commands.put((cmd, t0, t1))
 
@@ -168,7 +181,7 @@ class App:
                 self._status("Confirmed - continuing...")
             elif self.pending:
                 kind, args, gaze, target = self.pending
-                self.pending = None
+                self._set_pending(None)
                 self._do(kind, args, gaze, target)
             else:
                 self._status("Nothing to confirm.")
@@ -182,6 +195,8 @@ class App:
 
         gaze = self.gaze.point_during(t0, t1)  # where they looked while speaking, not now
         target, candidates = snapping.snap(*gaze, self.screen.w_pt, self.screen.h_pt) if gaze else (None, [])
+        self._report_target(target)
+        confidence = self.gaze.confidence_during(t0, t1)
 
         if cmd.kind == "unknown":
             self._route_with_gate(cmd.args["request"], gaze, target, candidates)
@@ -196,7 +211,20 @@ class App:
                     target = picked
             except Exception:
                 pass  # fall back to the nearest element
+        if cmd.kind in ("click", "type") and confidence < config.GAZE_MIN_CONFIDENCE:
+            # The tracker wasn't sure (head turned past what calibration covered): ask instead of acting.
+            where = target.describe() if target else "there"
+            self._set_pending((cmd.kind, cmd.args, gaze, target), f"{cmd.kind} {where}")
+            self._status(f'Not sure where you\'re looking ({cmd.kind} {where}?). Say "confirm", or "re-centre".')
+            return
         self._do(cmd.kind, cmd.args, gaze, target)
+
+    def _report_target(self, target):
+        if target is None:
+            self.gaze.report("target", target=None)
+        else:
+            self.gaze.report("target", target={"x": target.x, "y": target.y, "w": target.w, "h": target.h,
+                                                "label": target.describe()})
 
     def _route_with_gate(self, request, gaze, target, candidates):
         app = macos.frontmost_app()
@@ -223,7 +251,7 @@ class App:
         if d.route == "shortcut" and d.shortcut:
             desc, combo = commands.SHORTCUTS[d.shortcut]
             if risky:
-                self.pending = ("key", {"combo": combo}, gaze, None)
+                self._set_pending(("key", {"combo": combo}, gaze, None), desc)
                 self._status(f'"{desc}" might lose work. Say "confirm" to do it.')
                 return
             actions.press(combo)
@@ -232,7 +260,7 @@ class App:
         if d.route in _ROUTE_ACTIONS:
             kind, args = _ROUTE_ACTIONS[d.route]
             if risky:
-                self.pending = (kind, args, gaze, d.target)
+                self._set_pending((kind, args, gaze, d.target), f"{kind} {d.target.describe() if d.target else 'here'}")
                 where = d.target.describe() if d.target else "here"
                 self._status(f'This might be irreversible ({kind} {where}). Say "confirm" to do it.')
                 return
@@ -277,6 +305,14 @@ class App:
         self.gaze.send({"cmd": "recalibrate"})
         self.overlay.status = "Calibrating - look at each dot until it shrinks away."
 
+    def tracker_command(self, kind):
+        """Re-centre (1 dot, fixes drift) or check accuracy (9 dots): the tracker shows the screens."""
+        if not self.gaze.calibratable:
+            self.overlay.status = "Using the mouse as gaze - nothing to re-centre."
+            return
+        self.gaze.send({"cmd": "recentre" if kind == "recentre" else "validate"})
+        self._status("Re-centring - look at the dot." if kind == "recentre" else "Checking accuracy - follow the dots.")
+
 
 def main(argv=None):
     parser = argparse.ArgumentParser(prog="gaze control")
@@ -284,6 +320,7 @@ def main(argv=None):
                         help="eyes = webcam eye tracking (default); mouse = the cursor stands in for gaze")
     parser.add_argument("--calibrate", action="store_true", help="recalibrate the tracker on start (eyes only)")
     parser.add_argument("--typed", action="store_true", help="type commands in the terminal instead of speaking")
+    parser.add_argument("--dashboard", action="store_true", help="also serve and open the web dashboard (eyes only)")
     parser.add_argument("--no-tracker", action="store_true",
                         help="don't start the tracker; use one already running with `gaze --publish`")
     parser.add_argument("--tracker-args", nargs=argparse.REMAINDER, default=[],

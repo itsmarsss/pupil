@@ -23,7 +23,7 @@ class GazeClient(threading.Thread):
         self._sock.settimeout(0.5)
         self._cmd = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self._lock = threading.Lock()
-        self._history = deque(maxlen=900)  # (t, x, y) in screen points, ~30 s at 30 Hz
+        self._history = deque(maxlen=900)  # (t, x, y, confidence) in screen points, ~30 s at 30 Hz
         self._last_seen = 0.0  # any message: the tracker is running
         self._last_point = 0.0  # a valid point: the tracker can see you
         self.busy = False  # the tracker has a calibration or accuracy check on screen
@@ -40,7 +40,7 @@ class GazeClient(threading.Thread):
             if "x" not in msg:
                 continue  # no face, blink or uncalibrated: keep the last point
             with self._lock:
-                self._history.append((msg["t"], msg["x"], msg["y"]))
+                self._history.append((msg["t"], msg["x"], msg["y"], float(msg.get("confidence", 1.0))))
                 self._last_point = now
 
     @property
@@ -52,19 +52,33 @@ class GazeClient(threading.Thread):
         with self._lock:
             if not self._history or self.busy or time.time() - self._last_point > config.GAZE_STALE_S:
                 return None
-            _, x, y = self._history[-1]
+            _, x, y, _ = self._history[-1]
             return x, y
 
     def point_during(self, t0, t1):
         """Median gaze while the user was speaking: what "this" / "that" refers to."""
         with self._lock:
-            window = [(x, y) for t, x, y in self._history if t0 <= t <= t1]
+            window = [(x, y) for t, x, y, _ in self._history if t0 <= t <= t1]
         if not window:
             return self.point()
         return statistics.median(p[0] for p in window), statistics.median(p[1] for p in window)
 
+    def confidence_during(self, t0, t1) -> float:
+        """The tracker's median confidence while the user was speaking (1 = head inside its calibrated
+        range; lower = turned further than calibration covered, so the point may be off)."""
+        with self._lock:
+            window = [c for t, _, _, c in self._history if t0 <= t <= t1] or [c for *_, c in list(self._history)[-5:]]
+        return statistics.median(window) if window else 0.0
+
     def send(self, cmd: dict):
         self._cmd.sendto(json.dumps(cmd).encode(), ("127.0.0.1", config.CMD_PORT))
+
+    def report(self, event: str, text: str = "", **extra):
+        """Tell the tracker what the controller heard or did; it shows it in the dashboard."""
+        try:
+            self.send({"event": event, "text": text, **extra})
+        except OSError:
+            pass
 
 
 class MouseGaze(threading.Thread):
@@ -103,5 +117,11 @@ class MouseGaze(threading.Thread):
             return self.point()
         return statistics.median(p[0] for p in window), statistics.median(p[1] for p in window)
 
+    def confidence_during(self, t0, t1) -> float:
+        return 1.0
+
     def send(self, cmd: dict):
         pass  # nothing to calibrate
+
+    def report(self, event: str, text: str = "", **extra):
+        pass  # no tracker to report to

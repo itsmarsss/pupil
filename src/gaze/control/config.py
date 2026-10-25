@@ -33,6 +33,7 @@ GATE_RISKY_MIN = 0.65  # ask to confirm at or above this (measured: harmless cli
 
 # The tracker (`gaze --publish`, sinks/publisher.py) streams points to us over local UDP
 GAZE_STALE_S = 1.0  # no point for this long = tracker lost you
+GAZE_MIN_CONFIDENCE = 0.5  # below this (head outside its calibrated range) clicks and typing ask to confirm
 
 # Voice
 _LOCAL_WHISPER = ROOT / "models" / "whisper-base.en"  # downloaded with curl; HF's downloader stalls on bad wifi
