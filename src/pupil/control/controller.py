@@ -527,6 +527,17 @@ class VoiceController:
             ep.update(route="dictation", typed=text, acted=True)
             self._status(f"Typed: {text[:60]}")
             return
+        if cmd.kind == "unknown" and (self.agent.paused or self.pending) and self.gate.available:
+            # waiting for an OK: "yep, confirm" or "sure, go ahead" is one too, not a new instruction that skips it
+            waiting = self.pending_text or "the agent's next step"
+            try:
+                with self._working("thinking", "thinking"):
+                    p, _ = self.gate.confirms(cmd.text, waiting)
+            except Exception:
+                p = 0.0
+            ep["confirm_p"] = round(p, 3)
+            if p >= YES:
+                cmd = router.Command("confirm", {}, cmd.text)
         if cmd.kind == "confirm":
             if self.agent.resume():
                 ep["route"] = "agent_resume"

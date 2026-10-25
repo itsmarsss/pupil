@@ -871,3 +871,31 @@ def test_closing_with_a_dialogs_own_button_presses_it():
     nouls = {"enters_text": NS(noul=0.95), "searches": NS(noul=0.9)}
     route, _, extras = _fill_in("click", "", {"target": field}, nouls)
     assert route == "fill" and extras["args"]["submit"]
+
+
+def test_skipped_computer_actions_name_their_toolset():
+    from types import SimpleNamespace as NS
+
+    from pupil.control import agent as ag
+
+    click = NS(type="tool_use", id="c1", name="left_click", input={}, toolset_name="computer")
+    custom = NS(type="tool_use", id="c2", name="open_app", input={"name": "Blender"})
+    a = ag.Agent.__new__(ag.Agent)
+    a._thread, spawned = None, []
+    a._spawn = lambda messages, request, calls: spawned.append(messages)
+    a._paused = ([{"role": "user", "content": "build a car"}], [click, custom], "build a car")
+    assert a.redirect("something else")
+    skipped = spawned[0][-1]["content"]
+    assert skipped[0]["toolset_name"] == "computer" and "toolset_name" not in skipped[1]  # the API requires this
+
+
+def test_saying_yes_your_own_way_confirms(monkeypatch):
+    from pupil.control import controller as ctl
+
+    resumed = []
+    c = ctl.VoiceController.__new__(ctl.VoiceController)
+    c._ep, c.maybe, c.pending, c.pending_text, c._busy_with, c._status = {}, None, None, None, None, lambda t: None
+    c.agent = _A(paused=True, busy=False, resume=lambda: resumed.append(True) or True)
+    c.gate = _A(available=True, confirms=lambda said, waiting: (0.97, 90))
+    c._handle(ctl.router.Command("unknown", {"request": "Yep, confirm."}, "Yep, confirm."), 0, 1)
+    assert resumed == [True] and c._ep["route"] == "agent_resume"

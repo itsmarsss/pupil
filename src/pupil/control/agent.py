@@ -139,6 +139,15 @@ the request, not the gaze ring. Match a remembered title or recommendation to a 
 with ui_elements, then activate it. If nothing was remembered, say you don't remember and do not guess."""
 
 HALT_TEXT = "Not executed: an earlier computer action in this turn failed."
+
+
+def not_run(call, why: str) -> dict:
+    """The result for a tool call that was never carried out. A computer-toolset call's result must name its toolset
+    (the API rejects the whole request otherwise: "must carry the paired tool_use's toolset_name")."""
+    result = {"type": "tool_result", "tool_use_id": call.id, "is_error": True, "content": why}
+    if getattr(call, "toolset_name", None):
+        result["toolset_name"] = call.toolset_name
+    return result
 INTERRUPTED_KEEP_S = 15 * 60  # an interrupted task can be picked up again this long after
 STEER_STEPS = 5  # each instruction while it works adds this many steps (up to twice the task's budget)
 
@@ -273,8 +282,7 @@ class Agent:
             "check the screen first, since things may have moved on, and don't redo what's already done.")}
         last = messages[-1] if messages else None
         if last is not None and last["role"] == "assistant":  # stopped between deciding and doing: none of it ran
-            undone = [{"type": "tool_result", "tool_use_id": b.id, "is_error": True,
-                       "content": "Not run: the task was interrupted before this."}
+            undone = [not_run(b, "Not run: the task was interrupted before this.")
                       for b in last["content"] if getattr(b, "type", None) == "tool_use"]
             messages.append({"role": "user", "content": undone + [note]})
         elif last is not None:
@@ -309,8 +317,7 @@ class Agent:
             return False
         messages, calls, request = self._paused
         self._paused = None
-        skipped = [{"type": "tool_result", "tool_use_id": c.id, "is_error": True,
-                    "content": "Not done: the user gave a new instruction instead."} for c in calls]
+        skipped = [not_run(c, "Not done: the user gave a new instruction instead.") for c in calls]
         messages.append({"role": "user", "content": skipped + [{"type": "text", "text": f"The user just said: \"{text}\""}]})
         self._spawn(messages, request, None)
         return True

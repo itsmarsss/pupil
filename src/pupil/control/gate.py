@@ -653,6 +653,16 @@ class Gate:
               "elements": {el.describe(): round(result.nouls[f"el_{i}"].noul, 3) for i, el in enumerate(elements)}})
         return decision
 
+    def confirms(self, utterance, waiting_for):
+        """Something is waiting for the user's OK (`waiting_for`): does `utterance` give it ("yep, confirm",
+        "sure, go ahead", "yeah do it")? (probability, ms)"""
+        result, ms = self._ask("confirm", {"waiting_for": waiting_for, "user_said": utterance}, {
+            "confirms": Noul(instructions="Does `user_said` agree to go ahead with `waiting_for`?",
+                             criteria=NoulCriteria(
+                                 true="e.g. \"yep, confirm\", \"sure, go ahead\", \"yeah do it\", \"okay send it\"",
+                                 false="no, wait, a different instruction, a question, or talk about something else"))})
+        return result.nouls["confirms"].noul, ms
+
     def is_for_the_task(self, utterance, task):
         """While the agent works on `task`, is `utterance` an instruction for it (change, add to, narrow or stop
         the task), rather than the user talking to someone or thinking aloud? (probability, ms)"""
