@@ -69,6 +69,8 @@ class VoiceController:
                                accept=self._accept_speech, on_rejected=self._on_rejected)
             self.voice.start()
             self.hud.mic = "loading"
+        self.gaze.report("lip_gate", enabled=config.LIP_GATE and hasattr(self.gaze, "lips"),
+                         threshold=config.LIP_MOVING)
         if not macos.has_accessibility():
             self.hud.status = "Grant Accessibility permission to your terminal (System Settings > Privacy & Security)."
         self.hud.show()
@@ -95,6 +97,7 @@ class VoiceController:
             return True, {}
         moving, info = self.gaze.lips(t0, t1)
         self._lips = {"moving": moving, **info}
+        self.gaze.report("lips", **self._lips)  # the dashboard's Lips plot marks each utterance
         return moving is not False, self._lips
 
     def _on_rejected(self, t0, t1, info):

@@ -7,11 +7,12 @@ import { CalibrationPanel, ControlsPanel, StatusPanel } from "./views/Panel";
 import { PLOTS, Plot } from "./views/Plots";
 import { Scene3D } from "./views/Scene3D";
 import { ScreenView } from "./views/ScreenView";
+import { LipsPlot } from "./views/LipsPlot";
 import { VoicePanel } from "./views/VoicePanel";
 
 // Every view is a dockview panel: drag tabs to rearrange, split or stack them, drag the dividers to resize.
 // The layout is saved per browser; bump LAYOUT_KEY when panels change so stale layouts are dropped.
-const LAYOUT_KEY = "gaze.layout.v4";
+const LAYOUT_KEY = "gaze.layout.v5";
 
 const components: Record<string, FunctionComponent<IDockviewPanelProps>> = {
   scene: () => <div className="pane flush"><Scene3D /></div>,
@@ -22,6 +23,7 @@ const components: Record<string, FunctionComponent<IDockviewPanelProps>> = {
   calibration: () => <CalibrationPanel />,
   controls: () => <ControlsPanel />,
   voice: () => <VoicePanel />,
+  lips: () => <LipsPlot />,
   ...Object.fromEntries(PLOTS.map((spec) => [`plot-${spec.id}`, () => <div className="pane flush"><Plot spec={spec} /></div>])),
 };
 
@@ -35,6 +37,7 @@ function defaultLayout(api: DockviewApi) {
   api.addPanel({ id: "calibration", component: "calibration", title: "Calibration", position: { referencePanel: "status", direction: "below" } });
   api.addPanel({ id: "controls", component: "controls", title: "Controls", position: { referencePanel: "calibration", direction: "below" } });
   api.addPanel({ id: "voice", component: "voice", title: "Voice & agent", position: { referencePanel: "screen", direction: "below" } });
+  api.addPanel({ id: "lips", component: "lips", title: "Lips", position: { referencePanel: "voice", direction: "within" } });
   let previous: string | undefined;
   for (const spec of PLOTS) {
     const id = `plot-${spec.id}`;

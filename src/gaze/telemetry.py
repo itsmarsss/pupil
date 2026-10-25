@@ -83,6 +83,7 @@ def frame_state(sample: Sample, profile: Profile | None, plane: ScreenPlane, con
                                      ("right_eye", face.right_eye_rect))},
     }
     state["eyes_open"] = _r(face.eye_openness, 3)
+    state["mouth_open"] = _r(face.mouth_open, 3)
     if face.head_pose is not None:
         state["head_ypr"] = _r(face.head_pose.yaw_pitch_roll_deg, 1)
 

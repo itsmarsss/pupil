@@ -145,6 +145,7 @@ class VoiceLog:
         self._lock = threading.Lock()
         self._log: collections.deque = collections.deque(maxlen=keep)
         self._state: dict = {}
+        self._lips: collections.deque = collections.deque(maxlen=12)  # lip-gate verdicts, newest last
 
     def add(self, msg: dict) -> None:
         kind, text = msg.get("event"), msg.get("text", "")
@@ -153,6 +154,10 @@ class VoiceLog:
                 self._state[kind] = text or None
             elif kind == "target":
                 self._state["target"] = msg.get("target")
+            elif kind == "lip_gate":
+                self._state["lip_gate"] = {"enabled": msg.get("enabled"), "threshold": msg.get("threshold")}
+            elif kind == "lips":
+                self._lips.append({k: v for k, v in msg.items() if k not in ("event", "text")})
             else:  # heard / status / tier
                 if kind == "heard":
                     self._state["heard"] = text
@@ -164,5 +169,5 @@ class VoiceLog:
         with self._lock:
             if not self._state:
                 return None  # no controller connected
-            return {**self._state, "log": list(self._log)[-12:],
+            return {**self._state, "log": list(self._log)[-12:], "lips": list(self._lips),
                     "connected": time.time() - self._state["seen"] < 30}

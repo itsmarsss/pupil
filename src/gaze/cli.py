@@ -55,13 +55,6 @@ def cmd_run(args) -> int:
     if lock is None:
         print("gaze is already running (◉ in the menu bar). Quit it first: ◉ → Quit.", file=sys.stderr)
         return 1
-    if args.dashboard:
-        import threading
-        import webbrowser
-
-        url = f"http://127.0.0.1:{args.dashboard_port}/"
-        threading.Timer(2.0, webbrowser.open, args=(url,)).start()
-
     tracker = _build_tracker(args)
     GazeApp(
         tracker,

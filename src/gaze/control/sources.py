@@ -77,7 +77,9 @@ class TrackerGaze:
         with self._lock:
             window = [m for t, m in self._mouth if t0 <= t <= t1]
         seen = [m for m in window if m is not None]
-        info = {"frames": len(window), "face_frames": len(seen)}
+        # t0/t1 on the tracker's clock (monotonic seconds), so the dashboard can draw the window on its plots
+        info = {"frames": len(window), "face_frames": len(seen),
+                "t0": round(t0 - self._offset, 3), "t1": round(t1 - self._offset, 3)}
         if len(window) >= 3 and not seen:
             return False, {**info, "why": "no face"}
         if len(window) < 3 or len(seen) < 0.7 * len(window):

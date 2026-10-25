@@ -70,6 +70,7 @@ export interface FrameState {
     boxes: Record<"face" | "left_eye" | "right_eye", [number, number, number, number]>;
   };
   eyes_open?: Vec2;
+  mouth_open?: number | null; // inner-lip gap / mouth width
   head_ypr?: Vec3;
   face_pointing_pt?: Vec2 | null;
   scene?: FrameScene;
@@ -92,6 +93,19 @@ export interface VoiceState {
   pending?: string | null;
   target?: { x: number; y: number; w: number; h: number; label: string } | null;
   log: { t: number; kind: "heard" | "status" | string; text: string }[];
+  lip_gate?: { enabled: boolean; threshold: number };
+  lips?: LipVerdict[];
+}
+
+/** The lip gate's decision for one utterance; t0/t1 on the frame clock (FrameState.t). */
+export interface LipVerdict {
+  t0: number;
+  t1: number;
+  moving: boolean | null; // null: face seen too little to tell (let through)
+  range?: number; // p10-p90 of mouth openness over the utterance
+  why?: string;
+  frames: number;
+  face_frames: number;
 }
 
 export type EngineMessage = SceneInfo | CalibrationInfo | FrameState;

@@ -94,7 +94,7 @@ class GazeApp:
         if o["record_path"] is not None:
             self.recording.start(o["record_path"])
         if o["dashboard_port"] is not None:
-            self._start_dashboard(o["dashboard_port"])
+            self._open_dashboard()  # starts it, then opens it at the port it got
         if o["publish"]:
             self._start_publisher()
         if o["voice"]:

@@ -12,6 +12,7 @@ import asyncio
 import json
 import logging
 import mimetypes
+import socket
 import threading
 from pathlib import Path
 from typing import Callable
@@ -24,12 +25,16 @@ STATE_HZ = 30
 WEB_DIST = Path(__file__).resolve().parents[3] / "web" / "dist"
 
 
+PORT_TRIES = 10
+
+
 class DashboardServer:
     def __init__(self, feed: Feed, commands: dict[str, Callable[[], None]] | None = None,
                  host: str = "127.0.0.1", port: int = 8766, static_dir: Path = WEB_DIST):
         self.feed = feed
         self.commands = commands or {}
         self.host, self.port, self.static_dir = host, port, static_dir
+        self.port = self._free_port()  # now, so `url` is right before the server starts
         self._clients: set = set()
         self._loop: asyncio.AbstractEventLoop | None = None
         self._thread: threading.Thread | None = None
@@ -58,6 +63,17 @@ class DashboardServer:
             self._run(threading.Event())
         except KeyboardInterrupt:
             pass
+
+    def _free_port(self) -> int:
+        """`port`, or the next one nothing answers on. Binding alone doesn't tell: another server listening on all
+        addresses (e.g. `python -m http.server`, IPv6 dual-stack) lets us bind 127.0.0.1 yet takes the requests."""
+        for port in range(self.port, self.port + PORT_TRIES):
+            try:
+                socket.create_connection((self.host, port), timeout=0.2).close()
+            except OSError:
+                return port
+            log.warning("port %d is taken by another server; trying %d", port, port + 1)
+        return self.port
 
     def _run(self, ready: threading.Event) -> None:
         self._loop = asyncio.new_event_loop()
