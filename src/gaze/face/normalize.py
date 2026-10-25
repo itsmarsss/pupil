@@ -85,6 +85,11 @@ class NormalisedModel:
         self.model, self.method = model, method
         self.model_id = f"{model.model_id}+{method}"
 
+    @property
+    def last_inputs(self):
+        """The wrapped model's newest inputs (crops of the normalised frame), if it keeps them."""
+        return getattr(self.model, "last_inputs", None)
+
     def infer(self, frame: Frame, face: FaceObservation) -> GazeFeatures | None:
         if self.method == "roll":
             H = roll_warp(face)

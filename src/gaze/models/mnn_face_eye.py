@@ -41,6 +41,9 @@ class MNNFaceEyeModel:
         self._left = MNN.expr.placeholder((1, *EYE_SIZE, 3), MNN.expr.NHWC)
         self._right = MNN.expr.placeholder((1, *EYE_SIZE, 3), MNN.expr.NHWC)
         self._rect = MNN.expr.placeholder((1, 12))
+        # The newest crops fed to the network (face, image-left eye, image-right eye mirrored), RGB in [0, 1].
+        # Kept for visualisation; replaced by reference each frame, so readers on other threads see a whole set.
+        self.last_inputs: tuple[np.ndarray, np.ndarray, np.ndarray] | None = None
 
     @staticmethod
     def prepare(frame: Frame, face: FaceObservation):
@@ -70,6 +73,7 @@ class MNNFaceEyeModel:
         if inputs is None:
             return None
         face_in, left_in, right_in, geom = inputs
+        self.last_inputs = (face_in, left_in, right_in)
         self._face.write(face_in)
         self._left.write(left_in)
         self._right.write(right_in)

@@ -13,7 +13,7 @@ from ..face.normalize import NormalisedModel
 from ..face.tracker import FaceTracker
 from ..telemetry import calibration_info, frame_state, scene_info
 from ..tracker import Tracker
-from .feeds import ReplayFeed, ReplayFrame, jpeg
+from .feeds import ReplayFeed, ReplayFrame, crops_jpeg, jpeg
 
 log = logging.getLogger(__name__)
 
@@ -40,7 +40,8 @@ def build_replay(root: Path, model, normalise: str = "roll") -> ReplayFeed:
                    "smoothing": tracker.smoothing, "overlay": True}
         state = frame_state(sample, profile, tracker.plane, context, fps=30.0)
         state["latency_ms"] = None  # not meaningful in a replay
-        frames.append(ReplayFrame(json.dumps(state), jpeg(sf.image)))
+        crops = crops_jpeg(getattr(gaze_model, "last_inputs", None)) if sample.features is not None else b""
+        frames.append(ReplayFrame(json.dumps(state), jpeg(sf.image), crops))
     tracker.face_tracker.close()
     log.info("replay of %s: %d frames", root.name, len(frames))
     scene = scene_info(screen, tracker.plane, load_device(), lid)

@@ -21,6 +21,7 @@ from ..telemetry import calibration_info, frame_state, scene_info
 IMAGE_HZ = 12
 IMAGE_WIDTH = 640
 IMAGE_PREFIX = b"JPG0"
+CROPS_PREFIX = b"CRP0"
 
 Message = str | bytes
 
@@ -32,6 +33,17 @@ def jpeg(image: np.ndarray) -> bytes:
         image = cv2.resize(image, (IMAGE_WIDTH, h), interpolation=cv2.INTER_AREA)
     ok, buf = cv2.imencode(".jpg", cv2.cvtColor(image, cv2.COLOR_RGB2BGR), [cv2.IMWRITE_JPEG_QUALITY, 70])
     return IMAGE_PREFIX + buf.tobytes() if ok else b""
+
+
+def crops_jpeg(inputs) -> bytes:
+    """The network's inputs as one image: the face crop with the two eye crops stacked beside it."""
+    if inputs is None:
+        return b""
+    face, left, right = (np.clip(a * 255, 0, 255).astype(np.uint8) for a in inputs)
+    eyes = np.vstack([left, right])  # 112 + 112 = the face crop's 224
+    composite = np.hstack([face, cv2.resize(eyes, (eyes.shape[1] * face.shape[0] // eyes.shape[0], face.shape[0]))])
+    ok, buf = cv2.imencode(".jpg", cv2.cvtColor(composite, cv2.COLOR_RGB2BGR), [cv2.IMWRITE_JPEG_QUALITY, 85])
+    return CROPS_PREFIX + buf.tobytes() if ok else b""
 
 
 class Feed(Protocol):
@@ -85,6 +97,9 @@ class LiveFeed:
         if now - self._last_image >= 1 / IMAGE_HZ:
             self._last_image = now
             out.append(jpeg(frame.image))
+            crops = crops_jpeg(getattr(self.tracker.model, "last_inputs", None))
+            if crops:
+                out.append(crops)
         return out
 
     def command(self, name: str, value) -> bool:
@@ -95,6 +110,7 @@ class LiveFeed:
 class ReplayFrame:
     state: str  # JSON frame state
     image: bytes  # JPEG message
+    crops: bytes = b""  # the network's inputs (CROPS_PREFIX message), if any
 
 
 class ReplayFeed:
@@ -140,7 +156,7 @@ class ReplayFeed:
         f = self.frames[self.index]
         state = json.loads(f.state)
         state["replay"] = {"index": self.index, "playing": self.playing, "speed": self.speed}
-        return [json.dumps(state), f.image]
+        return [json.dumps(state), f.image] + ([f.crops] if f.crops else [])
 
     def command(self, name: str, value) -> bool:
         if name == "play":
