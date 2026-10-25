@@ -43,15 +43,13 @@ MODES = {
 
 
 def list_cameras() -> list[str]:
-    """Camera names in the order OpenCV's AVFoundation backend indexes them."""
+    """Camera names in the order OpenCV's AVFoundation backend indexes them: video and muxed devices sorted
+    by unique id. (AVFoundation's own order moves recently used cameras first, so it can't map indices.)"""
     import AVFoundation as AV
 
-    session = AV.AVCaptureDeviceDiscoverySession.discoverySessionWithDeviceTypes_mediaType_position_(
-        [AV.AVCaptureDeviceTypeBuiltInWideAngleCamera, AV.AVCaptureDeviceTypeExternalUnknown],
-        AV.AVMediaTypeVideo,
-        AV.AVCaptureDevicePositionUnspecified,
-    )
-    return [str(d.localizedName()) for d in session.devices()]
+    devices = [*AV.AVCaptureDevice.devicesWithMediaType_(AV.AVMediaTypeVideo),
+               *AV.AVCaptureDevice.devicesWithMediaType_(AV.AVMediaTypeMuxed)]
+    return [str(d.localizedName()) for d in sorted(devices, key=lambda d: str(d.uniqueID()))]
 
 
 def find_camera(preferred: str = "FaceTime") -> int:
