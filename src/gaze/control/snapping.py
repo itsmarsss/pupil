@@ -47,6 +47,18 @@ class Element:
     h: float
     kind: str = ""  # what macOS calls it: "tab", "close button", "text field"
     parent: str = ""  # label of the actionable element it sits inside ("Close" inside tab "YouTube")
+    parent_role: str = ""  # AX role of its direct parent ("AXTabGroup": it's a tab, in any app and language)
+    subrole: str = ""  # e.g. "AXCloseButton": language-independent, unlike kind and label
+
+    @property
+    def is_tab(self) -> bool:
+        return self.role == "AXTab" or self.parent_role == "AXTabGroup"
+
+    @property
+    def is_close(self) -> bool:
+        """A control that closes something (window and sheet close buttons have the subrole in any language;
+        other apps' close buttons are recognised by name)."""
+        return self.subrole == "AXCloseButton" or (self.role == "AXButton" and "close" in f"{self.label} {self.kind}".lower())
 
     @property
     def center(self):
@@ -135,7 +147,10 @@ def element_at(x, y):
         if role in ACTIONABLE:
             frame = _frame(element)
             if frame:
-                return Element(role, _label(element), *frame)
+                up = _attr(element, "AXParent")
+                return Element(role, _label(element), *frame, kind=_text(element, "AXRoleDescription")[:40],
+                               parent_role=(_attr(up, "AXRole") or "") if up is not None else "",
+                               subrole=_text(element, "AXSubrole"))
         element = _attr(element, "AXParent")
     return None
 
@@ -149,7 +164,8 @@ def window_close_button(x, y):
         if (_attr(element, "AXRole") or "") == "AXWindow":
             button = _attr(element, "AXCloseButton")
             frame = _frame(button) if button is not None else None
-            return Element("AXButton", "Close window", *frame, kind="close button") if frame else None
+            return Element("AXButton", "Close window", *frame, kind="close button", subrole="AXCloseButton") \
+                if frame else None
         element = _attr(element, "AXParent")
     return None
 
@@ -193,9 +209,9 @@ def candidates_near(x, y, screen_w, screen_h, radius=SEARCH_RADIUS):
         return []
     max_area = config.SNAP_MAX_AREA_FRACTION * screen_w * screen_h
     found = {}
-    queue, seen, deadline = [(_container(hit), "")], 0, time.perf_counter() + MAX_WALK_S
+    queue, seen, deadline = [(_container(hit), "", "")], 0, time.perf_counter() + MAX_WALK_S
     while queue and seen < MAX_NODES and time.perf_counter() < deadline:
-        node, parent = queue.pop()  # parent: label of the nearest actionable ancestor
+        node, parent, parent_role = queue.pop()  # parent: label of the nearest actionable ancestor
         seen += 1
         role, frame, children = _walk_attrs(node)
         far = frame is not None and frame[2] * frame[3] > 0 and _rect_distance(frame, x, y) > radius
@@ -206,9 +222,9 @@ def candidates_near(x, y, screen_w, screen_h, radius=SEARCH_RADIUS):
             key = (role, round(frame[0]), round(frame[1]), round(frame[2]), round(frame[3]))
             if key not in found:
                 found[key] = Element(role, _label(node), *frame, kind=_text(node, "AXRoleDescription")[:40],
-                                     parent=parent)
+                                     parent=parent, parent_role=parent_role, subrole=_text(node, "AXSubrole"))
             parent = found[key].label or parent
-        queue.extend((child, parent) for child in children)
+        queue.extend((child, parent, role) for child in children)
     direct = element_at(x, y)  # the element right under the gaze, even if the walk ran out of budget
     if direct:
         found.setdefault((direct.role, round(direct.x), round(direct.y), round(direct.w), round(direct.h)), direct)

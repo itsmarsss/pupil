@@ -22,7 +22,7 @@ _load_dotenv()
 # Agent (LLM tier): only used when the fast tier can't handle a request
 MODEL = os.environ.get("GAZE_MODEL", "claude-sonnet-5-5")
 EFFORT = os.environ.get("GAZE_EFFORT", "low")  # low = fewer, faster steps
-MAX_AGENT_STEPS = int(os.environ.get("GAZE_MAX_STEPS", "30"))  # room for bigger tasks (a Blender scene)
+MAX_AGENT_STEPS = int(os.environ.get("GAZE_MAX_STEPS", "30"))  # room for bigger multi-step tasks
 
 # Fast tier: a Jev-style decision model (TypeSafe System One API; any compatible base URL works)
 GATE_MODEL = os.environ.get("GAZE_GATE_MODEL", "jev-1.14.0")  # pinned: aliases move and deprecations are short

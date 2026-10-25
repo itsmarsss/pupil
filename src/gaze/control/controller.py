@@ -398,7 +398,7 @@ class VoiceController:
         if d.route == "open_app" and d.app_path:
             self._status(f"Opening {d.app}: {d.summary()}")
             self._acted("open_app", {"app": d.app})
-            self._status(apps.open_path(d.app, d.app_path))  # Blender: with its scripting bridge
+            self._status(apps.open_path(d.app, d.app_path))  # adapters open their app scriptable
             return True
         if d.route == "shortcut" and d.shortcut:
             desc, combo = commands.SHORTCUTS[d.shortcut]
@@ -428,27 +428,34 @@ class VoiceController:
         return False
 
     def _close(self, target) -> bool:
-        """Close what the user means: the element's own close button if it has one, a tab by selecting it and
-        pressing Cmd+W (closes the current tab in browsers, editors, Finder, terminals), or its window's close
-        button. False if none applies (the agent takes it)."""
-        own = [c for c in self._candidates if c.parent and c.parent == target.label and c is not target
-               and "close" in f"{c.label} {c.kind}".lower()]
-        if own:
-            self._do("click", {"clicks": 1, "button": "left"}, None, own[0])
-            self._status(f"Closed {target.describe()}")
+        """Close what the user means, in any app: the target if it is a close control; its own close control; the
+        close control of the dialog or panel it's in; or a tab by selecting it and pressing Cmd+W (closes the current
+        tab in browsers, editors, Finder, terminals). False otherwise: the agent takes it."""
+        if target.is_close:  # it is the close control
+            self._do("click", {"clicks": 1, "button": "left"}, None, target)
+            self._status(f"Closed ({target.describe()})")
             return True
-        if target.kind == "tab" or target.role == "AXTab":
+        own = [c for c in self._candidates if c.is_close and c.parent and c.parent == target.label]
+        sibling = [c for c in self._candidates if c.is_close and target.parent and c.parent == target.parent]
+        if own or sibling:  # its own close control, else the close control of the dialog or panel it's in
+            self._do("click", {"clicks": 1, "button": "left"}, None, (own or sibling)[0])
+            self._status(f"Closed {target.describe() if own else target.parent}")
+            return True
+        if target.is_tab:
             self._do("click", {"clicks": 1, "button": "left"}, None, target)
             time.sleep(0.15)  # let the tab become the current one
             actions.press("command+w")
             self._acted("key", {"combo": "command+w"})
             self._status(f"Closed {target.describe()}")
             return True
-        button = snapping.window_close_button(*target.center)
-        if button is not None:
-            self._do("click", {"clicks": 1, "button": "left"}, None, button)
-            self._status(f"Closed the window ({target.describe()})")
-            return True
+        if target.role == "AXWindow":
+            button = snapping.window_close_button(*target.center)
+            if button is not None:
+                self._do("click", {"clicks": 1, "button": "left"}, None, button)
+                self._status("Closed the window")
+                return True
+        # Not a close control, doesn't have one, not a tab: closing its whole window is too big a guess (a row in
+        # a list isn't "the window"); the agent looks at the screen and decides.
         return False
 
     def _compound(self, request, gaze, target, candidates, app):

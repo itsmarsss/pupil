@@ -164,7 +164,7 @@ def replay(episodes: list[dict]) -> list[tuple[dict, str, str]]:
         gate = ep.get("gate")
         if not gate or "nouls" not in gate:
             continue
-        elements = [Element(**{k: e[k] for k in ("role", "label", "x", "y", "w", "h", "kind", "parent") if k in e})
+        elements = [Element(**{k: e[k] for k in ("role", "label", "x", "y", "w", "h", "kind", "parent", "parent_role", "subrole") if k in e})
                     for e in ep.get("elements", [])]
         try:
             route, _, _ = _decide(_Answers(gate), elements, tuple(ep["gaze"]) if ep.get("gaze") else None, {},

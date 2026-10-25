@@ -80,3 +80,31 @@ def launch(app_path: str) -> str:
             subprocess.Popen(["open", "-a", app_path])  # to the front
             return "Opened Blender (scriptable)."
     return "Opened Blender, but the scripting bridge didn't start (see Gaze/blender.log)."
+
+
+# ---- as an agent adapter (apps/__init__.py) ----------------------------------------------------
+
+APP = "Blender"
+TOOL = {
+    "name": "blender_python",
+    "description": "Run Python inside Blender (bpy is imported) and get back what it printed and the value of its "
+                   "last expression, like Blender's Python console. Far faster and more precise than clicking for "
+                   "building or editing scenes: meshes, modifiers, materials, cameras, lights, rendering. Each call "
+                   "is one undo step for the user. Only works on a Blender opened by open_app; the error says what "
+                   "to do otherwise. Take a screenshot after bigger changes to check the result, keep each call to "
+                   "one logical step, and build alongside what's already in the scene: don't delete or replace "
+                   "existing objects (the default cube included) unless asked.",
+    "input_schema": {"type": "object", "properties": {"code": {"type": "string"}}, "required": ["code"]},
+}
+
+
+def call(inp: dict) -> tuple[str, bool]:
+    res = run(inp["code"], timeout=120)
+    if not res.get("ok"):
+        return "\n".join(filter(None, [res.get("output"), res.get("error")])), True
+    parts = [res.get("output", "").rstrip(), f"=> {res['result']}" if res.get("result") else ""]
+    return "\n".join(p for p in parts if p) or "OK (no output)", False
+
+
+def describe(inp: dict) -> str:
+    return f"run Python in Blender:\n{inp.get('code', '')[:600]}"

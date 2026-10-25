@@ -56,8 +56,9 @@ NEEDS_AGENT = Noul(
     criteria=NoulCriteria(
         true="e.g. \"summarize this page\", \"reply saying I'm running late\", \"send this to Sam\", "
              "\"find a cheap flight to Boston\", or acting on several things or with a condition: \"close these "
-             "tabs but keep one\", \"delete all the empty ones\"",
-        false="Clicking or pressing something it names or points at (\"press send\") (\"search repositories\" means press the "
+             "tabs but keep one\", \"delete all the empty ones\", or anything that takes more than one click or "
+             "keypress, like renaming or moving something or setting a field to a value",
+        false="One click or keypress on something it names or points at (\"press send\") (\"search repositories\" means press the "
               "search button), scrolling, opening an app, a keyboard command, or a few of these in a row",
     ),
 )
@@ -92,9 +93,9 @@ SCROLL_DIRECTION = Choice(instructions="Which way does `command` want to scroll?
 ELEMENT_ACTION = Choice(
     instructions="What does `command` want done to the on-screen element it is about?",
     criteria={"activate": "click it: open, press, select, go to, search with, play or check it",
-              "close": "close, dismiss or get rid of it: a tab, window, dialog, popup or panel",
+              "close": "close or dismiss it: a tab, window, dialog, popup or panel (not deleting an item, file or message)",
               "double_click": "double-click it",
-              "context_menu": "right-click it or show more options for it"},
+              "context_menu": "only if it explicitly asks to right-click it or to show its options menu"},
 )
 REFERS_TO_ELEMENT = ("Is `command` about this element, or is this the control that does what the command asks "
                      "(e.g. the close button of the popup or panel it's `inside`, to close or dismiss it)? Words "
@@ -189,6 +190,10 @@ def _decide(a, elements, gaze, apps, allow_clarify=True, allow_compound=True, co
     deictic = bool(DEICTIC & set(re.findall(r"[a-z]+", command.lower())))
     if (p("wants_element") >= YES or deictic and p("is_command") >= YES) and element_p and element_p[0][0] >= 0.5:
         return _element_route(element_p, gaze, choices, f"control {p('wants_element'):.2f}")
+    # Clearly "close" something, but no one element clearly meant: close what's under the gaze (its own or its
+    # dialog's close control, its tab, or its window), rather than a shortcut that may hit something else.
+    if p("wants_element") >= YES and elements and choices["element_action"].choice == "close":
+        return "close", f"close what's under the gaze {p('wants_element'):.2f}", {"target": elements[0]}
     if p("wants_app") >= YES:
         app = choices["app"].choice
         return "open_app", f"open app {p('wants_app'):.2f}", {"app": app, "app_path": apps.get(app)}

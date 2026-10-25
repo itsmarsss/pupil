@@ -16,7 +16,7 @@ _KEYS = {
     "control": "ctrl", "alt": "option", "caps_lock": "capslock", "minus": "-", "equal": "=", "plus": "+",
     "comma": ",", "period": ".", "slash": "/", "backslash": "\\", "bracketleft": "[", "bracketright": "]",
     "semicolon": ";", "apostrophe": "'", "grave": "`",
-    **{f"kp_{i}": f"num{i}" for i in range(10)},  # numpad (Blender's view keys: KP_1 front, KP_3 side, KP_7 top)
+    **{f"kp_{i}": f"num{i}" for i in range(10)},  # numpad (3D apps' view keys, calculators)
 }
 
 
@@ -81,7 +81,7 @@ def _mouse_event(kind, x, y, button, flags):
 
 def drag(points, button="left", modifiers=(), duration=0.5):
     """Press `button` at points[0], move through the rest with real drag events, release at the end, holding
-    `modifiers` throughout. Apps like Blender need this: middle-drag orbits, shift+middle pans, and a plain
+    `modifiers` throughout. 3D and canvas apps need this (middle-drag to orbit, shift+middle to pan), and a plain
     "move with the button down" (mouse-moved events) does nothing there."""
     import Quartz
 

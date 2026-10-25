@@ -358,3 +358,34 @@ def test_applescript_reports_errors():
     assert uitree.applescript("return 6 * 7") == ("42", False)
     out, error = uitree.applescript("this is not applescript")
     assert error and "error" in out.lower()
+
+
+def test_adapter_tools_only_when_their_app_is_in_play(monkeypatch):
+    from gaze.control import apps
+
+    monkeypatch.setattr(apps, "_running", lambda app: False)
+    assert apps.tools_for("make a slide about this") == []
+    assert [t["name"] for t in apps.tools_for("build me a car in blender")] == ["blender_python"]
+    monkeypatch.setattr(apps, "_running", lambda app: app == "Blender")
+    assert [t["name"] for t in apps.tools_for("make the cube red")] == ["blender_python"]
+    assert apps.call("not_an_adapter", {}) is None
+
+
+def test_close_never_guesses_a_whole_window(monkeypatch):
+    from gaze.control import controller as ctl
+    from gaze.control.snapping import Element
+
+    clicks, keys = [], []
+    c = ctl.VoiceController.__new__(ctl.VoiceController)
+    c._ep, c._status = {}, lambda text: None
+    c._do = lambda kind, args, gaze, target: clicks.append(target.label)
+    monkeypatch.setattr(ctl.actions, "press", lambda combo: keys.append(combo))
+    monkeypatch.setattr(ctl.time, "sleep", lambda s: None)
+    row = Element("AXRow", "Chrome Helper", 0, 0, 100, 20, kind="row")
+    dialog_close = Element("AXButton", "close", 90, 0, 10, 10, parent="Update", subrole="AXCloseButton")
+    not_now = Element("AXButton", "Not Now", 0, 40, 60, 20, parent="Update")
+    tab = Element("AXRadioButton", "Figma", 0, 0, 100, 30, kind="Registerkarte", parent_role="AXTabGroup")  # any language
+    c._candidates = [row, dialog_close, not_now, tab]
+    assert c._close(row) is False and clicks == []  # a list row: hand to the agent, don't close its window
+    assert c._close(not_now) and clicks == ["close"]  # the dialog's own close control, found as a sibling
+    assert c._close(tab) and clicks[-1] == "Figma" and keys == ["command+w"]
