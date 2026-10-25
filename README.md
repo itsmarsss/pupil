@@ -125,15 +125,15 @@ as well as Camera.
 | 1 · `gate.py` | Jev answers small yes/no questions about the command and the elements near your gaze; a truth table picks the action. It asks a question when something essential is missing, and runs a few actions in a row itself, handing the rest to Claude if a step needs it | "open Safari", "search repositories", "close this tab" (asks to confirm risky ones), "select all and copy", "send it to…" → "Who to?" |
 | 2 · `agent.py` | Claude computer-use loop, told where you were looking while you spoke | "open this in a new tab and summarize it" |
 
-Listening: the default mic goes through Apple's voice processing (noise suppression, and the Mac's own
-audio is cancelled out). The lip gate (`lips.py`) only lets speech through while you face the screen and
-your lips move, keeping 1.5 s of audio so a late open loses nothing, and drops transcripts from a visible
-face whose lips never moved (someone else, a video); the dashboard's Lips panel shows it live. Speech goes
-to Cartesia Ink-2 when `CARTESIA_API_KEY` is set (streamed, so the turn ends ~1 s after you stop; only
-while the gate is open, since it bills per second), otherwise to on-device Whisper `base.en` behind a
-Silero speech detector. `GAZE_LIP_GATE=shadow` logs what the gate would block; `GAZE_VOICE_PROCESSING=0`
-uses the raw mic. Misheard commands and on-screen labels are snapped to what was meant ("closed time" →
-"close tab").
+Listening: the default mic (AirPods included), raw; Apple's voice processing (noise suppression, echo
+cancellation) is optional, ◉ → Voice isolation. The lip gate (`lips.py`) only lets speech through while
+you face the screen and your lips move, keeping 1.5 s of audio so a late open loses nothing, and drops
+transcripts from a visible face whose lips never moved (someone else, a video); the dashboard's Lips
+panel shows it live. Speech goes to Cartesia Ink-2 when `CARTESIA_API_KEY` is set (streamed, so the turn
+ends ~1 s after you stop; only while the gate is open, since it bills per second), otherwise to on-
+device Whisper `base.en` behind a Silero speech detector. `GAZE_LIP_GATE=shadow` logs what the gate
+would block; `GAZE_VOICE_PROCESSING=1` turns voice isolation on at start. Misheard commands and on-
+screen labels are snapped to what was meant ("closed time" → "close tab").
 
 "This" means where you looked *while speaking*, snapped to the nearest Accessibility element
 (`snapping.py`). If the tracker wasn't confident then (head turned past what calibration covered),

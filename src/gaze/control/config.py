@@ -47,7 +47,8 @@ WHISPER_MODEL = os.environ.get(
     "GAZE_WHISPER", str(_LOCAL_WHISPER) if (_LOCAL_WHISPER / "model.bin").exists() else "base.en")
 MIC_NAME = os.environ.get("GAZE_MIC", "")  # force an input by name; empty = follow the macOS default (switches live,
 # e.g. to AirPods), skipping silent virtual devices like "Virtual Desktop Mic" / "BlackHole"
-VOICE_PROCESSING = os.environ.get("GAZE_VOICE_PROCESSING", "1") != "0"  # Apple's noise suppression + echo cancel
+VOICE_PROCESSING = os.environ.get("GAZE_VOICE_PROCESSING", "0") == "1"  # Apple's noise suppression + echo cancel.
+# Off by default: on AirPods it forces a call-style path that sounded and transcribed worse; ◉ → Voice isolation
 # on the system default input (not available for a mic picked by name)
 # Lip gate (lips.py): speech counts only while you face the screen and move your lips. on | shadow (log what it
 # would block, block nothing) | off. Eye tracking only; with --gaze mouse there is no face to watch.

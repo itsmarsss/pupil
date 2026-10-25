@@ -303,6 +303,8 @@ class GazeApp:
         voice = self.controller.voice if self.controller is not None else None
         if voice is not None and self.controller.enabled:
             items.append(Choice("Microphone", lambda: self._mic_options(voice)))
+            items.append(Toggle("Voice isolation (default mic)", lambda: voice.isolation,
+                                lambda: voice.set_isolation(not voice.isolation)))
         items += [
             SEPARATOR,
             Header("Learning & data"),

@@ -100,6 +100,7 @@ class Voice(threading.Thread):
         self.on_partial = on_partial
         self.gate = gate
         self.choice = config.MIC_NAME or None  # None: follow the system default input
+        self.isolation = config.VOICE_PROCESSING  # Apple voice processing on the default input
         self.device = ""  # name of the mic in use
         self._restart = threading.Event()  # reopen the stream (another mic chosen, or turned on/off)
         self._enabled = threading.Event()
@@ -108,6 +109,11 @@ class Voice(threading.Thread):
     def use(self, name):
         """Switch to the mic named `name`, or None to follow the system default (callable from any thread)."""
         self.choice = name
+        self._restart.set()
+
+    def set_isolation(self, on):
+        """Apple voice processing on or off (reopens the mic)."""
+        self.isolation = on
         self._restart.set()
 
     def set_enabled(self, on):
@@ -122,7 +128,7 @@ class Voice(threading.Thread):
             is_default = self.choice is None and mic == sd.query_devices(kind="input")["index"]
         except sd.PortAudioError:
             is_default = False
-        if config.VOICE_PROCESSING and is_default:
+        if self.isolation and is_default:
             source = audio.AppleVoiceInput()
             try:
                 source.start()
