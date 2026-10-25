@@ -217,6 +217,31 @@ REFERS_TO_ELEMENT = ("Is `command` about this element, or is this the control th
                      "(e.g. the close button of the popup or panel it's `inside`, to close or dismiss it)? Words "
                      "like this, that, it and here mean what's at or nearest the pointer, unless the command names "
                      "a different one.")
+# One reading of the whole command, for when the yes/no questions above are split (each just short of YES): the
+# most likely of these decides instead of every unsure command going to the agent. is_command is its null case.
+INTENT = Choice(
+    instructions="What does `command` want the computer to do?",
+    criteria={
+        "click_on_screen": "click, open, select or close one particular thing on screen: a button, link, tab, item "
+                           "or popup, named or looked at",
+        "key_command": "a standard command that needs no particular control: copy, paste, undo, save, find, new "
+                       "tab, close tab, go back, reload, or a plain key",
+        "scroll": "scroll the page or list",
+        "open_app": "open, launch or switch to an application",
+        "website_or_search": "open a website or run one web search",
+        "type_words": "type words it gives into a text field",
+        "quit_app": "quit an application",
+        "several_steps": "several steps, writing something new, or reading the screen to answer or decide",
+    },
+)
+# Each reading's own yes/no: the reading is taken only if that leans yes too (between NO and YES is fine)
+INTENT_NOUL = {"click_on_screen": ("wants_element", "points_at_gaze"), "key_command": ("wants_shortcut",),
+               "scroll": ("wants_scroll",), "open_app": ("wants_app",), "website_or_search": ("wants_web",),
+               "type_words": ("wants_type",), "quit_app": ("wants_quit",), "several_steps": ("needs_agent",)}
+LEAN = 0.5  # the intent's top reading, and its own yes/no, at least this
+SURE_COMMAND = 0.9  # acting on that weaker reading needs a surer command: chatter that got past is_command scores
+#                     0.7-0.9 there, commands 0.95+ (tests/agent_cases_fallthrough.jsonl, real misroutes)
+
 RISKY = Noul(instructions="Could doing `command` lose data or do something hard to undo, such as sending a message, "
                           "submitting a form, paying, or deleting something? Opening, closing, resizing, scrolling "
                           "or switching windows, tabs and pages is not risky.")
@@ -378,10 +403,65 @@ def _decide(a, elements, gaze, apps, allow_clarify=True, allow_compound=True, co
         return "shortcut", f"shortcut {p('wants_shortcut'):.2f}", {"shortcut": shortcut, "times": times}
     if element_p and element_p[0][0] >= YES:
         return _element_route(element_p, gaze, choices, "", cloud)
+    # Nothing above was sure: the one reading of the whole command decides ("look up the sofa again" with web
+    # just short of YES is still a web search), if it's clearly the most likely and its own yes/no leans yes.
+    # Context the agent can use: "do it" (assume_command), the answer to our question (allow_clarify off), or a
+    # follow-up ("knight g2" after "play the best move").
+    has_context = assume_command or not allow_clarify or follow_up
+    clearly = p("is_command") >= SURE_COMMAND or has_context
+    if "intent" in choices and clearly:
+        intent = choices["intent"]
+        top = intent.choice
+        top_p = (getattr(intent, "probabilities", None) or {}).get(top, 1.0)
+        if top_p >= LEAN:
+            if top != "several_steps" and max(p(k) for k in INTENT_NOUL[top]) >= LEAN:
+                routed = _intent_route(top, p, choices, elements, gaze, apps, cloud)
+                if routed is not None:
+                    return routed[0], f"reads as {top} {top_p:.2f}, {routed[1]}", routed[2]
+            # a clear command with no direct way to do it ("clear the screen": no such shortcut)
+            return "agent", f"reads as {top} {top_p:.2f}, needs the agent", {}
     # Unsure it was meant for the computer and nothing direct fits: offer it ("do it" runs it) rather than drop it.
     if not sure:
         return "maybe", f"maybe a command {p('is_command'):.2f}", {}
+    # Probably a command, but no clear reading of it: hold it too, rather than a slow agent run that says
+    # "unclear" or guesses (most of these are talk the lip gate let through).
+    if not clearly:
+        return "maybe", f"no clear reading of it (command {p('is_command'):.2f})", {}
     return "agent", "a command, but no single direct action matched", {}
+
+
+def _intent_route(intent, p, choices, elements, gaze, apps, cloud):
+    """The route for the intent's reading, or None if it can't be carried out directly (the agent takes it)."""
+    element_p = sorted(((p(f"el_{i}"), el) for i, el in enumerate(elements)), key=lambda x: -x[0])
+    if intent == "click_on_screen":
+        if element_p and element_p[0][0] >= LEAN:
+            return _element_route(element_p, gaze, choices, "", cloud)
+        if elements and p("points_at_gaze") >= LEAN:  # "click", "open it": what's under the gaze
+            action = choices["element_action"].choice
+            route = {"activate": "click", "close": "close", "double_click": "double_click",
+                     "context_menu": "right_click"}[action]
+            return route, "what's under the gaze", {"target": elements[0]}
+        return None
+    if intent == "key_command":
+        shortcut = choices["shortcut"].choice
+        times = TIMES_COUNT.get(choices["times"].choice, 1) if shortcut in commands.REPEATABLE and "times" in choices else 1
+        return "shortcut", shortcut, {"shortcut": shortcut, "times": times}
+    if intent == "scroll":
+        return "scroll", choices["scroll_direction"].choice, {"args": {
+            "direction": choices["scroll_direction"].choice,
+            "amount": SCROLL_STEPS.get(choices["scroll_amount"].choice, 4) if "scroll_amount" in choices else 4}}
+    if intent == "open_app":
+        app = choices["app"].choice
+        return "open_app", app, {"app": app, "app_path": apps.get(app)}
+    if intent == "website_or_search":
+        return "navigate", "web", {}
+    if intent == "type_words":
+        return "type", "type", {}
+    if intent == "quit_app":
+        which = choices["quit_which"].choice
+        return "quit_app", "quit", {"args": {"app": None if which == LOOKED_AT else which,
+                                             "force": p("force_quit") >= YES}}
+    return None
 
 
 class Gate:
@@ -446,7 +526,7 @@ class Gate:
             "agent_tier": AGENT_TIER, "agent_budget": AGENT_BUDGET, "needs_research": NEEDS_RESEARCH,
             "scroll_direction": SCROLL_DIRECTION, "scroll_amount": SCROLL_AMOUNT, "element_action": ELEMENT_ACTION,
             "wants_cancel": WANTS_CANCEL, "wants_type": WANTS_TYPE, "wants_web": WANTS_WEB,
-            "wants_quit": WANTS_QUIT, "force_quit": FORCE_QUIT,
+            "wants_quit": WANTS_QUIT, "force_quit": FORCE_QUIT, "intent": INTENT,
             "quit_which": Choice(instructions="Which application does `command` want to quit?", criteria=quit_options),
             **({"about_last": ABOUT_LAST, "last_mode": LAST_MODE, "neighbour": NEIGHBOUR,
                 "corrects_last": CORRECTS_LAST} if last else {}),
@@ -457,7 +537,9 @@ class Gate:
         route, why, extras = _decide(result, elements, gaze, apps, command=utterance, cloud=cloud, **flags)
         answers = {"route": route, "why": why, "ms": round(ms), "flags": flags,
                    "nouls": {k: round(v.noul, 4) for k, v in result.nouls.items()},
-                   "choices": {k: v.choice for k, v in result.choices.items()}}
+                   "choices": {k: v.choice for k, v in result.choices.items()},
+                   "intent": {k: round(v, 3) for k, v in (getattr(result.choices["intent"], "probabilities", None)
+                                                         or {}).items()}}
         decision = Decision(route, why, ms, risky=result.nouls["risky"].noul, answers=answers,
                             tier=result.choices["agent_tier"].choice, budget=result.choices["agent_budget"].choice,
                             research=result.nouls["needs_research"].noul >= YES, **extras)

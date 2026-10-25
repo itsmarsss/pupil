@@ -132,7 +132,7 @@ def menu(action: str = "list", path: str = "", app: str | None = None) -> str:
 
 
 _index_cache: dict = {}  # pid -> (built at, {normalised title: menu item})
-INDEX_TTL_S = 60
+INDEX_TTL_S = 600  # menus rarely change; a stale entry is re-indexed when pressing it fails (press_menu_command)
 
 
 def _norm_title(title: str) -> str:
@@ -153,6 +153,15 @@ def _menu_index(app_element, pid, rebuild=False) -> dict:
                 index.setdefault(_norm_title(_text(sub, "AXTitle")), sub)
     _index_cache[pid] = (time.time(), index)
     return index
+
+
+def warm_menu_index() -> None:
+    """Index the frontmost app's menus now if they aren't, so a command doesn't wait ~0.4 s for it (they're
+    read when the app comes to the front, off the command path)."""
+    app = NSWorkspace.sharedWorkspace().frontmostApplication()
+    if app is not None:
+        pid = app.processIdentifier()
+        _menu_index(AXUIElementCreateApplication(pid), pid)
 
 
 def menu_commands() -> tuple[str, list[str]]:

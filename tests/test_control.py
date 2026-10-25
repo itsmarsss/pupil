@@ -723,3 +723,46 @@ def test_research_goes_to_the_background_not_the_agent(monkeypatch):
     c._say = said.append
     c._research_done(job)
     assert said == ["Bose edges it."] and c.activity[-1]["did"] == "Bose edges it."
+
+
+def test_frame_while_speaking_is_the_one_at_the_gaze():
+    from PIL import Image
+    from pupil.control.screen import Frame, Frames
+    img = Image.new("RGB", (10, 10))
+    frames = Frames(None, lambda: None, lambda: False)
+    for t, g in ((9.0, (0, 0)), (10.0, (100, 100)), (10.5, (5, 5)), (30.0, (100, 100))):
+        frames._frames.append(Frame(t, g, img, img, (0, 0, 10, 10)))
+    assert frames.during(10, 11, (100, 100)).t == 10.0  # not the later one, after they'd finished speaking
+    assert frames.during(10, 11, (4, 4)).t == 10.5
+    assert frames.during(20, 21, (0, 0)) is None  # nothing taken while they spoke: a fresh screenshot instead
+
+
+
+def test_close_tab_with_nothing_to_close_under_the_gaze_is_close_tab():
+    from pupil.control import controller as ctl
+    from pupil.control.gate import Decision
+    from pupil.control.snapping import Element
+
+    c = ctl.VoiceController.__new__(ctl.VoiceController)
+    c._ep, c._status, c._candidates, shortcuts = {}, lambda text: None, [], []
+    c._shortcut = lambda name, times=1: shortcuts.append(name)
+    row = Element("AXRow", "Search results", 0, 0, 100, 20, kind="row")
+    said = {"nouls": {"wants_shortcut": 0.99}, "choices": {"shortcut": "close_tab"}}  # "Close tab." (logged)
+    assert c._apply(Decision("close", "", 0, target=row, answers=said), None) and shortcuts == ["close_tab"]
+    said["nouls"]["wants_shortcut"] = 0.2  # "close this" on a row: the agent looks instead
+    assert c._apply(Decision("close", "", 0, target=row, answers=said), None) is False
+
+
+def test_truth_table_falls_back_on_the_one_reading_of_the_command():
+    from pupil.control.gate import _decide
+
+    # web just short of YES, and short of needing the agent: still a web search, not a 9 s agent run (logged)
+    said = dict(is_command=0.99, wants_web=0.69, needs_agent=0.55)
+    assert _decide(_answers(choices={"intent": "website_or_search"}, **said), [], None, {})[0] == "navigate"
+    # clearly a key command, but no such shortcut ("clear the screen"): the agent
+    said = dict(is_command=0.99, wants_shortcut=0.2)
+    assert _decide(_answers(choices={"intent": "key_command"}, **said), [], None, {})[0] == "agent"
+    # talk the lip gate let through ("Should get the demo."): held, not acted on or sent to the agent
+    said = dict(is_command=0.79, wants_element=0.55)
+    assert _decide(_answers(choices={"intent": "click_on_screen"}, **said), [], None, {})[0] == "maybe"
+    assert _decide(_answers(choices={"intent": "click_on_screen"}, **said), [], None, {}, assume_command=True)[0] == "agent"

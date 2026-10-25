@@ -26,7 +26,7 @@ from .gate import CLARIFY_PROMPTS, MAX_CANDIDATES, NO, YES, Gate
 from .hud import Hud
 from .indicator import Indicator, Status
 from .lips import LipGate
-from .screen import Screen
+from .screen import Frames, Screen
 from .research import Research
 from .speech import Speaker
 from .voice import CartesiaVoice, TypedInput, Voice, input_devices
@@ -127,6 +127,9 @@ class VoiceController:
         self._agent_route = ("standard", "normal")  # Jev's model tier and step budget for the agent
         self.choosing = None  # "which one?" asked: options, action, deadline
         self._cloud = None  # gaze heat for the command being handled
+        self._frame = None  # the screen while the command being handled was said (screen.Frame)
+        self.frames: Frames | None = None  # the screen while you speak (not when typing)
+        self._hearing = False  # the mic is in an utterance
         self._last_target: TargetReference | None = None  # last target-bearing action, for corrections/follow-ups
         self.indicator = Indicator()  # status pill trailing the gaze
         self._busy_with: Status | None = None  # the worker is waiting on Jev / the dictation model
@@ -164,6 +167,7 @@ class VoiceController:
         threading.Thread(target=self._command_loop, name="voice-commands", daemon=True).start()
         threading.Thread(target=dictation.warm, name="warm-dictation", daemon=True).start()
         threading.Thread(target=extract.warm, name="warm-extract", daemon=True).start()
+        threading.Thread(target=self._warm_menus, name="warm-menus", daemon=True).start()
         if self._typed:
             TypedInput(self._on_utterance).start()
             self.hud.mic = "typing in terminal"
@@ -173,9 +177,21 @@ class VoiceController:
                                on_partial=lambda text: self.events.put(("partial", text)), gate=self.lips)
             self.voice.start()
             self.hud.mic = "loading"
+            self.frames = Frames(self.screen, self.gaze.point,
+                                 lambda: self._hearing or (self.lips is not None and self.lips.would_open()))
+            self.frames.start()
         if not macos.has_accessibility():
             self.hud.status = "Grant Accessibility permission to your terminal (System Settings > Privacy & Security)."
         self.hud.show()
+
+    def _warm_menus(self):
+        """Keep the frontmost app's menu index built (standard actions go through the app's own menu commands)."""
+        while True:
+            try:
+                uitree.warm_menu_index()
+            except Exception:
+                pass  # an app without menus or Accessibility access: the command path reads them, or presses keys
+            time.sleep(1.0)
 
     def _register_settings(self):
         """Voice control's own settings, for the agent's settings tool."""
@@ -248,6 +264,7 @@ class VoiceController:
         self.events.put(("speech", (text, t0, t1, clip)))
 
     def _on_mic_state(self, state):
+        self._hearing = state == "listening"
         self.gaze.report("mic", state)
         self.events.put(("mic", state))
         if state == "listening" and self.lips is None:  # no lips to watch: any speech at the mic barges in
@@ -438,6 +455,8 @@ class VoiceController:
 
     def _handle(self, cmd, t0, t1):
         ep = self._ep
+        self._lap("started")
+        self._frame = None
         if cmd.kind != "confirm":
             self.maybe = None  # said something else: whatever it was, it's moved on
         if cmd.kind == "dictation":
@@ -504,6 +523,8 @@ class VoiceController:
         self._report_target(target)
         confidence = self.gaze.confidence_during(t0, t1)
         self._cloud, self._candidates, self._confidence = cloud, candidates, confidence
+        self._frame = self.frames.during(t0, t1, gaze) if self.frames else None
+        self._lap("looked")  # gaze, elements under it, the frame
         ep.update(gaze=[round(v, 1) for v in gaze] if gaze else None, confidence=round(confidence, 3),
                   target=element_dict(target, gaze), cloud=cloud.summary(),
                   elements=[element_dict(c, gaze) for c in candidates[:MAX_CANDIDATES]])
@@ -514,6 +535,11 @@ class VoiceController:
             ep["route"] = "gate"
             self._route_with_gate(cmd.args["request"], gaze, target, candidates,
                                   allow_clarify=not cmd.args.get("clarified"))
+
+    def _lap(self, name):
+        """ms from the transcript arriving to `name`, in the episode log: where a slow command spent its time."""
+        if self._ep is not None and "t" in self._ep:
+            self._ep.setdefault("laps", {})[name] = round((time.time() - self._ep["t"]) * 1000)
 
     def _report_target(self, target):
         if target is None:
@@ -532,6 +558,7 @@ class VoiceController:
         ep["agent_research"] = research
         self.agent.start(request, gaze, target, candidates, app, tier=tier, budget=budget,
                          context=self._conversation_context(request), research=research,
+                         frame=getattr(self, "_frame", None),
                          on_done=lambda text, steps, s: (
                              self.episodes.outcome(ep, agent_result=text, agent_steps=steps, agent_s=round(s, 1),
                                                    apify=list(self.agent.provider_metadata)),
@@ -566,6 +593,7 @@ class VoiceController:
             ep["decision"] = "agent"
             self._start_agent(request, gaze, target, candidates, app)
             return
+        self._lap("decided")
         ep["gate"], ep["decision"] = d.answers, d.route
         if d.answers["nouls"].get("corrects_last", 0) >= YES:  # "no, not that": the last action was wrong
             self.episodes.corrected(ep)
@@ -665,7 +693,15 @@ class VoiceController:
                 self._set_pending(("close", {}, gaze, d.target), f"close {d.target.describe()}")
                 self._status(f'Closing {d.target.describe()} might lose work. Say "confirm" to do it.')
                 return True
-            return self._close(d.target)
+            if self._close(d.target):
+                return True
+            # Nothing under the gaze to close, but they named the action ("close tab"): the app's own Close Tab,
+            # not a 20 s agent run for Cmd+W.
+            a = d.answers or {}
+            if a.get("choices", {}).get("shortcut") == "close_tab" and a.get("nouls", {}).get("wants_shortcut", 0) >= YES:
+                self._shortcut("close_tab")
+                return True
+            return False
         if d.route in _ROUTE_ACTIONS:
             kind, args = _ROUTE_ACTIONS[d.route]
             if risky:
@@ -1020,6 +1056,7 @@ class VoiceController:
         for i, clause in enumerate(clauses):
             if i:  # the screen has changed: look again where the user is looking now
                 time.sleep(SETTLE_S.get(steps[-1].get("route"), DEFAULT_SETTLE_S))
+                self._frame = None  # what was on screen while they spoke is gone too
                 gaze = self.gaze.point() or gaze
                 target, candidates = snapping.snap(*gaze, self.screen.w_pt, self.screen.h_pt) if gaze else (None, [])
                 app = macos.frontmost_app()

@@ -77,7 +77,7 @@ TOOLS = [{"type": "computer_toolset_20260801"}, *CUSTOM_TOOLS]  # + adapter tool
 
 SYSTEM = """You operate the user's Mac on their behalf. The user is hands-free: they look at things on screen and speak short commands.
 
-In the first screenshot, a red ring marks where the user was looking while they spoke, and a blue box marks the UI element under their gaze (if one was found). "This", "that", "here", "there" and "it" refer to that spot unless the request clearly says otherwise. The gaze is approximate: if the ring sits between elements, choose the one that best fits the request.
+In the first screenshot, a red ring marks where the user was looking while they spoke, and a blue box marks the UI element under their gaze (if one was found). "This", "that", "here", "there" and "it" refer to that spot unless the request clearly says otherwise. The gaze is approximate: if the ring sits between elements, choose the one that best fits the request. When they mean something inside a video or picture ("where can I buy this", "what is this"), identify it from what you see (brand, model, colour, distinctive details; the close-up when there is one) and work from that description; open searches and shops in a new tab so what they were watching stays put.
 
 Coordinates are pixels in the screenshots you receive. Be efficient: use the fewest actions, batch actions when you are confident, and stop as soon as the request is done. Bigger requests (build a scene, make a slide, fill in a spreadsheet) are fine: do them in steps and check your work with screenshots rather than declining. Work in any app by choosing the most direct route that fits it, in roughly this order: a keyboard shortcut you know; the app's menu (menu: list to discover, choose to run); its controls by id (ui_elements, press_element, set_value) rather than pixels; AppleScript for scriptable apps; an app adapter tool if one is offered for the app; and screenshots with mouse and keys for everything else. Apps that draw their own interface (3D and design tools, games, canvases) expose no menus or controls beyond the basics: work from screenshots, use zoom for small text, keep the mouse over the area a keyboard shortcut should act on (many such apps apply shortcuts to the region under the pointer), and use drag for middle/right-button or modifier drags. For an ongoing activity (playing a game, "keep doing this"), keep going step after step without reporting until the user says stop; in real-time games act fast, batch several key presses per step, and look again often. When you type words the user dictated, type what they meant, not the transcript: spoken symbols become characters where the context calls for them ("slash btw" in a chat box or terminal is "/btw", "dash dash help" is "--help", "gmail dot com" is "gmail.com"), spoken punctuation becomes punctuation, fillers and self-corrections are cleaned up. When you finish, reply in a few words, telegraphic, no filler: it is read aloud and shown at their gaze. Fragments are fine, grammar isn't needed: "Done.", "Opened. 3 results.", "Can't: needs login.", "Sent to Sam." No pleasantries, no "I've", no restating the request, no lists, markdown, URLs or coordinates. Under 8 words unless they asked a question that needs more. The user may interrupt while you work: their words arrive as "The user just said: ...". Treat that as the latest instruction, changing or narrowing the task as asked.
 
@@ -135,10 +135,11 @@ class Agent:
         self._paused = None
 
     def start(self, request, gaze, target, candidates, app_name, on_done=None, tier="standard", budget="normal",
-              context="", research=False):
+              context="", research=False, frame=None):
         """on_done(result text, steps, seconds) when the run ends (not when it pauses for "confirm"). context: the
         conversation just before this request, so "that", "the other one" and answers make sense. research: Jev
-        judged it needs current web information (offers the Apify marketplace tools)."""
+        judged it needs current web information (offers the Apify marketplace tools). frame: the screen while they
+        spoke (screen.Frame), shown instead of a fresh screenshot, since a video has moved on by now."""
         if not (os.environ.get("ANTHROPIC_API_KEY") or os.environ.get("ANTHROPIC_AUTH_TOKEN")):
             self.on_status("This needs the agent, but ANTHROPIC_API_KEY isn't set (add it to .env).")
             return
@@ -152,9 +153,12 @@ class Agent:
         self.tier, self.budget = tier, budget  # chosen by Jev (gate.AGENT_TIER / AGENT_BUDGET)
         self._model, self._effort = config.AGENT_TIERS.get(tier, config.AGENT_TIERS["standard"])
         self._max_steps = config.AGENT_BUDGETS.get(budget, config.MAX_AGENT_STEPS)
-        # app adapters only when their app is in play; web research tools when there's a token or Jev asks for them
-        self._tools = [*TOOLS, *apps.tools_for(request), *providers.tools_for(research)]
-        messages = [self._first_message(request, gaze, target, candidates, app_name, context)]
+        # Fixed tools first with a cache breakpoint after them, then the ones some requests get: every task reuses
+        # the cached prefix instead of writing ~10k tokens again. App adapters only when their app is in play; web
+        # research tools when there's a token or Jev asks for them.
+        self._tools = [*TOOLS[:-1], {**TOOLS[-1], "cache_control": {"type": "ephemeral"}},
+                       *apps.tools_for(request), *providers.tools_for(research)]
+        messages = [self._first_message(request, gaze, target, candidates, app_name, context, frame)]
         self._spawn(messages, request, None)
 
     def resume(self):
@@ -213,7 +217,7 @@ class Agent:
         if self._on_done is not None and not self.paused:
             self._on_done(result, self._steps, time.time() - self._started)
 
-    def _first_message(self, request, gaze, target, candidates, app_name, context=""):
+    def _first_message(self, request, gaze, target, candidates, app_name, context="", frame=None):
         lines = []
         if context:
             lines += ["Conversation just before this, oldest first (\"done\" is what the app did; what the user says "
@@ -234,6 +238,14 @@ class Agent:
                 for c in others
             )
             lines.append(f"Other elements near their gaze: {nearby}.")
+        if frame is not None:
+            lines.append("The first image is the screen while they spoke, the second a full-resolution close-up of "
+                         "where they were looking (red ring). It may have changed since (a video keeps playing): "
+                         "what they meant is in these. Take a screenshot to see the screen now before acting on it.")
+            shot = [image_block(self.screen.mark(frame.shot.copy(), gaze, target))]
+            if gaze:
+                shot.append(image_block(frame.close_up(gaze)))
+            return {"role": "user", "content": [{"type": "text", "text": "\n".join(lines)}, *shot]}
         try:
             shot = [image_block(self.screen.screenshot(gaze=gaze, target=target))]
         except ScreenshotUnavailable as e:
@@ -262,7 +274,7 @@ class Agent:
             with models.calling("agent", self._model, f"step {step + 1}"), self.client.beta.messages.stream(
                 model=self._model,
                 max_tokens=16000,
-                system=SYSTEM,
+                system=[{"type": "text", "text": SYSTEM, "cache_control": {"type": "ephemeral"}}],
                 tools=self._tools,
                 messages=messages,
                 output_config={"effort": self._effort},
