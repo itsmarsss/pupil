@@ -55,3 +55,26 @@ def running_apps():
             if a.activationPolicy() == NSApplicationActivationPolicyRegular and a.localizedName()]
     apps.sort(key=lambda a: a != front)
     return [(str(a.localizedName()), a.processIdentifier()) for a in apps]
+
+
+_PAGE_SCRIPTS = (  # (how to ask, for apps that answer it): Chromium browsers, then Safari-style
+    'tell application "{app}" to return (URL of active tab of front window) & "\\n" & (title of active tab of front window)',
+    'tell application "{app}" to return (URL of front document) & "\\n" & (name of front document)',
+)
+
+
+def front_page(timeout_s: float = 1.5):
+    """(title, url) of the page in the frontmost browser, or None (not a browser, or it won't say)."""
+    import subprocess
+
+    app = frontmost_app()
+    for script in _PAGE_SCRIPTS:
+        try:
+            out = subprocess.run(["osascript", "-e", script.format(app=app.replace('"', ""))], capture_output=True,
+                                 text=True, timeout=timeout_s)
+        except subprocess.TimeoutExpired:
+            return None
+        url, _, title = out.stdout.strip().partition("\n")
+        if out.returncode == 0 and url.startswith(("http://", "https://")):
+            return title.strip(), url.strip()
+    return None

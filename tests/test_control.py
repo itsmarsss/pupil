@@ -689,3 +689,37 @@ def test_conversation_reaches_jev_and_the_agent():
     c.agent = _A(busy=False, paused=False, phase=None, doing="", _steps=0, tier="standard")
     c.maybe = ("open the report", ctl.time.time() + 10, None, None, [], {})
     assert c._indicator_status() is None
+
+
+def test_research_goes_to_the_background_not_the_agent(monkeypatch):
+    from pupil.control import controller as ctl
+    from pupil.control.gate import Decision
+    from pupil.control.research import Job
+
+    started, agent_runs, said = [], [], []
+    c = ctl.VoiceController.__new__(ctl.VoiceController)
+    c._ep, c._flash, c.gaze = {"id": "e1", "text": "compare this with three alternatives"}, None, _A()
+    statuses = []
+    c._status = statuses.append
+    c.gate = _A(available=True, recent=[], last_reply=None,
+                decide=lambda *a, **k: Decision("agent", "needs web research 0.95", 1, research=True, answers={"nouls": {}}))
+    c.research = _A(available=lambda: True,
+                    start=lambda request, context: started.append((request, context)) or Job(7, request, request, 0.0))
+    c._research_eps, c._cloud, c._last_target = {}, None, None
+    c.agent = _A(available=True, busy=False, start=lambda *a, **k: agent_runs.append(a))
+    monkeypatch.setattr(ctl.macos, "frontmost_app", lambda: "Google Chrome")
+    monkeypatch.setattr(ctl.macos, "front_page", lambda: ("Sony WH-1000XM6 - Amazon", "https://amazon.com/x"))
+    monkeypatch.setattr(ctl.macos, "running_apps", lambda: [])
+    monkeypatch.setattr(ctl.uitree, "front_context", lambda: ("Google Chrome", "Sony"))
+    c._route_with_gate("compare this with three alternatives", (700, 400), None, [])
+    assert started and not agent_runs, statuses  # handed off: voice control is free again
+    assert "Sony WH-1000XM6" in started[0][1] and c._research_eps[7]["route"] == "research"
+
+    # when it's done: spoken only if nothing else is going on
+    job = Job(7, "compare this", "Compare the XM6", 0.0, phase="done", answer="Bose edges it.", ended=1.0)
+    c.episodes = _A(outcome=lambda ep, **kw: None)
+    c.speaker, c.pending, c.dictating, c.hud = _A(speaking=False), None, False, _A(mic="idle")
+    c.agent.busy = False
+    c._say = said.append
+    c._research_done(job)
+    assert said == ["Bose edges it."] and c.activity[-1]["did"] == "Bose edges it."

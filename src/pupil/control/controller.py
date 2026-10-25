@@ -27,6 +27,7 @@ from .hud import Hud
 from .indicator import Indicator, Status
 from .lips import LipGate
 from .screen import Screen
+from .research import Research
 from .speech import Speaker
 from .voice import CartesiaVoice, TypedInput, Voice, input_devices
 
@@ -109,6 +110,10 @@ class VoiceController:
                            on_provider_event=lambda state: self.gaze.report("research", research=state))
         self.speaker = Speaker(on_state=lambda on: self.events.put(("speaking", on)))
         self.agent.on_reply = lambda text: self._say(text)  # the agent's answer (or what it's waiting on), aloud
+        # web research in the background: the notch shows it, voice control stays free (research.py)
+        self.research = Research(on_done=lambda job: self.events.put(("research_done", job)),
+                                 on_provider_event=lambda state: self.gaze.report("research", research=state))
+        self._research_eps: dict = {}  # job id -> the episode that asked for it
         self.episodes = EpisodeLog(source="typed" if typed else "voice")
         self.flash_until = 0.0
         self.pending = None  # direct action waiting for "confirm"
@@ -296,6 +301,8 @@ class VoiceController:
                 self.hud.mic_device = payload
             elif kind == "status":
                 self.hud.status = payload
+            elif kind == "research_done":
+                self._research_done(payload)
             elif kind == "flash":
                 self.hud.flash = payload
                 self.flash_until = time.time() + 0.4
@@ -380,7 +387,14 @@ class VoiceController:
         self.commands.put((cmd, t0, t1, ep))
 
     def _cancel(self):
-        """Stop everything: speech, the agent, anything waiting for an answer."""
+        """Stop everything: speech, the agent, anything waiting for an answer. Background research only when it's
+        the only thing going on (otherwise "stop" is about what's in front of you)."""
+        research = getattr(self, "research", None)
+        busy = (self.agent.busy or self.agent.paused or self.pending or self.speaker.speaking or self.dictating
+                or self.choosing is not None or self.clarifying is not None)
+        if research is not None and not busy and research.cancel_all():
+            self.hud.status = "Research stopped."
+            return
         self.speaker.stop()
         self.choosing, self.hud.badges = None, []
         if self.dictating:
@@ -577,6 +591,9 @@ class VoiceController:
             self._status(prompt)
             self._say(prompt)
             return
+        if d.route == "agent" and d.research and self.research.available():  # in the background, the notch shows it
+            self._start_research(request)
+            return
         if d.route == "compound":
             self._compound(request, gaze, target, candidates, app)
             return
@@ -712,6 +729,45 @@ class VoiceController:
         subprocess.Popen(["open", target])
         self._acted("open_app", {"url": target})
         self._status(f"Opened {target}")
+
+    def _start_research(self, request):
+        """Research `request` in the background (research.py): you carry on, the notch shows how it's going."""
+        ep = self._ep
+        page = macos.front_page()
+        _, window = uitree.front_context()
+        context = "\n".join(line for line in (
+            f"Page they're on: {page[0]} ({page[1]})" if page else (f"Window they're in: {window}" if window else ""),
+            self._conversation_context(request) and f"Conversation before:\n{self._conversation_context(request)}",
+        ) if line)
+        job = self.research.start(request, context)
+        if job is None:
+            self._status("Already researching two things: say \"stop\" to drop them, or wait.")
+            self._say("Still on two other questions.")
+            return
+        ep.update(route="research", acted=True, research_job=job.id)
+        self._research_eps[job.id] = ep
+        self._flash = (Status("done", "✓ researching"), time.time() + FLASH_S)
+        self._note_activity("Researching…", ep, agent=True)
+        self._status(f"Researching in the background: {request[:60]}")
+
+    def _research_done(self, job):
+        """A background research job ended (main thread): its answer joins the conversation and the notch; it's
+        spoken only if nothing else is going on."""
+        ep = self._research_eps.pop(job.id, None)
+        if job.phase == "done":
+            self._converse("assistant", f"Research on {job.question}: {job.answer}")
+            if ep is not None:
+                self._note_activity(job.answer, ep, agent=True)
+                self.episodes.outcome(ep, research_answer=job.answer, research_sources=len(job.cards),
+                                      research_s=round((job.ended or time.time()) - job.started, 1),
+                                      research_charge_usd=job.charge_usd)
+            quiet = (self.agent.busy or self.speaker.speaking or self.pending or self.dictating
+                     or self.hud.mic in ("listening", "transcribing"))
+            if not quiet:
+                self._say(job.answer)
+        elif ep is not None:
+            self._note_activity("Research stopped" if job.phase == "cancelled" else "Research failed", ep, agent=True)
+            self.episodes.outcome(ep, research_error=job.error or job.phase)
 
     def _last_action(self):
         """What the last action did, for Jev to read "again" / "no, the left one" against; None if none recent."""
@@ -1065,8 +1121,9 @@ class VoiceController:
         if not agent:  # (the agent's reply is logged by _say)
             self._converse("done", did)
         activity = self.__dict__.setdefault("activity", deque(maxlen=4))  # (tests build controllers bare)
-        if activity and key is not None and activity[-1].get("id") == key:
-            activity[-1].update(did=did, t=time.time(), agent=agent)
+        same = next((item for item in activity if key is not None and item.get("id") == key), None)
+        if same is not None:  # a later action of the same command (or research finishing after other commands)
+            same.update(did=did, t=time.time(), agent=agent)
         else:
             activity.append({"id": key, "said": said, "did": did, "t": time.time(), "agent": agent})
 

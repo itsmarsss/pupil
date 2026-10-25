@@ -165,8 +165,12 @@ Jev to read in context, with no fuzzy matching to a phrase list.
 
 Web research (by Anthony Lu): with `APIFY_TOKEN` set, the agent can read public pages and research current
 questions ("compare this with three alternatives", "is this the cheapest?") through Apify's hosted MCP server,
-citing its sources; when Jev judges a request needs the web, it may also look up and run a specialised Apify
-Actor, always after you say "confirm". Scraped text is untrusted data; every run is capped (45 s, 15 items,
+citing its sources. When Jev judges a request needs the web, it runs in the background (`research.py`): a fast
+model names what "this" is from the page you're on, one capped Apify run gathers sources, and the answer comes back
+as a sentence, while you carry on with something else. The notch shows it ("Researching" in its ears, then the
+answer, and in the open notch each job's progress, answer and a click-through to its top source); it's spoken
+only if nothing else is going on, two can run at once, and "stop" with nothing else running drops them. Inside
+agent tasks the agent can also look up and run a specialised Apify Actor, always after you say "confirm". Scraped text is untrusted data; every run is capped (45 s, 15 items,
 $0.25 by default) and so is each task's total (`PUPIL_APIFY_TASK_BUDGET_USD`, $1). Results show in the
 dashboard's "Decision research" tab; `actors/accessible-decision-researcher` is a custom Actor for it.
 

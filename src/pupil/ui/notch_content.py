@@ -24,6 +24,7 @@ class NotchModel:
     mic: str = ""
     model: str | None = None  # the model being called right now, if any ("Jev", "claude-sonnet-5-5")
     activity: list = field(default_factory=list)  # recent [{said, did, t}], newest last
+    research: list = field(default_factory=list)  # background research jobs, newest first (research.Job.summary)
 
 
 TRACKING_COLOURS = {"tracking": "green", "uncalibrated": "amber", "looking away": "grey", "no face": "grey",
@@ -35,9 +36,24 @@ SHORT = {"listening": "Listening", "hearing": "Hearing", "thinking": "Thinking",
          "dictating": "Dictating", "error": "Error"}
 
 
+RESEARCH_PEEK_S = 10.0  # a finished research shows its answer under the notch this long
+
+
+def researching(m: NotchModel) -> list[dict]:
+    return [j for j in m.research if j.get("phase") in ("starting", "running")]
+
+
+def ear_state(m: NotchModel) -> str | None:
+    """What the ears show: what voice control is doing, else background research, else nothing (idle)."""
+    return m.state or ("researching" if researching(m) else None)
+
+
 def ear_label(m: NotchModel) -> str:
     """The word or two right of the notch while something's happening."""
     if m.state is None:
+        running = researching(m)
+        if running:
+            return "Researching" if len(running) == 1 else f"Researching · {len(running)}"
         return ""
     step = re.search(r"step (\d+)", m.label) if m.state == "agent" else None
     if step:
@@ -56,6 +72,9 @@ def peek_line(m: NotchModel, now: float) -> tuple[str, str] | None:
         text, _, ended = m.caption
         if ended is None or now - ended < 1.5:
             return "speech", text
+    for job in m.research:  # newest first
+        if job.get("ended") and now - job["ended"] < RESEARCH_PEEK_S and job.get("phase") in ("done", "failed"):
+            return "research", job.get("answer") if job["phase"] == "done" else "Research failed: try again later"
     return None
 
 
@@ -97,6 +116,27 @@ def footer(m: NotchModel) -> tuple[str, str]:
     left = f"{m.tracking.capitalize()}{' · ' + left if left else ''}"
     right = m.model or m.mic
     return left, right
+
+
+def research_rows(m: NotchModel, now: float) -> list[dict]:
+    """Background research for the open notch: running first, then the last finished ones (two at most in all)."""
+    rows = []
+    for job in m.research:
+        phase = job.get("phase")
+        if phase == "cancelled":
+            continue
+        if phase in ("starting", "running"):
+            status = f"{int(job.get('elapsed_s') or 0)}s"
+        elif phase == "done":
+            n = len(job.get("sources") or [])
+            status = f"{n} source{'s' if n != 1 else ''}"
+        else:
+            status = "failed"
+        sources = job.get("sources") or []
+        rows.append({"question": job.get("question") or job.get("said", ""), "phase": phase, "status": status,
+                     "answer": job.get("answer") or "", "url": sources[0][1] if sources else ""})
+    rows.sort(key=lambda r: r["phase"] not in ("starting", "running"))
+    return rows[:2]
 
 
 HINTS = ["“click this”", "“scroll down”", "“open Notes”", "“close that tab”"]

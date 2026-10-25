@@ -361,6 +361,7 @@ class GazeApp:
             m.pending = c.pending_text or ("let the agent continue" if c.agent.paused else None)
             m.mic = c.hud.mic_device or ""
             m.activity = list(c.activity)
+            m.research = c.research.snapshot()
             active = next((r for r in models.snapshot() if r.get("active") and r["role"] != "stt"), None)
             m.model = None if active is None else "Jev" if active["role"] == "jev" else active["model"]
         return m

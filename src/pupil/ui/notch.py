@@ -58,10 +58,12 @@ PEEK_H = 30  # the line it grows for something to read
 PEEK_W = 380
 OPEN_W = 456
 ROW_H = 24  # a recent command
+RESEARCH_ROW_H, RESEARCH_ANSWER_H = 22, 18  # a research job, and its answer under it
+RESEARCH_MAX_H = 20 + 2 * (RESEARCH_ROW_H + RESEARCH_ANSWER_H) + 6  # the "Research" label and two jobs
 RECENT_ROWS = 3
 OPEN_TOP_H = 12 + 38 + 14 + 20  # status row, then the "Recent" label
 OPEN_FOOT_H = 8 + 14 + 18  # gap, footer line, bottom margin
-OPEN_BODY_H = OPEN_TOP_H + RECENT_ROWS * ROW_H + OPEN_FOOT_H  # the tallest it gets, below the notch band
+OPEN_BODY_H = OPEN_TOP_H + RESEARCH_MAX_H + RECENT_ROWS * ROW_H + OPEN_FOOT_H  # the tallest, below the notch band
 SHADOW_ROOM = 40  # around the shape, for its shadow
 MAX_W, MAX_H = OPEN_W + 2 * SHOULDER + 2 * SHADOW_ROOM, FALLBACK_H + OPEN_BODY_H + SHADOW_ROOM
 
@@ -90,11 +92,12 @@ NAMED = {"green": _rgb("#3ddc84"), "amber": _rgb("#ffc43d"), "grey": _rgb("#8b93
 # voice states: the gaze pill's palette (control/indicator.py), so both speak the same colours
 STATE = {"listening": "#4dabf7", "hearing": "#74c0fc", "thinking": "#ffc43d", "writing": "#ffc43d",
          "agent": "#b197fc", "acting": "#3ddc84", "done": "#3ddc84", "waiting": "#ff922b", "speaking": "#20c997",
-         "dictating": "#fa5252", "error": "#fa5252"}
+         "dictating": "#fa5252", "error": "#fa5252", "researching": "#3bc9db"}
 GLYPH = {"listening": "waveform", "hearing": "waveform", "thinking": "sparkle", "writing": "pencil",
          "agent": "sparkles", "acting": "cursorarrow.rays", "done": "checkmark", "waiting": "questionmark.bubble",
-         "speaking": "speaker.wave.2.fill", "dictating": "mic.fill", "error": "exclamationmark.triangle.fill"}
-ANIMATED = {"listening", "hearing", "thinking", "agent", "speaking", "dictating", "waiting"}
+         "speaking": "speaker.wave.2.fill", "dictating": "mic.fill", "error": "exclamationmark.triangle.fill",
+         "researching": "magnifyingglass"}
+ANIMATED = {"listening", "hearing", "thinking", "agent", "speaking", "dictating", "waiting", "researching"}
 
 
 def _font(size, weight=0.0, rounded=False):
@@ -162,6 +165,12 @@ def _text(s, font, color, x, y, alpha=1.0, max_w=None, align="left"):
         x -= w / 2
     string.drawAtPoint_withAttributes_((x, y), attrs)
     return w
+
+
+def _open_url(url: str) -> None:
+    from AppKit import NSURL, NSWorkspace
+
+    NSWorkspace.sharedWorkspace().openURL_(NSURL.URLWithString_(url))
 
 
 def text_width(s, font) -> float:
@@ -311,10 +320,11 @@ class Notch:
             s.step(dt)
         self._panel.setIgnoresMouseEvents_(self._mode != "open")
         moving = not (self._w.settled and self._h.settled and self._radius.settled)
-        live = model.state in ANIMATED or self._mode == "peek"  # pulsing glyphs, scrolling text
+        live = content.ear_state(model) in ANIMATED or self._mode == "peek"  # pulsing glyphs, scrolling text
         key = (self._mode, model.state, model.label, model.heard, model.pending, model.caption, model.tracking,
                model.voice_on, model.model, tuple((a.get("did"), round(time.time() - a.get("t", 0)) // 60)
-                                                  for a in model.activity))
+                                                  for a in model.activity),
+               tuple((j.get("phase"), j.get("answer")) for j in model.research))
         if moving or live or key != self._drawn_key:
             self._drawn_key = key
             self._view.setNeedsDisplay_(True)
@@ -342,7 +352,13 @@ class Notch:
 
     def _open_body_h(self, now):
         rows = max(1, len(content.recent(self.model, now)))  # none yet: one row of suggestions
-        return OPEN_TOP_H + rows * ROW_H + OPEN_FOOT_H
+        return OPEN_TOP_H + self._research_h(now) + rows * ROW_H + OPEN_FOOT_H
+
+    def _research_h(self, now):
+        jobs = content.research_rows(self.model, now)
+        if not jobs:
+            return 0
+        return 20 + sum(RESEARCH_ROW_H + (RESEARCH_ANSWER_H if j["answer"] else 0) for j in jobs) + 6
 
     def _next_mode(self, now, gaze):
         mouse = NSEvent.mouseLocation()
@@ -433,10 +449,10 @@ class Notch:
         cy = nh / 2
         if self._mode == "open":
             return  # the open body has its own header
-        label = content.ear_label(m)
+        label, state = content.ear_label(m), content.ear_state(m)
         if label:
-            self._glyph(m.state, left + 22, cy)  # inset like the label on the right
-            _text(label, F_EAR, _rgb(STATE.get(m.state, "#ffffff")), right - 13, cy - 8, alpha, align="right",
+            self._glyph(state, left + 22, cy)  # inset like the label on the right
+            _text(label, F_EAR, _rgb(STATE.get(state, "#ffffff")), right - 13, cy - 8, alpha, align="right",
                   max_w=EAR_ACTIVE_MAX - 18)
             return
         # idle: whether it sees you (left) and whether it's listening for commands (right)
@@ -466,7 +482,8 @@ class Notch:
             return
         kind, text = line
         icon, color = {"confirm": ("hand.raised.fill", _rgb(STATE["waiting"])),
-                       "speech": ("sparkles", _rgb(STATE["agent"]))}[kind]
+                       "speech": ("sparkles", _rgb(STATE["agent"])),
+                       "research": ("magnifyingglass", _rgb(STATE["researching"]))}[kind]
         cy = nh + PEEK_H / 2 - 1
         self._badge(left + 12, cy - 11, 22, color, alpha)
         _draw_symbol(icon, 10.5, color, left + 23, cy, alpha)
@@ -476,10 +493,13 @@ class Notch:
             x1 -= self._chip("say “confirm”", x1, cy, color, alpha) + 8
         avail = x1 - x0
         width = text_width(text, F_PEEK)
-        if width <= avail or kind != "speech":
+        if width <= avail or kind == "confirm":
             _text(text, F_PEEK, WHITE, x0, cy - 8, alpha, max_w=avail)
             return
-        started = self.model.caption[1] if self.model.caption else time.time()
+        if kind == "research":  # scrolls from when it finished
+            started = next((j["ended"] for j in self.model.research if j.get("ended")), time.time())
+        else:
+            started = self.model.caption[1] if self.model.caption else time.time()
         offset = max(0.0, min((time.time() - started - 0.8) * 45, width - avail + 12))
         NSGraphicsContext.saveGraphicsState()
         NSBezierPath.clipRect_(NSMakeRect(x0, cy - 10, avail, 20))
@@ -519,8 +539,34 @@ class Notch:
         if sub:
             _text(sub, F_SUB, DIM, tx, y + 21, alpha, max_w=x1 - tx)
 
-        # recent: what you said, what it did
         y += 38 + 14
+        # research running in the background (and the last answers): click a finished one for its top source
+        jobs = content.research_rows(m, time.time())
+        if jobs:
+            _text("Research", F_TILE_TITLE, FAINT, x0, y, alpha)
+            y += 20
+            cyan = _rgb(STATE["researching"])
+            for job in jobs:
+                if job["phase"] in ("starting", "running"):
+                    pulse = 0.55 + 0.45 * (0.5 + 0.5 * math.sin(time.time() * 5))
+                    _draw_symbol("magnifyingglass", 10.5, cyan, x0 + 6, y + 8, alpha * pulse)
+                elif job["phase"] == "done":
+                    _draw_symbol("checkmark", 10, cyan, x0 + 6, y + 8, alpha)
+                else:
+                    _draw_symbol("xmark", 10, TONES["bad"], x0 + 6, y + 8, alpha)
+                sw = _text(job["status"], F_SMALL, FAINT, x1, y + 1, alpha, align="right")
+                _text(job["question"], F_ROW, WHITE, x0 + 20, y, alpha, max_w=x1 - sw - 12 - (x0 + 20))
+                top = y
+                y += RESEARCH_ROW_H
+                if job["answer"]:
+                    _text(job["answer"], F_ROW_DIM, DIM, x0 + 20, y - 3, alpha, max_w=x1 - (x0 + 20))
+                    y += RESEARCH_ANSWER_H
+                if job["url"]:
+                    url = job["url"]
+                    self._view.buttons.append(((x0, top - 2, x1 - x0, y - top), lambda url=url: _open_url(url)))
+            y += 6
+
+        # recent: what you said, what it did
         rows = content.recent(m, time.time())
         _text("Recent" if rows else "Try saying", F_TILE_TITLE, FAINT, x0, y, alpha)
         y += 20
