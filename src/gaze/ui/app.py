@@ -17,7 +17,7 @@ from PyObjCTools import AppHelper
 
 from ..calibration.profile import CLICK
 from ..calibration.targets import TargetTiming
-from ..core.lid import LidSensor
+from ..core.lid import LidMonitor
 from ..core.paths import APP_SUPPORT
 from ..eval.session import SessionWriter
 from ..tracker import Tracker
@@ -56,8 +56,7 @@ class GazeApp:
                             record_path=record_path, session_dir=session_dir, measure=measure,
                             publish=publish, dashboard_port=dashboard_port)
         self.overlay_on = True
-        self.lid = LidSensor()
-        self.lid_now: float | None = self.lid.angle()
+        self.lid = LidMonitor(hz=30.0, on_change=self._on_lid)  # hinge angle at the camera's rate
         self.clicks = ClickLearner(tracker, learn_from_clicks)
         self.snapping = SnapService(tracker)
         self.recording = Recording(tracker)
@@ -76,7 +75,7 @@ class GazeApp:
         self.ring = GazeRing(self.screen)
         if o["session_dir"] is not None:
             self._start_session(o["session_dir"])
-        self.flows = Flows(self.tracker, TargetScreen(self.screen), self.ring, self.lid,
+        self.flows = Flows(self.tracker, TargetScreen(self.screen), self.ring, self.lid.sensor,
                            profile_name=o["profile_name"], n_targets=o["n_targets"], results_csv=o["results_csv"],
                            quit=self.quit, session_label=self._session_label)
         self.flows.pending_measure = o["measure"]
@@ -91,6 +90,7 @@ class GazeApp:
         if o["publish"]:
             self._start_publisher()
         self.tracker.start()
+        self.lid.start()
         NSTimer.scheduledTimerWithTimeInterval_repeats_block_(1 / 60, True, self._tick)
         NSTimer.scheduledTimerWithTimeInterval_repeats_block_(1.0, True, self._update_status)
         NSEvent.addGlobalMonitorForEventsMatchingMask_handler_(NSEventMaskLeftMouseDown, self._on_click)
@@ -116,6 +116,7 @@ class GazeApp:
             return
         self._shut_down = True
         self.tracker.stop()
+        self.lid.stop()
         if self.dashboard is not None:
             self.dashboard.stop()
         self.recording.stop()
@@ -134,9 +135,9 @@ class GazeApp:
             "model": self.tracker.model.model_id,
             "camera": self.tracker.source.source_id,
             "n_targets": self.options["n_targets"],
-            "lid_deg": self.lid_now,
+            "lid_deg": self.lid.angle,
         })
-        self.session.context["lid"] = self.lid_now
+        self.session.context["lid"] = self.lid.angle
         self.tracker.add_frame_listener(self.session.on_frame)
         log.info("saving calibration/validation frames to %s", root)
 
@@ -177,13 +178,13 @@ class GazeApp:
         from ..dashboard.feeds import LiveFeed
         from ..dashboard.server import DashboardServer
 
-        feed = LiveFeed(self.tracker, context=self._dashboard_context, lid=lambda: self.lid_now)
+        feed = LiveFeed(self.tracker, context=self._dashboard_context, lid=lambda: self.lid.angle)
         self.dashboard = DashboardServer(feed, commands=self._remote_commands(), port=port)
         self.dashboard.start()
 
     def _dashboard_context(self) -> dict:
         phase, target = self.flows.phase
-        return {"phase": phase, "target": target, "busy": self.flows.busy, "lid_deg": self.lid_now,
+        return {"phase": phase, "target": target, "busy": self.flows.busy, "lid_deg": self.lid.angle,
                 "smoothing": self.tracker.smoothing, "overlay": self.overlay_on}
 
     def _start_publisher(self) -> None:
@@ -220,13 +221,18 @@ class GazeApp:
         if not self.flows.busy:
             self.clicks.on_click(click)
 
+    def _on_lid(self, angle: float) -> None:
+        """Lid moved (called from the monitor's thread): saved sessions record it per frame."""
+        if self.session is not None:
+            self.session.context["lid"] = angle
+
     @property
     def lid_moved(self) -> float | None:
         """Degrees the lid has moved since calibration, if beyond LID_MOVED_DEG."""
         prof = self.tracker.profile
-        if prof is None or prof.meta.lid_deg is None or self.lid_now is None:
+        if prof is None or prof.meta.lid_deg is None or self.lid.angle is None:
             return None
-        delta = self.lid_now - prof.meta.lid_deg
+        delta = self.lid.angle - prof.meta.lid_deg
         return delta if abs(delta) > LID_MOVED_DEG else None
 
     # ---- menu ------------------------------------------------------------------------
@@ -249,9 +255,6 @@ class GazeApp:
         self.menu.set_checked("clicks", self.clicks.enabled)
 
     def _update_status(self, _timer) -> None:
-        self.lid_now = self.lid.angle()
-        if self.session is not None:
-            self.session.context["lid"] = self.lid_now
         p = self.tracker.last_point
         parts = [(p.state.value.replace("_", " ") if p is not None else "starting").capitalize(),
                  f"{self.tracker.fps:.0f} fps", f"{self.tracker.distance_mm / 10:.0f} cm"]

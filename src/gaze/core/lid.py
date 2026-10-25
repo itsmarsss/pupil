@@ -10,6 +10,7 @@ from __future__ import annotations
 import ctypes
 import ctypes.util
 import logging
+import threading
 
 log = logging.getLogger(__name__)
 
@@ -98,3 +99,34 @@ class LidSensor:
         if length.value < 3:
             return None
         return float(buf[1] | (buf[2] << 8))
+
+
+class LidMonitor:
+    """Polls the lid sensor on a background thread (a read takes ~0.3 ms) and keeps the newest angle.
+    `on_change(angle)` is called from that thread whenever the reading changes."""
+
+    def __init__(self, sensor: LidSensor | None = None, hz: float = 30.0, on_change=None):
+        self.sensor = sensor or LidSensor()
+        self.hz = hz
+        self.on_change = on_change
+        self.angle: float | None = self.sensor.angle()
+        self._stop = threading.Event()
+        self._thread: threading.Thread | None = None
+
+    def start(self) -> None:
+        if self.sensor.available and self._thread is None:
+            self._thread = threading.Thread(target=self._run, name="lid", daemon=True)
+            self._thread.start()
+
+    def _run(self) -> None:
+        while not self._stop.wait(1 / self.hz):
+            a = self.sensor.angle()
+            if a is not None and a != self.angle:
+                self.angle = a
+                if self.on_change is not None:
+                    self.on_change(a)
+
+    def stop(self) -> None:
+        self._stop.set()
+        if self._thread is not None:
+            self._thread.join(timeout=1)
