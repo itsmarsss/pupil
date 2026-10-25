@@ -295,8 +295,9 @@ class Flows:
         self.message(
             [f"Your saved calibration is off ({off})",
              "If you've just moved a little, a 2-second re-centre may be enough.",
-             "Space: re-centre (1 dot)  ·  Return: full calibration  ·  Esc: quit"],
-            {SPACE: self.recentre, RETURN: self.intro, ESC: self.quit},
+             "Space: re-centre (1 dot)  ·  Return: full calibration  ·  Esc: use it anyway"],
+            # Esc dismisses, as everywhere else: quitting here twice took voice control down with it.
+            {SPACE: self.recentre, RETURN: self.intro, ESC: self.done},
         )
 
     def _show_result(self, result: ValidationResult, n: int) -> None:
