@@ -88,6 +88,9 @@ class Voice(threading.Thread):
         self.on_device = on_device
         self.on_partial = on_partial
         self.gate = gate
+        self.sending = False  # audio is going to the recognizer right now
+        self.level = 0.0  # mic level, 0-1 (for the overlay)
+        self.voiced = False  # the mic hears something speech-loud, gate or not
 
     def run(self):
         from faster_whisper import WhisperModel  # slow import; keep it off the UI thread
@@ -129,6 +132,7 @@ class Voice(threading.Thread):
                 continue  # stream stalled (device switching); the default-input check above handles it
             rms = float(np.sqrt(np.mean(block ** 2)))
             threshold = max(0.015, noise * 3)
+            self.level, self.voiced, self.sending = min(1.0, rms / 0.1), rms > threshold, speaking
             if not speaking:
                 if rms < threshold:
                     noise = 0.95 * noise + 0.05 * rms
@@ -232,12 +236,18 @@ class CartesiaVoice(Voice):
 
         def send_audio():  # off the audio callback, which must never block on the network
             preroll = deque(maxlen=int(PREROLL_S / CHUNK_S))
-            sending, last_sent = False, time.time()
+            sending, last_sent, noise = False, time.time(), 0.01
             while not stop.is_set():
                 try:
                     block = blocks.get(timeout=0.5)
                 except queue.Empty:
                     continue
+                x = np.frombuffer(block, np.int16).astype(np.float32) / 32768
+                rms = float(np.sqrt(np.mean(x * x)))
+                self.voiced = rms > max(0.015, noise * 3)
+                if not self.voiced:
+                    noise = 0.95 * noise + 0.05 * rms
+                self.level = min(1.0, rms / 0.1)
                 try:
                     if self.gate is None or self.gate.is_open() or in_turn.is_set():
                         if not sending:
@@ -249,6 +259,8 @@ class CartesiaVoice(Voice):
                         last_sent = time.time()
                     else:
                         sending = False
+                    self.sending = sending
+                    if not sending:
                         preroll.append(block)
                         if KEEPALIVE_S and time.time() - last_sent > KEEPALIVE_S:
                             ws.send(SILENCE)

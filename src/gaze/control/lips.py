@@ -18,6 +18,7 @@ from collections import deque
 WINDOW_S = 0.4  # lip movement = how much the mouth opening changes over this window
 MIN_MOTION = 0.04  # floor for "moving" (mouth-open ratio range); resting jitter is usually well below
 NOISE_FACTOR = 3.0  # or this many times your measured resting jitter, whichever is higher
+OPEN_MIN = 0.06  # or held open this much wider than at rest (a steady open mouth: measured talking p95 0.27, still 0.01)
 HOLD_S = 1.5  # stay open this long after the lips last moved (pauses between words)
 LOOK_HOLD_S = 1.5  # glancing away mid-sentence doesn't count as not looking
 MIN_CONFIDENCE = 0.2  # tracker confidence: falls toward 0 when the head leaves the range it was calibrated facing
@@ -30,6 +31,7 @@ class LipGate:
         self._lock = threading.Lock()
         self._mouth = deque()  # (t, mouth-open ratio)
         self._noise = MIN_MOTION / NOISE_FACTOR  # resting lip jitter, learned
+        self._rest = 0.01  # resting mouth opening, learned
         self._last_msg = 0.0
         self._last_look = 0.0
         self._last_move = 0.0
@@ -57,12 +59,13 @@ class LipGate:
                 self._mouth.popleft()
             values = [m for _, m in self._mouth]
             motion = max(values) - min(values)
-            if motion > self.threshold:
+            if motion > self.threshold or msg["mouth"] > self._rest + OPEN_MIN:
                 if now - self._last_look < LOOK_HOLD_S:
                     self._last_move = now
                     self._moves.append(now)
-            else:  # learn the resting jitter from still frames only
+            else:  # learn the resting jitter and opening from still frames only
                 self._noise = 0.98 * self._noise + 0.02 * motion
+                self._rest = 0.98 * self._rest + 0.02 * msg["mouth"]
 
     @property
     def threshold(self):
