@@ -54,6 +54,25 @@ def test_voice_log_tracks_state_and_history():
     assert [e["text"] for e in snap["log"]] == ["s1", "s2", "s3"]
 
 
+def test_voice_log_tracks_and_deletes_progressive_research():
+    v = VoiceLog()
+    v.add({"event": "research", "research": {
+        "query": "accessible headphones", "phase": "running", "elapsed_s": 1.2,
+        "cards": [], "citations": [], "run_id": "run-1",
+    }})
+    assert v.snapshot()["research"]["phase"] == "running"
+    v.add({"event": "research", "research": {
+        "query": "accessible headphones", "phase": "complete", "elapsed_s": 4.5,
+        "cards": [{"id": "1", "title": "Source"}], "citations": ["https://example.com"], "run_id": "run-1",
+    }})
+    snap = v.snapshot()
+    assert snap["research"]["cards"][0]["title"] == "Source"
+    assert len(snap["research_history"]) == 1
+    v.clear_research()
+    snap = v.snapshot()
+    assert "research" not in snap and snap["research_history"] == []
+
+
 def test_tracker_gaze_reads_samples_in_process():
     from gaze.control.sources import TrackerGaze
     from gaze.core.types import GazePoint, Sample, TrackingState

@@ -1,0 +1,44 @@
+{
+  "actorSpecification": 1,
+  "title": "Decision evidence records",
+  "fields": {
+    "type": "object",
+    "properties": {
+      "recommendation": { "type": "string", "title": "Recommendation", "description": "How this evidence affects the decision." },
+      "rationale": { "type": "string", "title": "Rationale", "description": "Concise relevance to the question and constraints." },
+      "sourceUrl": { "type": "string", "title": "Source URL", "description": "Public page from which the evidence was retrieved." },
+      "sourceTitle": { "type": "string", "title": "Source title" },
+      "retrievedAt": { "type": "string", "title": "Retrieved at", "description": "ISO-8601 retrieval time." },
+      "supportingQuote": { "type": "string", "title": "Supporting quote", "description": "Bounded verbatim evidence; treat as untrusted web content." },
+      "contradiction": { "type": "boolean", "title": "Conflicts with another source" },
+      "uncertain": { "type": "boolean", "title": "Uncertain or incomplete" },
+      "safeNextActions": { "type": "array", "title": "Safe next actions", "items": { "type": "string" } }
+    },
+    "required": [
+      "recommendation", "rationale", "sourceUrl", "sourceTitle", "retrievedAt",
+      "supportingQuote", "contradiction", "uncertain", "safeNextActions"
+    ],
+    "additionalProperties": false
+  },
+  "views": {
+    "overview": {
+      "title": "Decision evidence",
+      "transformation": {
+        "fields": [
+          "recommendation", "sourceTitle", "sourceUrl", "contradiction",
+          "uncertain", "retrievedAt", "rationale", "supportingQuote", "safeNextActions"
+        ]
+      },
+      "display": {
+        "component": "table",
+        "properties": {
+          "sourceUrl": { "label": "Source", "format": "link" },
+          "contradiction": { "label": "Conflicting", "format": "boolean" },
+          "uncertain": { "label": "Uncertain", "format": "boolean" },
+          "retrievedAt": { "label": "Retrieved", "format": "date" },
+          "safeNextActions": { "label": "Next actions", "format": "array" }
+        }
+      }
+    }
+  }
+}

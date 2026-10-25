@@ -153,6 +153,39 @@ what was heard and what happened; the dashboard's "Voice & agent" panel logs it 
 Say "stop" to cancel, "confirm" to approve. All settings are in `.env.example`. This drives your real
 Mac: use a test browser profile.
 
+Optional live decision research uses Apify. Add `APIFY_TOKEN` to `.env`, look at a public product,
+listing, venue, or article, and say “compare this with three accessible alternatives under $50.”
+The Decision research dashboard panel progresses from starting to sourced cards; “why?”, “open source
+two,” and follow-up comparisons work through the normal gaze/voice agent. Curated research is capped at
+15 items, 45 seconds, and $0.25 by default. Store Actor runs always pause for confirmation. Cookies,
+credentials, private/local pages, authenticated sources, and bulk personal-data collection are blocked.
+Source text is untrusted and may be incomplete; the assistant presents evidence rather than certifying
+truth. Use **Delete history** in the research panel to clear retained cards.
+
+### Custom Apify Actor setup
+
+The stock research Actor works with only `APIFY_TOKEN`. To deploy this repository's typed decision
+researcher and use it instead:
+
+```sh
+brew install apify-cli                 # or: npm install -g apify-cli
+apify login                            # browser login is recommended
+cd actors/accessible-decision-researcher
+pnpm install
+pnpm check && pnpm build
+apify push --open --wait-for-finish=300
+```
+
+Copy the deployed Actor's full name from its Apify Console API/integration section, then add it to the
+repository root `.env`:
+
+```env
+APIFY_TOKEN=your-token
+GAZE_APIFY_RESEARCH_ACTOR=your-username/accessible-decision-researcher
+```
+
+Restart Gaze after changing `.env`; configuration is loaded when the process starts.
+
 The heat map gives extra weight to your final stable fixation. For a recent clicked target, say
 "again" to repeat the action, "do the same here" while looking somewhere else, or
 "close the one I just clicked". References expire after 20 seconds and never cross apps or windows.

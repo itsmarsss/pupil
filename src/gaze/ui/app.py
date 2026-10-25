@@ -195,6 +195,7 @@ class GazeApp:
             "measure": on_main(lambda: f.when_idle(f.measure)),
             "cycle_smoothing": on_main(self._cycle_smoothing),
             "toggle_overlay": on_main(self._toggle_overlay),
+            "clear_research": on_main(self.voice.clear_research),
         }
 
     def _start_dashboard(self, port: int) -> None:
