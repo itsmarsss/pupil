@@ -139,5 +139,6 @@ def calibration_info(profile: Profile | None) -> dict:
         "eyeball": None if g is None else {"gain": _r(g.gain, 3), "kappa_deg": _r(g.kappa, 2),
                                            "residual": g.residual is not None, "head_comp": g.head_comp is not None},
         "lid_deg": profile.meta.lid_deg,
+        "offset_pt": _r(profile.meta.offset_pt, 1),
         "targets": _r(np.unique(profile.Y[profile.sources == EXPLICIT], axis=0), 1),
     }

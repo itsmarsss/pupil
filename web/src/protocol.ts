@@ -27,6 +27,7 @@ export interface CalibrationInfo {
   clicks?: number;
   eyeball?: { gain: Vec2; kappa_deg: Vec2; residual: boolean; head_comp: boolean } | null;
   lid_deg?: number | null;
+  offset_pt?: Vec2;
   targets?: Vec2[];
 }
 
@@ -82,4 +83,4 @@ export interface FrameState {
 
 export type EngineMessage = SceneInfo | CalibrationInfo | FrameState;
 
-export type Command = "recalibrate" | "check" | "measure" | "cycle_smoothing" | "toggle_overlay";
+export type Command = "recalibrate" | "recentre" | "check" | "measure" | "cycle_smoothing" | "toggle_overlay";

@@ -315,6 +315,7 @@ class GazeApp:
         profile = self._profile_for(next(iter(dots.values()))[0].shape[1])
         profile.clear(EXPLICIT, MOTION)  # click samples are kept
         profile.meta.lid_deg = self.lid.angle()
+        profile.meta.offset_pt = (0.0, 0.0)  # a fresh calibration needs no drift correction
         for target, (feats, geos) in dots.items():
             profile.add(feats, target, EXPLICIT, measures=geos)
         if sweep is not None and len(sweep[0]) >= MIN_SAMPLES_PER_TARGET:
@@ -381,8 +382,14 @@ class GazeApp:
             except OSError:
                 log.exception("could not write results")
             if launch_check and not (result.accuracy_deg <= LAUNCH_CHECK_MAX_DEG):
-                log.info("saved calibration is off (%.1f°); recalibrating", result.accuracy_deg)
-                self._intro()
+                log.info("saved calibration is off (%.1f°)", result.accuracy_deg)
+                off = "no data" if np.isnan(result.accuracy_deg) else f"{result.accuracy_deg:.1f}°"
+                self._message(
+                    [f"Your saved calibration is off ({off})",
+                     "If you've just moved a little, a 2-second re-centre may be enough.",
+                     "Space: re-centre (1 dot)  ·  Return: full calibration  ·  Esc: quit"],
+                    {SPACE: self._recentre, RETURN: self._intro, ESC: self._quit},
+                )
                 return
             if then is not None:
                 then(result)
@@ -396,6 +403,50 @@ class GazeApp:
 
         TargetSequence(self.targets, points, self.timing, on_target, on_done,
                        on_start=lambda t, onset: self._label(phase, t, onset), lines=lines).start()
+
+    def _recentre(self) -> None:
+        """Drift correction: one centre dot; shift every prediction so it lands on the dot."""
+        profile = self.tracker.profile
+        if profile is None or not profile.calibrated:
+            self._intro()
+            return
+        self._busy = True
+        self.ring.hide()
+        centre = (self.screen.width_pt / 2, self.screen.height_pt / 2)
+        got: list = []
+
+        def on_target(target, onset_ns, end_ns):
+            self._label(None)
+            start = onset_ns + int(self.timing.settle_s * 1e9)
+            end = onset_ns + int((self.timing.dwell_s - self.timing.tail_s) * 1e9)
+            self.tracker.wait_until(end, timeout=0.2)
+            got.extend((s.point.raw_x, s.point.raw_y) for s in self.tracker.samples_between(start, end)
+                       if s.point.state is TrackingState.TRACKING)
+
+        def on_done(cancelled):
+            if cancelled:
+                self._after_cancel()
+                return
+            if len(got) < MIN_SAMPLES_PER_TARGET:
+                self._message(["Couldn't see your eyes", "Space: try again  ·  Return: full calibration"],
+                              {SPACE: self._recentre, RETURN: self._intro, ESC: self._start_overlay})
+                return
+            try:
+                before = profile.meta.offset_pt
+                after = profile.recentre(np.array(got), centre)
+            except ValueError as e:
+                log.info("re-centre refused: %s", e)
+                self._message(["Too far off for a re-centre", "Press Space for a full calibration"],
+                              {SPACE: self._intro, ESC: self._start_overlay})
+                return
+            profile.save()
+            shift = float(np.hypot(after[0] - before[0], after[1] - before[1]))
+            log.info("re-centred by %.0f pt (offset now %.0f, %.0f)", shift, *after)
+            self._validate(n=3, launch_check=False)
+
+        TargetSequence(self.targets, [centre], self.timing, on_target, on_done,
+                       on_start=lambda t, onset: self._label("recentre", t, onset),
+                       lines=["Look at the dot"]).start()
 
     def _measure(self) -> None:
         """Two 9-dot checks: head still, then head moving naturally."""
@@ -514,6 +565,7 @@ class GazeApp:
             context=self._dashboard_context,
             commands={
                 "recalibrate": on_main(lambda: self._when_idle(self._calibrate)),
+                "recentre": on_main(lambda: self._when_idle(self._recentre)),
                 "check": on_main(lambda: self._when_idle(lambda: self._validate(9))),
                 "measure": on_main(lambda: self._when_idle(self._measure)),
                 "cycle_smoothing": on_main(self._cycle_smoothing),
@@ -578,7 +630,7 @@ class GazeApp:
 
     # ---- menu ------------------------------------------------------------------------
     def _build_menu(self) -> None:
-        actions = [self._calibrate, lambda: self._validate(9), self._measure, self._toggle_overlay,
+        actions = [self._calibrate, self._recentre, lambda: self._validate(9), self._measure, self._toggle_overlay,
                    self._cycle_smoothing, self._toggle_clicks, self._toggle_snap, self._toggle_recording, self._quit]
         self._menu_target = _MenuTarget.alloc().initWithActions_(actions)
         menu = NSMenu.alloc().init()
@@ -586,7 +638,8 @@ class GazeApp:
         self._status_line.setEnabled_(False)
         menu.addItem_(NSMenuItem.separatorItem())
         for tag, (key, title) in enumerate(
-            [("calibrate", "Recalibrate"), ("validate", "Check accuracy"), ("measure", "Measure (head still + moving)"),
+            [("calibrate", "Recalibrate"), ("recentre", "Re-centre (1 dot)"), ("validate", "Check accuracy"),
+             ("measure", "Measure (head still + moving)"),
              ("overlay", "Show gaze ring"), ("smoothing", f"Smoothing: {self.tracker.smoothing}"),
              ("clicks", "Learn from clicks"), ("snap", "Snap to buttons"), ("record", "Record gaze"), ("quit", "Quit")]
         ):

@@ -29,6 +29,7 @@ export function Panel() {
             <dt>profile</dt><dd>{cal.profile}</dd>
             <dt>dots · clicks</dt><dd>{cal.dots} · {cal.clicks}{cal.head_motion ? " · head sweep" : ""}</dd>
             <dt>calibrator</dt><dd>{cal.chosen}</dd>
+            <dt>drift offset</dt><dd>{cal.offset_pt ? `${Math.round(cal.offset_pt[0])}, ${Math.round(cal.offset_pt[1])} pt` : "–"}</dd>
             {cal.eyeball && <>
               <dt>eyeball gain</dt><dd>{cal.eyeball.gain.map((g) => g.toFixed(2)).join(" / ")}</dd>
               <dt>eyeball kappa</dt><dd>{cal.eyeball.kappa_deg.map((k) => `${k.toFixed(1)}°`).join(" / ")}</dd>
@@ -52,6 +53,7 @@ export function Panel() {
       <section className="controls">
         <h3>Controls</h3>
         <button disabled={!connected || busy} onClick={() => engine.send("recalibrate")}>Recalibrate</button>
+        <button disabled={!connected || busy} onClick={() => engine.send("recentre")}>Re-centre (1 dot)</button>
         <button disabled={!connected || busy} onClick={() => engine.send("check")}>Check accuracy</button>
         <button disabled={!connected || busy} onClick={() => engine.send("measure")}>Measure (still + moving)</button>
         <button disabled={!connected} onClick={() => engine.send("cycle_smoothing")}>Smoothing: {frame?.smoothing ?? "–"}</button>
