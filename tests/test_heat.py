@@ -1,7 +1,7 @@
 import math
 
-from gaze.control.heat import GazeCloud, ambiguous, neighbour, scores, sigma_from_accuracy
-from gaze.control.snapping import Element
+from pupil.control.heat import GazeCloud, ambiguous, neighbour, scores, sigma_from_accuracy
+from pupil.control.snapping import Element
 
 
 def tabs():
@@ -56,7 +56,7 @@ def test_neighbours_stay_in_the_row_and_kind():
 
 
 def test_closing_anything_in_one_popup_is_not_a_choice():
-    from gaze.control.gate import _element_route
+    from pupil.control.gate import _element_route
 
     field = Element("AXTextField", "Email", 500, 400, 300, 30, parent="Sign in")
     close = Element("AXButton", "Close", 700, 300, 20, 20, parent="Sign in", subrole="AXCloseButton")

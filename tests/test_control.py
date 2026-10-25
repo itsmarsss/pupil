@@ -2,9 +2,9 @@ import json
 import socket
 import time
 
-from gaze.control import router
-from gaze.sinks.publisher import GazePublisher
-from gaze.ui.services import VoiceLog
+from pupil.control import router
+from pupil.sinks.publisher import GazePublisher
+from pupil.ui.services import VoiceLog
 
 
 def test_tracker_phrases_route_to_commands():
@@ -57,8 +57,8 @@ def test_voice_log_tracks_state_and_history():
 
 
 def test_tracker_gaze_reads_samples_in_process():
-    from gaze.control.sources import TrackerGaze
-    from gaze.core.types import GazePoint, Sample, TrackingState
+    from pupil.control.sources import TrackerGaze
+    from pupil.core.types import GazePoint, Sample, TrackingState
 
     calls, reports = [], []
     g = TrackerGaze(busy=lambda: False, commands={"recentre": lambda: calls.append("recentre")}, report=reports.append)
@@ -77,8 +77,8 @@ def test_tracker_gaze_reads_samples_in_process():
 
 
 def test_tracker_gaze_boosts_only_a_sustained_final_fixation():
-    from gaze.control.sources import TrackerGaze
-    from gaze.core.types import GazePoint, Sample, TrackingState
+    from pupil.control.sources import TrackerGaze
+    from pupil.core.types import GazePoint, Sample, TrackingState
 
     g = TrackerGaze(busy=lambda: False, commands={})
     now_ns = time.monotonic_ns()
@@ -115,7 +115,7 @@ def _answers(choices=None, **nouls):
 
 
 def test_truth_table_clarify_and_compound():
-    from gaze.control.gate import _decide
+    from pupil.control.gate import _decide
 
     assert _decide(_answers(enough_context=0.04), [], None, {})[0] == "clarify"
     assert _decide(_answers(enough_context=0.04), [], None, {}, allow_clarify=False)[0] == "agent"  # asks once
@@ -127,8 +127,8 @@ def test_truth_table_clarify_and_compound():
 
 
 def test_truth_table_unsure_commands_and_follow_ups():
-    from gaze.control.controller import _last_sentence
-    from gaze.control.gate import _decide
+    from pupil.control.controller import _last_sentence
+    from pupil.control.gate import _decide
 
     # "play the best move": which move is for the screen to settle, not a question
     assert _decide(_answers(enough_context=0.1, needs_agent=0.9, choices={"missing": "what"}), [], None, {})[0] == "agent"
@@ -144,7 +144,7 @@ def test_truth_table_unsure_commands_and_follow_ups():
 
 
 def test_episodes_label_reactions_and_replay(tmp_path):
-    from gaze.control import episodes
+    from pupil.control import episodes
 
     log = episodes.EpisodeLog(tmp_path / "e.jsonl")
     t = time.time()
@@ -166,8 +166,8 @@ def test_episodes_label_reactions_and_replay(tmp_path):
 
 
 def test_compound_hands_the_rest_to_the_agent(monkeypatch):
-    from gaze.control import controller as ctl
-    from gaze.control.gate import Decision
+    from pupil.control import controller as ctl
+    from pupil.control.gate import Decision
 
     done, started = [], []
     c = ctl.VoiceController.__new__(ctl.VoiceController)
@@ -195,7 +195,7 @@ def test_compound_hands_the_rest_to_the_agent(monkeypatch):
 def test_resampler_keeps_speech_band_and_blocks_aliasing():
     import numpy as np
 
-    from gaze.control.audio import Resampler
+    from pupil.control.audio import Resampler
 
     for f, want in ((1000, 0.707), (11000, 0.0)):  # 11 kHz is above 16 kHz audio's Nyquist: must be removed
         t = np.arange(48000) / 24000
@@ -209,7 +209,7 @@ def test_resampler_keeps_speech_band_and_blocks_aliasing():
 def test_speech_detector_ignores_silence_and_noise():
     import numpy as np
 
-    from gaze.control.audio import CHUNK, SpeechDetector
+    from pupil.control.audio import CHUNK, SpeechDetector
 
     vad = SpeechDetector()
     rng = np.random.default_rng(0)
@@ -222,8 +222,8 @@ def test_chunks_carry_capture_times_and_clip_cuts_by_them():
 
     import numpy as np
 
-    from gaze.control.audio import CHUNK, RATE
-    from gaze.control.voice import Voice
+    from pupil.control.audio import CHUNK, RATE
+    from pupil.control.voice import Voice
 
     v = Voice(lambda *a: None, lambda s: None)
     blocks = queue.Queue()
@@ -243,7 +243,7 @@ def test_chunks_carry_capture_times_and_clip_cuts_by_them():
 
 
 def test_automatic_mic_skips_bluetooth(monkeypatch):
-    from gaze.control import config, voice
+    from pupil.control import config, voice
 
     devices = [{"name": "AirPods", "max_input_channels": 1, "index": 0},
                {"name": "MacBook Pro Microphone", "max_input_channels": 1, "index": 1}]
@@ -262,7 +262,7 @@ def test_episode_audio_is_saved_as_wav(tmp_path):
 
     import numpy as np
 
-    from gaze.control.episodes import EpisodeLog
+    from pupil.control.episodes import EpisodeLog
 
     log = EpisodeLog(tmp_path / "e.jsonl")
     ep = log.begin("click this", 0, 1, "click")
@@ -272,7 +272,7 @@ def test_episode_audio_is_saved_as_wav(tmp_path):
 
 
 def test_scroll_direction_follows_natural_scrolling():
-    from gaze.control.actions import SCROLL_PX, scroll_delta
+    from pupil.control.actions import SCROLL_PX, scroll_delta
 
     # measured: with natural scrolling on, +300 px scrolled a window's content down by 300
     assert scroll_delta("down", 4, natural=True) == (4 * SCROLL_PX, 0)
@@ -282,7 +282,7 @@ def test_scroll_direction_follows_natural_scrolling():
 
 
 def test_drag_sends_down_drags_up_with_the_button_and_modifiers(monkeypatch):
-    from gaze.control import actions
+    from pupil.control import actions
 
     events, keys = [], []
     monkeypatch.setattr(actions, "_mouse_event", lambda kind, x, y, button, flags: events.append((kind, button, flags)))
@@ -299,7 +299,7 @@ def test_drag_sends_down_drags_up_with_the_button_and_modifiers(monkeypatch):
 
 
 def test_moving_with_the_button_held_is_a_drag(monkeypatch):
-    from gaze.control import actions
+    from pupil.control import actions
 
     moved, held = [], []
     monkeypatch.setattr(actions.pyautogui, "moveTo", lambda *a: moved.append(a))
@@ -316,7 +316,7 @@ def test_moving_with_the_button_held_is_a_drag(monkeypatch):
 
 
 def test_open_app_by_approximate_name(monkeypatch):
-    from gaze.control import apps
+    from pupil.control import apps
 
     opened = []
     monkeypatch.setattr(apps.commands, "available_apps", lambda: {"Notes": "/N.app", "Blender": "/B.app"})
@@ -327,7 +327,7 @@ def test_open_app_by_approximate_name(monkeypatch):
 
 
 def test_blender_python_without_a_bridge_explains_what_to_do(monkeypatch, tmp_path):
-    from gaze.control.apps import blender
+    from pupil.control.apps import blender
 
     monkeypatch.setattr(blender, "TOKEN_FILE", tmp_path / "token")  # no token file: nothing to connect with
     monkeypatch.setattr(blender, "_running", lambda: True)
@@ -337,7 +337,7 @@ def test_blender_python_without_a_bridge_explains_what_to_do(monkeypatch, tmp_pa
 
 
 def test_short_text_is_typed_long_or_unicode_text_is_pasted(monkeypatch):
-    from gaze.control import actions
+    from pupil.control import actions
 
     calls = []
     monkeypatch.setattr(actions.pyautogui, "write", lambda s, interval=0: calls.append(("write", s)))
@@ -353,7 +353,7 @@ def test_short_text_is_typed_long_or_unicode_text_is_pasted(monkeypatch):
 
 
 def test_dictation_join_spacing():
-    from gaze.control.dictation import join
+    from pupil.control.dictation import join
 
     assert join("We test on Monday", "and then we ship it.") == " and then we ship it."
     assert join("Hello ", "world") == "world"
@@ -364,7 +364,7 @@ def test_dictation_join_spacing():
 def test_menu_paths_match_titles_and_report_what_exists(monkeypatch):
     import pytest
 
-    from gaze.control import uitree
+    from pupil.control import uitree
 
     def node(role, title="", children=(), enabled=True):
         return {"AXRole": role, "AXTitle": title, "AXChildren": list(children), "AXEnabled": enabled}
@@ -389,7 +389,7 @@ def test_menu_paths_match_titles_and_report_what_exists(monkeypatch):
 
 
 def test_applescript_reports_errors():
-    from gaze.control import uitree
+    from pupil.control import uitree
 
     assert uitree.applescript("return 6 * 7") == ("42", False)
     out, error = uitree.applescript("this is not applescript")
@@ -397,7 +397,7 @@ def test_applescript_reports_errors():
 
 
 def test_adapter_tools_only_when_their_app_is_in_play(monkeypatch):
-    from gaze.control import apps
+    from pupil.control import apps
 
     monkeypatch.setattr(apps, "_running", lambda app: False)
     assert apps.tools_for("make a slide about this") == []
@@ -408,8 +408,8 @@ def test_adapter_tools_only_when_their_app_is_in_play(monkeypatch):
 
 
 def test_close_never_guesses_a_whole_window(monkeypatch):
-    from gaze.control import controller as ctl
-    from gaze.control.snapping import Element
+    from pupil.control import controller as ctl
+    from pupil.control.snapping import Element
 
     clicks, keys = [], []
     c = ctl.VoiceController.__new__(ctl.VoiceController)
@@ -428,7 +428,7 @@ def test_close_never_guesses_a_whole_window(monkeypatch):
 
 
 def test_menu_commands_are_picked_by_jev_once_per_app(monkeypatch):
-    from gaze.control import controller as ctl
+    from pupil.control import controller as ctl
 
     asked, pressed = [], []
     c = ctl.VoiceController.__new__(ctl.VoiceController)
@@ -442,7 +442,7 @@ def test_menu_commands_are_picked_by_jev_once_per_app(monkeypatch):
     assert len(asked) == 1 and pressed == ["Select Previous Tab (⌃⇧⇥)"] * 2  # cached for the app
 
 def test_agent_hears_interruptions_and_redirects_when_paused(monkeypatch):
-    from gaze.control import agent as agent_mod
+    from pupil.control import agent as agent_mod
 
     a = agent_mod.Agent.__new__(agent_mod.Agent)
     a._steer, a._steer_lock = [], agent_mod.threading.Lock()
@@ -463,9 +463,9 @@ def test_agent_hears_interruptions_and_redirects_when_paused(monkeypatch):
 
 
 def test_answers_to_which_one(monkeypatch):
-    from gaze.control import controller as ctl
-    from gaze.control.heat import GazeCloud
-    from gaze.control.snapping import Element
+    from pupil.control import controller as ctl
+    from pupil.control.heat import GazeCloud
+    from pupil.control.snapping import Element
 
     a = Element("AXRadioButton", "YouTube", 0, 0, 100, 30)
     b = Element("AXRadioButton", "Gaze dashboard", 300, 0, 100, 30)
@@ -485,8 +485,8 @@ def test_answers_to_which_one(monkeypatch):
     assert done == [b, b] and said[-1] == "Didn't catch which one: nothing done."
 
 def test_relative_correction_redoes_the_action_on_the_neighbour(monkeypatch):
-    from gaze.control import controller as ctl
-    from gaze.control.snapping import Element
+    from pupil.control import controller as ctl
+    from pupil.control.snapping import Element
 
     tabs = [Element("AXRadioButton", f"t{i}", 100 * i, 0, 100, 30, parent_role="AXTabGroup") for i in range(3)]
     done, shortcuts = [], []
@@ -505,8 +505,8 @@ def test_relative_correction_redoes_the_action_on_the_neighbour(monkeypatch):
 
 
 def test_gaze_indicator_shows_the_most_important_state(monkeypatch):
-    from gaze.control import controller as ctl
-    from gaze.control.indicator import Status
+    from pupil.control import controller as ctl
+    from pupil.control.indicator import Status
 
     c = ctl.VoiceController.__new__(ctl.VoiceController)
     c.enabled, c._flash, c._busy_with, c.pending, c.choosing, c.clarifying, c.dictating = True, None, None, None, None, None, False
@@ -532,7 +532,7 @@ def test_gaze_indicator_shows_the_most_important_state(monkeypatch):
 
 
 def test_websites_and_searches_go_through_the_address_bar(monkeypatch):
-    from gaze.control import controller as ctl
+    from pupil.control import controller as ctl
 
     typed, pressed, opened = [], [], []
     c = ctl.VoiceController.__new__(ctl.VoiceController)
@@ -551,8 +551,8 @@ def test_websites_and_searches_go_through_the_address_bar(monkeypatch):
 
 
 def test_quitting_targets_the_named_app_and_always_asks(monkeypatch):
-    from gaze.control import commands, controller as ctl
-    from gaze.control.snapping import Element
+    from pupil.control import commands, controller as ctl
+    from pupil.control.snapping import Element
 
     monkeypatch.setattr(ctl.macos, "running_apps", lambda: [("Google Chrome", 0), ("Games", 1), ("WezTerm", 2)])
     pending, said = [], []
@@ -569,7 +569,7 @@ def test_quitting_targets_the_named_app_and_always_asks(monkeypatch):
 
 
 def test_settings_match_options_by_a_unique_part():
-    from gaze.control import settings
+    from pupil.control import settings
 
     state = {"mic": "automatic"}
     settings.register("microphone", "which mic", lambda: state["mic"], lambda v: state.update(mic=v),
@@ -584,7 +584,7 @@ def test_settings_match_options_by_a_unique_part():
 
 
 def test_chosen_voice_is_remembered(monkeypatch, tmp_path):
-    from gaze.control import config, speech
+    from pupil.control import config, speech
 
     monkeypatch.setattr(config, "SPEAK", False)  # no network, no audio
     monkeypatch.setattr(speech.Speaker, "_voice_path", staticmethod(lambda: tmp_path / "voice.json"))
@@ -596,8 +596,8 @@ def test_chosen_voice_is_remembered(monkeypatch, tmp_path):
 
 
 def test_action_reference_revalidates_context_and_target(monkeypatch):
-    from gaze.control import controller as ctl
-    from gaze.control.snapping import Element
+    from pupil.control import controller as ctl
+    from pupil.control.snapping import Element
 
     old = Element("AXButton", "Run", 100, 100, 80, 30, parent="Toolbar")
     fresh = Element("AXButton", "Run", 102, 100, 80, 30, parent="Toolbar")
@@ -619,9 +619,9 @@ def test_action_reference_revalidates_context_and_target(monkeypatch):
 
 
 def test_same_here_reuses_action_with_current_heat():
-    from gaze.control import controller as ctl
-    from gaze.control.heat import GazeCloud
-    from gaze.control.snapping import Element
+    from pupil.control import controller as ctl
+    from pupil.control.heat import GazeCloud
+    from pupil.control.snapping import Element
 
     old = Element("AXButton", "Old", 0, 0, 80, 30)
     left = Element("AXButton", "Left", 100, 100, 80, 30)
@@ -637,7 +637,7 @@ def test_same_here_reuses_action_with_current_heat():
 
 
 def test_conversation_reaches_jev_and_the_agent():
-    from gaze.control import controller as ctl
+    from pupil.control import controller as ctl
     c = ctl.VoiceController.__new__(ctl.VoiceController)
     c.gate = _A(recent=[], last_reply=None)
     c._ep = {"id": "e1", "text": "the quarterly report"}

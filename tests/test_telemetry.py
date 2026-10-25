@@ -4,9 +4,9 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from gaze.core.device import Device
-from gaze.core.screen import Screen
-from gaze.geometry.eyeball import ScreenPlane
+from pupil.core.device import Device
+from pupil.core.screen import Screen
+from pupil.geometry.eyeball import ScreenPlane
 
 FIXTURE = Path(__file__).resolve().parents[1] / "dev" / "fixtures" / "face.jpg"
 SCREEN = Screen(1512, 982, 302.0, 196.1)
@@ -14,7 +14,7 @@ PLANE = ScreenPlane(SCREEN)
 
 
 def test_scene_info_corners_frame_the_camera():
-    from gaze.telemetry import scene_info
+    from pupil.telemetry import scene_info
 
     info = scene_info(SCREEN, PLANE, Device(), 110.0)
     c = np.array(info["screen"]["corners_cm"])
@@ -28,16 +28,16 @@ def test_scene_info_corners_frame_the_camera():
 def test_frame_state_from_a_real_frame():
     import cv2
 
-    from gaze.calibration.profile import EXPLICIT, Profile, ProfileMeta
-    from gaze.core.paths import GAZE_MODEL_FILE, model_path
-    from gaze.core.types import Frame
-    from gaze.face.tracker import FaceTracker
-    from gaze.telemetry import calibration_info, frame_state
-    from gaze.tracker import Tracker
+    from pupil.calibration.profile import EXPLICIT, Profile, ProfileMeta
+    from pupil.core.paths import GAZE_MODEL_FILE, model_path
+    from pupil.core.types import Frame
+    from pupil.face.tracker import FaceTracker
+    from pupil.telemetry import calibration_info, frame_state
+    from pupil.tracker import Tracker
 
     if not model_path(GAZE_MODEL_FILE).exists():
         pytest.skip("gaze model weights not present")
-    from gaze.models.mnn_face_eye import MNNFaceEyeModel
+    from pupil.models.mnn_face_eye import MNNFaceEyeModel
 
     img = cv2.cvtColor(cv2.imread(str(FIXTURE)), cv2.COLOR_BGR2RGB)
     tracker = Tracker(source=None, face_tracker=FaceTracker(smooth=False), model=MNNFaceEyeModel(), screen=SCREEN)

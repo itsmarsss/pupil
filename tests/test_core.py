@@ -1,11 +1,10 @@
-import math
 
 import numpy as np
 import pytest
 
-from gaze.core.screen import Screen
-from gaze.filter.fixation import FixationDetector
-from gaze.filter.one_euro import OneEuroFilter
+from pupil.core.screen import Screen
+from pupil.filter.fixation import FixationDetector
+from pupil.filter.one_euro import OneEuroFilter
 
 MS = 1_000_000
 
@@ -74,3 +73,27 @@ def test_fixation_requires_min_duration():
     assert det.update(0, 0, 33 * MS, 48) is None
     assert det.update(0, 0, 66 * MS, 48) is None
     assert det.update(0, 0, 133 * MS, 48) is not None
+
+
+def test_app_support_moves_from_the_old_name_once(tmp_path, monkeypatch):
+    from pupil.core import paths
+
+    old, new = tmp_path / "Gaze", tmp_path / "Pupil"
+    (old / "profiles").mkdir(parents=True)
+    (old / "profiles" / "default.json").write_text("{}")
+    monkeypatch.setattr(paths, "_OLD_APP_SUPPORT", old)
+    monkeypatch.setattr(paths, "APP_SUPPORT", new)
+    paths.migrate_app_support()
+    assert (new / "profiles" / "default.json").exists() and not old.exists()
+    old.mkdir()  # a stray old folder later never overwrites the new one
+    paths.migrate_app_support()
+    assert old.exists() and (new / "profiles" / "default.json").exists()
+
+
+def test_settings_read_the_new_name_then_the_old(monkeypatch):
+    from pupil.core.env import env
+
+    monkeypatch.setenv("GAZE_NOTCH", "0")
+    assert env("NOTCH", "1") == "0"
+    monkeypatch.setenv("PUPIL_NOTCH", "1")
+    assert env("NOTCH", "1") == "1"

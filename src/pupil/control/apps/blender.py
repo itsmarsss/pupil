@@ -5,7 +5,6 @@ Only a Blender started here has the bridge; one the user opened themselves doesn
 from __future__ import annotations
 
 import json
-import os
 import secrets
 import socket
 import subprocess
@@ -13,11 +12,12 @@ import time
 from pathlib import Path
 
 from ...core.paths import APP_SUPPORT
+from ...core.env import env
 
 BRIDGE = Path(__file__).with_name("blender_bridge.py")
 TOKEN_FILE = APP_SUPPORT / "blender_bridge.token"  # the bridge reads the same path
 LOG = APP_SUPPORT / "blender.log"
-PORT = int(os.environ.get("GAZE_BLENDER_PORT", "47810"))
+PORT = int(env("BLENDER_PORT", "47810"))
 START_TIMEOUT_S = 30
 
 

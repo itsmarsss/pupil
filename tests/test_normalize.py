@@ -4,9 +4,9 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from gaze.core.types import FaceObservation, Frame
-from gaze.face.normalize import apply_warp, camera_matrix, frontal_warp, roll_warp
-from gaze.face.tracker import L_INNER, L_OUTER, R_INNER, R_OUTER
+from pupil.core.types import FaceObservation, Frame
+from pupil.face.normalize import apply_warp, camera_matrix, frontal_warp, roll_warp
+from pupil.face.tracker import L_INNER, L_OUTER, R_INNER, R_OUTER
 
 FIXTURE = Path(__file__).resolve().parents[1] / "dev" / "fixtures" / "face.jpg"
 
@@ -40,7 +40,7 @@ def test_apply_warp_rejects_eyes_off_frame():
 def test_frontal_warp_centres_face():
     import cv2
 
-    from gaze.face.tracker import FaceTracker
+    from pupil.face.tracker import FaceTracker
 
     img = cv2.cvtColor(cv2.imread(str(FIXTURE)), cv2.COLOR_BGR2RGB)
     canvas = np.zeros((1080, 1440, 3), np.uint8)

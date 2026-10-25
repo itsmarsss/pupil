@@ -1,10 +1,18 @@
 """Where models, profiles and logs live."""
 from __future__ import annotations
 
-import os
 from pathlib import Path
+from .env import env
 
-APP_SUPPORT = Path.home() / "Library" / "Application Support" / "Gaze"
+APP_SUPPORT = Path.home() / "Library" / "Application Support" / "Pupil"
+_OLD_APP_SUPPORT = Path.home() / "Library" / "Application Support" / "Gaze"  # before the rename
+
+
+def migrate_app_support() -> None:
+    """Profiles, recordings and logs saved as "Gaze" move to "Pupil" once (a rename on the same disk, so nothing is
+    copied or lost); never over an existing "Pupil"."""
+    if _OLD_APP_SUPPORT.is_dir() and not APP_SUPPORT.exists():
+        _OLD_APP_SUPPORT.rename(APP_SUPPORT)
 _REPO_MODELS = Path(__file__).resolve().parents[3] / "models"
 
 GAZE_MODEL_FILE = "gaze_base.mnn"
@@ -15,10 +23,10 @@ FACE_LANDMARKER_URL = (
 
 
 def models_dir() -> Path:
-    """`$GAZE_MODELS_DIR`, else `models/` in a source checkout, else Application Support."""
-    env = os.environ.get("GAZE_MODELS_DIR")
-    if env:
-        return Path(env).expanduser()
+    """`$PUPIL_MODELS_DIR`, else `models/` in a source checkout, else Application Support."""
+    chosen = env("MODELS_DIR")
+    if chosen:
+        return Path(chosen).expanduser()
     if _REPO_MODELS.is_dir():
         return _REPO_MODELS
     return APP_SUPPORT / "models"

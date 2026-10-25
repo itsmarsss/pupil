@@ -19,7 +19,7 @@ export function StatusPanel() {
         <dt>head yaw · pitch</dt><dd>{fmt(frame?.head_ypr?.[0], "°", 0)} · {fmt(frame?.head_ypr?.[1], "°", 0)}</dd>
         <dt>lid</dt><dd>{fmt(frame?.lid_deg ?? scene?.lid_deg, "°", 0)}</dd>
         <dt>camera FOV</dt>
-        <dd>{fmt(scene?.camera.hfov_deg, "°")}{scene && !scene.camera.measured && <span className="bad"> (guess: run gaze fov)</span>}</dd>
+        <dd>{fmt(scene?.camera.hfov_deg, "°")}{scene && !scene.camera.measured && <span className="bad"> (guess: run pupil fov)</span>}</dd>
       </dl>
       <h4>Legend</h4>
       <ul className="legend">

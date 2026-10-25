@@ -1,4 +1,4 @@
-from gaze.ui import notch_content as nc
+from pupil.ui import notch_content as nc
 
 
 def test_collapsed_ear_says_little():
@@ -35,7 +35,7 @@ def test_recent_commands_newest_first_and_only_recent():
 
 
 def test_actions_are_described_for_people():
-    from gaze.control.controller import _describe_action
+    from pupil.control.controller import _describe_action
 
     assert _describe_action("click", {"clicks": 1, "button": "left"}, "'Pull requests' link") == \
         "Clicked 'Pull requests' link"

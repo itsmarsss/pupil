@@ -8,7 +8,6 @@ and run in parallel; most are speculative, and code only reads the ones the tabl
 
 import json
 import os
-import re
 import time
 from dataclasses import dataclass
 

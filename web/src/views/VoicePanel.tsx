@@ -31,7 +31,7 @@ export function VoicePanel() {
   if (!v) {
     return (
       <div className="pane muted">
-        Voice control isn't running. Start it with <code>uv run gaze control --dashboard</code>.
+        Voice control isn't running. Start it with <code>uv run pupil control --dashboard</code>.
       </div>
     );
   }

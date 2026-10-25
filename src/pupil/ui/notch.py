@@ -501,7 +501,7 @@ class Notch:
         # header in the notch band: a tracking dot and the name left, toggles right
         tracking_color.colorWithAlphaComponent_(alpha).set()
         NSBezierPath.bezierPathWithOvalInRect_(NSMakeRect(x0 + 2, cy - 3, 6, 6)).fill()
-        _text("Gaze", F_HEADER, DIM, x0 + 14, cy - 7.5, alpha)
+        _text("Pupil", F_HEADER, DIM, x0 + 14, cy - 7.5, alpha)
         if self._on_voice is not None and m.voice_on is not None:
             self._button(x1 - 12, cy, "mic.fill" if m.voice_on else "mic.slash.fill", m.voice_on, self._on_voice, alpha)
 

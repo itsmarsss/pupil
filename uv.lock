@@ -246,64 +246,6 @@ wheels = [
 ]
 
 [[package]]
-name = "gaze"
-version = "0.1.0"
-source = { editable = "." }
-dependencies = [
-    { name = "mediapipe" },
-    { name = "mnn" },
-    { name = "numpy" },
-    { name = "opencv-contrib-python" },
-    { name = "pyobjc-core" },
-    { name = "pyobjc-framework-applicationservices" },
-    { name = "pyobjc-framework-avfoundation" },
-    { name = "pyobjc-framework-cocoa" },
-    { name = "pyobjc-framework-quartz" },
-    { name = "websockets" },
-]
-
-[package.optional-dependencies]
-control = [
-    { name = "anthropic" },
-    { name = "certifi" },
-    { name = "faster-whisper" },
-    { name = "pillow" },
-    { name = "pyautogui" },
-    { name = "sounddevice" },
-    { name = "typesafe-sdk" },
-]
-
-[package.dev-dependencies]
-dev = [
-    { name = "pytest" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "anthropic", marker = "extra == 'control'", specifier = ">=2.3" },
-    { name = "certifi", marker = "extra == 'control'" },
-    { name = "faster-whisper", marker = "extra == 'control'", specifier = ">=1.1" },
-    { name = "mediapipe", specifier = ">=1.1.1" },
-    { name = "mnn", specifier = ">=3.0" },
-    { name = "numpy", specifier = ">=2" },
-    { name = "opencv-contrib-python", specifier = ">=4.9,<5" },
-    { name = "pillow", marker = "extra == 'control'", specifier = ">=10" },
-    { name = "pyautogui", marker = "extra == 'control'", specifier = ">=0.9.54" },
-    { name = "pyobjc-core", specifier = ">=11" },
-    { name = "pyobjc-framework-applicationservices", specifier = ">=11" },
-    { name = "pyobjc-framework-avfoundation", specifier = ">=11" },
-    { name = "pyobjc-framework-cocoa", specifier = ">=11" },
-    { name = "pyobjc-framework-quartz", specifier = ">=11" },
-    { name = "sounddevice", marker = "extra == 'control'", specifier = ">=0.5" },
-    { name = "typesafe-sdk", marker = "extra == 'control'", specifier = ">=0.7.5" },
-    { name = "websockets", specifier = ">=13" },
-]
-provides-extras = ["control"]
-
-[package.metadata.requires-dev]
-dev = [{ name = "pytest", specifier = ">=8" }]
-
-[[package]]
 name = "h11"
 version = "0.16.0"
 source = { registry = "https://pypi.org/simple" }
@@ -651,6 +593,64 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/a8/5c/53f18822017b8bda6bd8bb4e02048e911fdc79a3dafdc83ab994fe922a84/protobuf-4.25.9-cp37-abi3-manylinux2014_x86_64.whl", hash = "sha256:438c636de8fb706a0de94a12a268ef1ae8f5ba5ae655a7671fcda5968ba3c9be", size = 295178, upload-time = "2026-03-25T23:09:27.839Z" },
     { url = "https://files.pythonhosted.org/packages/16/28/d5065b212685875d3924bcdb3201cbf467cb4d58a18aa19a8dfd99ea80a9/protobuf-4.25.9-py3-none-any.whl", hash = "sha256:d49b615e7c935194ac161f0965699ac84df6112c378e05ec53da65d2e4cbb6d4", size = 156822, upload-time = "2026-03-25T23:09:34.957Z" },
 ]
+
+[[package]]
+name = "pupil"
+version = "0.1.0"
+source = { editable = "." }
+dependencies = [
+    { name = "mediapipe" },
+    { name = "mnn" },
+    { name = "numpy" },
+    { name = "opencv-contrib-python" },
+    { name = "pyobjc-core" },
+    { name = "pyobjc-framework-applicationservices" },
+    { name = "pyobjc-framework-avfoundation" },
+    { name = "pyobjc-framework-cocoa" },
+    { name = "pyobjc-framework-quartz" },
+    { name = "websockets" },
+]
+
+[package.optional-dependencies]
+control = [
+    { name = "anthropic" },
+    { name = "certifi" },
+    { name = "faster-whisper" },
+    { name = "pillow" },
+    { name = "pyautogui" },
+    { name = "sounddevice" },
+    { name = "typesafe-sdk" },
+]
+
+[package.dev-dependencies]
+dev = [
+    { name = "pytest" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "anthropic", marker = "extra == 'control'", specifier = ">=2.3" },
+    { name = "certifi", marker = "extra == 'control'" },
+    { name = "faster-whisper", marker = "extra == 'control'", specifier = ">=1.1" },
+    { name = "mediapipe", specifier = ">=1.1.1" },
+    { name = "mnn", specifier = ">=3.0" },
+    { name = "numpy", specifier = ">=2" },
+    { name = "opencv-contrib-python", specifier = ">=4.9,<5" },
+    { name = "pillow", marker = "extra == 'control'", specifier = ">=10" },
+    { name = "pyautogui", marker = "extra == 'control'", specifier = ">=0.9.54" },
+    { name = "pyobjc-core", specifier = ">=11" },
+    { name = "pyobjc-framework-applicationservices", specifier = ">=11" },
+    { name = "pyobjc-framework-avfoundation", specifier = ">=11" },
+    { name = "pyobjc-framework-cocoa", specifier = ">=11" },
+    { name = "pyobjc-framework-quartz", specifier = ">=11" },
+    { name = "sounddevice", marker = "extra == 'control'", specifier = ">=0.5" },
+    { name = "typesafe-sdk", marker = "extra == 'control'", specifier = ">=0.7.5" },
+    { name = "websockets", specifier = ">=13" },
+]
+provides-extras = ["control"]
+
+[package.metadata.requires-dev]
+dev = [{ name = "pytest", specifier = ">=8" }]
 
 [[package]]
 name = "pyautogui"

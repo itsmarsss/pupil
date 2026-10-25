@@ -2,10 +2,10 @@ import csv
 
 import numpy as np
 
-from gaze.core.types import GazePoint, Sample, TrackingState
-from gaze.sinks.publisher import GazePublisher
-from gaze.sinks.recorder import GazeRecorder
-from gaze.sinks.snapper import Element, choose, probe_points
+from pupil.core.types import GazePoint, Sample, TrackingState
+from pupil.sinks.publisher import GazePublisher
+from pupil.sinks.recorder import GazeRecorder
+from pupil.sinks.snapper import Element, choose, probe_points
 
 BUTTON_A = Element("AXButton", 100, 100, 80, 30)
 BUTTON_B = Element("AXButton", 300, 100, 80, 30)

@@ -31,7 +31,7 @@ class MNNFaceEyeModel:
 
         self.path = Path(path) if path else model_path(GAZE_MODEL_FILE)
         if not self.path.exists():
-            raise FileNotFoundError(f"Gaze model not found at {self.path}. Set GAZE_MODELS_DIR or copy it there.")
+            raise FileNotFoundError(f"Gaze model not found at {self.path}. Set PUPIL_MODELS_DIR or copy it there.")
         self.model_id = _file_id(self.path)
         rt = MNN.nn.create_runtime_manager(({"precision": "low", "backend": 0, "numThread": threads},))
         self._module = MNN.nn.load_module_from_file(

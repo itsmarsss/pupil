@@ -1,7 +1,7 @@
 import numpy as np
 
-from gaze.calibration.implicit import evaluate_click, window
-from gaze.core.types import FaceObservation, GazeFeatures, GazePoint, Sample, TrackingState
+from pupil.calibration.implicit import evaluate_click, window
+from pupil.core.types import FaceObservation, GazeFeatures, GazePoint, Sample, TrackingState
 
 MS = 1_000_000
 PT_PER_DEG = 48.0

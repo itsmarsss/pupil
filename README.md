@@ -1,7 +1,10 @@
-# gaze
+# Pupil
 
 Webcam gaze tracking for macOS that works within a minute of launch and gets more
 accurate the longer you use it.
+
+*Formerly Gaze:* settings named `GAZE_*` still work (the new names are `PUPIL_*`), and data saved under
+`~/Library/Application Support/Gaze` moves to `…/Pupil` the first time `pupil` runs.
 
 It combines two estimators of where you're looking:
 
@@ -19,7 +22,7 @@ model's own estimate. On 138 replayed check dots this cut the mean error from 2.
 
 - macOS on Apple Silicon, built-in camera
 - [uv](https://docs.astral.sh/uv/), Python 3.11; Node 22 + [pnpm](https://pnpm.io) for the dashboard
-- Gaze model weights at `models/gaze_base.mnn` (or set `GAZE_MODELS_DIR`). Not included;
+- Gaze model weights at `models/gaze_base.mnn` (or set `PUPIL_MODELS_DIR`). Not included;
   see Licensing. The MediaPipe face landmarker downloads itself on first run.
 - Camera permission for your terminal. Close other apps using the camera: macOS shares
   it at the resolution the first app picked, and the app warns when it gets less than 1080p.
@@ -28,9 +31,9 @@ model's own estimate. On 138 replayed check dots this cut the mean error from 2.
 
 ```sh
 uv sync
-uv run gaze doctor          # camera access, models, screen, field of view, lid angle
-uv run gaze fov --paper a4  # once per camera: measure its field of view (~1 min)
-uv run gaze                 # calibrate (first run), then show the gaze ring
+uv run pupil doctor          # camera access, models, screen, field of view, lid angle
+uv run pupil fov --paper a4  # once per camera: measure its field of view (~1 min)
+uv run pupil                 # calibrate (first run), then show the gaze ring
 ```
 
 **First run:** a short intro checks that your face is visible, then 16 dots (~21 s), then
@@ -56,7 +59,7 @@ and saves. Only one copy runs at a time.
 
 ```sh
 cd web && pnpm install && pnpm build && cd ..
-uv run gaze --dashboard     # opens http://127.0.0.1:8766/
+uv run pupil --dashboard     # opens http://127.0.0.1:8766/
 ```
 
 A local web view of everything the engine computes: a 3D scene (camera, lid at its real
@@ -64,9 +67,9 @@ angle, screen, face point cloud, head axes, eyeballs, iris, eye rays, face-point
 each model's hit), the camera image with landmarks and model crops, the screen with the
 target and every estimate, live plots, the calibration summary, and controls. It only
 listens on 127.0.0.1. For dashboard development, run `pnpm dev` in `web/` next to a
-running `gaze --dashboard`.
+running `pupil --dashboard`.
 
-`uv run gaze replay SESSION --dashboard` plays a saved session back in the same views, with
+`uv run pupil replay SESSION --dashboard` plays a saved session back in the same views, with
 the app's own calibration fitted on that session, a timeline marking each dot, and
 play / pause / step / speed controls.
 
@@ -81,7 +84,7 @@ play / pause / step / speed controls.
 | `--normalise roll\|frontal\|none` | straighten the face before the model (default roll: level the eyes) |
 | `--appearance network\|patches` | eye features from the pretrained network (default) or per-person eye patches: no pretrained weights, ~45 % more error |
 | `--mode hd\|vga` | 1440x1080 (default) or 640x480 input, same field of view |
-| `--camera NAME_OR_INDEX` | which camera (default: the built-in FaceTime camera); see `gaze cameras` |
+| `--camera NAME_OR_INDEX` | which camera (default: the built-in FaceTime camera); see `pupil cameras` |
 | `--dashboard [--dashboard-port N]` | serve and open the web dashboard |
 | `--no-clicks` | don't learn from clicks |
 | `--snap` | snap the ring to nearby buttons and links (asks for Accessibility access) |
@@ -95,9 +98,9 @@ play / pause / step / speed controls.
 ### Measuring changes
 
 ```sh
-uv run gaze --save-session --measure
-uv run gaze replay ~/Library/Application\ Support/Gaze/recordings/session-…
-uv run gaze replay SESSION --modes hd+roll,hd,hd+frontal,vga --all
+uv run pupil --save-session --measure
+uv run pupil replay ~/Library/Application\ Support/Gaze/recordings/session-…
+uv run pupil replay SESSION --modes hd+roll,hd,hd+frontal,vga --all
 ```
 
 `replay` re-runs a saved session through each pipeline variant on the same frames, including
@@ -112,7 +115,7 @@ What the app is doing lives in the notch (or hangs from the top centre on screen
 listening, and while a command runs, what it's doing ("Listening", "Agent · 3"); it grows a line for things to
 read (the agent's reply, "say confirm") and opens when you hover it or look at it: what it's doing, your last few
 commands and what they did (or what to try, at first), gaze accuracy, and a mic toggle. Never in screenshots, so the agent can't see it; ◉ → View →
-Notch or `GAZE_NOTCH=0` turns it off. The web dashboard is for debugging.
+Notch or `PUPIL_NOTCH=0` turns it off. The web dashboard is for debugging.
 
 ## Eye health
 
@@ -137,10 +140,10 @@ Look at something and say what to do. Voice control runs inside the same app as 
 ```sh
 uv sync --extra control
 cp .env.example .env                     # add TYPESAFE_API_KEY (fast tier) and/or ANTHROPIC_API_KEY (Claude agent)
-uv run gaze --voice --dashboard          # or: uv run gaze control --dashboard
+uv run pupil --voice --dashboard          # or: uv run pupil control --dashboard
 ```
 
-`--typed` types commands in the terminal instead of speaking; `gaze control --gaze mouse` uses the
+`--typed` types commands in the terminal instead of speaking; `pupil control --gaze mouse` uses the
 mouse cursor as gaze (no camera). Needs Microphone, Accessibility and Screen Recording for your terminal
 as well as Camera.
 
@@ -156,8 +159,8 @@ you face the screen and your lips move, keeping 1.5 s of audio so a late open lo
 transcripts from a visible face whose lips never moved (someone else, a video); the dashboard's Lips
 panel shows it live. Speech goes to Cartesia Ink-2 when `CARTESIA_API_KEY` is set (streamed, so the turn
 ends ~1 s after you stop; only while the gate is open, since it bills per second), otherwise to on-
-device Whisper `base.en` behind a Silero speech detector. `GAZE_LIP_GATE=shadow` logs what the gate
-would block; `GAZE_VOICE_PROCESSING=1` turns voice isolation on at start. Misheard words are left for
+device Whisper `base.en` behind a Silero speech detector. `PUPIL_LIP_GATE=shadow` logs what the gate
+would block; `PUPIL_VOICE_PROCESSING=1` turns voice isolation on at start. Misheard words are left for
 Jev to read in context, with no fuzzy matching to a phrase list.
 
 Which model: Jev routes each agent task to a tier (fast: Sonnet at low effort, for quick questions and
@@ -167,7 +170,7 @@ settings when asked: camera, microphone, voice isolation, spoken replies, gaze d
 
 Talking back: the agent's replies, its clarifying questions and "say confirm" prompts are read aloud with
 Cartesia Sonic, telegraphic ("Done. 3 results."), and run as faint captions under a small status pill that
-follows your gaze (colour-coded: listening, thinking, agent working, waiting on you); `GAZE_SPEAK=0` turns
+follows your gaze (colour-coded: listening, thinking, agent working, waiting on you); `PUPIL_SPEAK=0` turns
 speech off. Start talking and it stops: barge-in is
 detected from your lips moving, not sound, so the Mac's own speaker doesn't cut itself off. Speaking while
 Claude is working reaches it at its next step ("actually, make it blue"); saying something other than
@@ -184,7 +187,7 @@ fillers and self-corrections ("at 5, no wait, 6" → "at 6"). Password fields ar
 "This" means where you looked *while speaking*, snapped to the nearest Accessibility element
 (`snapping.py`). If the tracker wasn't confident then (head turned past what calibration covered),
 "click" and "type" ask you to confirm instead of acting. The notch shows what was heard and what happened
-(`GAZE_HUD_BAR=1` brings back the old status bar at the bottom); the dashboard's "Voice & agent" panel logs it, outlines the target and
+(`PUPIL_HUD_BAR=1` brings back the old status bar at the bottom); the dashboard's "Voice & agent" panel logs it, outlines the target and
 lists which model each part calls (speech in, Jev, extraction, dictation, agent tier, speech out), lit
 while a call is open.
 Say "stop" to cancel, "confirm" to approve. All settings are in `.env.example`. This drives your real
@@ -196,7 +199,7 @@ The heat map gives extra weight to your final stable fixation. For a recent clic
 
 Every command is logged to `.logs/episodes.jsonl` with what was seen, decided and done, and labelled by
 your reaction ("stop" right after, or what Jev reads as "no, not that" = corrected; saying it again =
-repeated). `gaze episodes` lists
+repeated). `pupil episodes` lists
 them with latency per route, `--replay` re-runs the routing rules on the logged answers offline, and
 `--eval` scores the gate live on the labelled cases in `tests/agent_cases*.jsonl`.
 
@@ -219,7 +222,7 @@ camera 1080p → crop 4:3 → MediaPipe landmarks + head pose ─┬─ level th
   when several frames land clearly elsewhere, then lightly filters the result.
 - **The lid angle** comes from the MacBook's hinge sensor. It isn't a gaze correction (the
   camera and screen tilt together); it flags a stale calibration.
-- `src/gaze/telemetry.py` defines the per-frame state every display reads (versioned).
+- `src/pupil/telemetry.py` defines the per-frame state every display reads (versioned).
 
 ## Licensing
 

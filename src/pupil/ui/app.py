@@ -7,7 +7,6 @@ from __future__ import annotations
 
 import json
 import logging
-import os
 import signal
 import subprocess
 import threading
@@ -33,6 +32,7 @@ from .menu import SEPARATOR, Action, Choice, Header, MenuBar, Toggle
 from .overlay import GazeRing
 from .services import ClickLearner, Recording, SnapService, VoiceLog
 from .target_screen import TargetScreen
+from ..core.env import env
 
 log = logging.getLogger(__name__)
 
@@ -92,7 +92,7 @@ class GazeApp:
         o = self.options
         NSApplication.sharedApplication().setActivationPolicy_(NSApplicationActivationPolicyAccessory)
         self.ring = GazeRing(self.screen)
-        self.ring.heat = os.environ.get("GAZE_DISPLAY", "heat") == "heat"  # ring | heat (◉ → Gaze display)
+        self.ring.heat = env("DISPLAY", "heat") == "heat"  # ring | heat (◉ → Gaze display)
         if o["session_dir"] is not None:
             self._start_session(o["session_dir"])
         self.flows = Flows(self.tracker, TargetScreen(self.screen), self.ring, self.lid.sensor,
@@ -100,7 +100,7 @@ class GazeApp:
                            quit=self.quit, session_label=self._session_label)
         self.flows.pending_measure = o["measure"]
         self._build_menu()
-        if os.environ.get("GAZE_NOTCH", "1") != "0":
+        if env("NOTCH", "1") != "0":
             from .notch import Notch
 
             self.notch = Notch(on_toggle_voice=self._toggle_voice if not o["voice_typed"] else None)

@@ -1,7 +1,7 @@
 """Per-machine camera geometry: the camera's focal length and where it sits relative to the screen.
 
 The FaceTime HD camera reports a 0° field of view to AVFoundation and Apple doesn't publish it, so the focal
-length is measured once with `gaze fov` (iris size at a known distance). It's stored in pixels at 1080p scale:
+length is measured once with `pupil fov` (iris size at a known distance). It's stored in pixels at 1080p scale:
 our frames are centre crops (same focal length) or downscales of the 1920x1080 capture, so the focal length
 for any frame is this value scaled by frame height / 1080.
 """

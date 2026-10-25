@@ -1,4 +1,4 @@
-// Messages from the engine (src/gaze/telemetry.py, schema 1).
+// Messages from the engine (src/pupil/telemetry.py, schema 1).
 // Image coordinates are normalised 0..1; screen coordinates are points (top-left origin);
 // 3D is camera space in cm: +x = image right (the user's left), +y up, +z toward the user's back.
 
@@ -104,7 +104,7 @@ export interface HealthState {
   break_every_min?: number;
 }
 
-/** What the voice controller (gaze control) heard, decided and is doing. */
+/** What the voice controller (pupil control) heard, decided and is doing. */
 export interface VoiceState {
   connected: boolean;
   mic?: string | null;

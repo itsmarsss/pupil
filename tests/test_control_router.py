@@ -1,4 +1,4 @@
-from gaze.control.router import route
+from pupil.control.router import route
 
 
 def test_only_safety_phrases_are_matched_here():

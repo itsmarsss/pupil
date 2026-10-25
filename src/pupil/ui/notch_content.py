@@ -62,7 +62,7 @@ def peek_line(m: NotchModel, now: float) -> tuple[str, str] | None:
 def headline(m: NotchModel) -> tuple[str, str]:
     """(title, subtitle) for the expanded notch's status row."""
     if m.voice_on is None:
-        return "Gaze", _gaze_line(m) or "Starting…"
+        return "Pupil", _gaze_line(m) or "Starting…"
     if not m.voice_on:
         return "Voice control off", "Turn it on to talk to your Mac"
     if m.pending:

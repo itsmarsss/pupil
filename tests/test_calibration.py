@@ -1,9 +1,9 @@
 import numpy as np
 import pytest
 
-from gaze.calibration.profile import CLICK, EXPLICIT, Profile, ProfileMeta
-from gaze.calibration.regression import Ridge, fit_best
-from gaze.calibration.targets import TargetTiming, grid, shuffled
+from pupil.calibration.profile import CLICK, EXPLICIT, Profile, ProfileMeta
+from pupil.calibration.regression import Ridge, fit_best
+from pupil.calibration.targets import TargetTiming, grid, shuffled
 
 DIM = 258
 SCREEN = (1512.0, 982.0)
@@ -131,8 +131,8 @@ def test_recentre_shifts_predictions_onto_the_dot():
 def test_each_camera_gets_its_own_profile(tmp_path, monkeypatch):
     import json
 
-    from gaze.calibration import profile as profile_mod
-    from gaze.ui.flows import Flows
+    from pupil.calibration import profile as profile_mod
+    from pupil.ui.flows import Flows
 
     monkeypatch.setattr(profile_mod, "profiles_dir", lambda: tmp_path)
     flows = Flows.__new__(Flows)  # only the naming logic, no UI
@@ -148,8 +148,8 @@ def test_profile_save_is_atomic_and_damaged_files_load_as_none(tmp_path, monkeyp
     import numpy as np
     import pytest
 
-    from gaze.calibration import profile as profile_mod
-    from gaze.calibration.profile import Profile, ProfileMeta
+    from pupil.calibration import profile as profile_mod
+    from pupil.calibration.profile import Profile, ProfileMeta
 
     p = Profile(ProfileMeta("p", "m", "cam", (100.0, 100.0)), 4)
     p.add(np.ones((3, 4), np.float32), (10.0, 20.0), profile_mod.EXPLICIT)

@@ -8,7 +8,7 @@ Built to never lose your words (no false negatives):
 - if the tracker stops sending (crashed, not started) it fails open, so a tracker problem can't mute you.
 
 Saves Cartesia credits (billed per second of audio sent, silence included) and keeps bystanders out.
-GAZE_LIP_GATE=shadow streams everything but logs each utterance the gate would have blocked, to check for misses.
+PUPIL_LIP_GATE=shadow streams everything but logs each utterance the gate would have blocked, to check for misses.
 """
 
 import threading

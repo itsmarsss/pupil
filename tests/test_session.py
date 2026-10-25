@@ -3,17 +3,17 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from gaze.calibration.targets import TargetTiming, grid
-from gaze.core.screen import Screen
-from gaze.core.types import Frame, GazePoint, Sample, TrackingState
-from gaze.eval.session import SessionWriter, read_session
+from pupil.calibration.targets import TargetTiming, grid
+from pupil.core.screen import Screen
+from pupil.core.types import Frame, GazePoint, Sample, TrackingState
+from pupil.eval.session import SessionWriter, read_session
 
 FIXTURE = Path(__file__).resolve().parents[1] / "dev" / "fixtures" / "face.jpg"
 MS = 1_000_000
 
 
 def test_writer_skips_unlabelled_and_rebuilds_canvas(tmp_path):
-    from gaze.core.types import FaceObservation
+    from pupil.core.types import FaceObservation
 
     yy, xx = np.mgrid[0:120, 0:160]
     img = np.dstack([xx, yy, (xx + yy) // 2]).astype(np.uint8)  # smooth, so JPEG is near-lossless
@@ -38,13 +38,13 @@ def test_writer_skips_unlabelled_and_rebuilds_canvas(tmp_path):
 def test_replay_runs_all_variants(tmp_path):
     import cv2
 
-    from gaze.core.paths import GAZE_MODEL_FILE, model_path
-    from gaze.eval.replay import replay
-    from gaze.face.tracker import FaceTracker
+    from pupil.core.paths import GAZE_MODEL_FILE, model_path
+    from pupil.eval.replay import replay
+    from pupil.face.tracker import FaceTracker
 
     if not model_path(GAZE_MODEL_FILE).exists():
         pytest.skip("gaze model weights not present")
-    from gaze.models.mnn_face_eye import MNNFaceEyeModel
+    from pupil.models.mnn_face_eye import MNNFaceEyeModel
 
     face_img = cv2.cvtColor(cv2.imread(str(FIXTURE)), cv2.COLOR_BGR2RGB)
     canvas = np.zeros((1080, 1440, 3), np.uint8)

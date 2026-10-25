@@ -1,8 +1,8 @@
 import numpy as np
 
-from gaze.core.types import GazePoint, Sample, TrackingState
-from gaze.health.blinks import BlinkDetector
-from gaze.health.tracker import HealthTracker
+from pupil.core.types import GazePoint, Sample, TrackingState
+from pupil.health.blinks import BlinkDetector
+from pupil.health.tracker import HealthTracker
 
 
 class _Face:
@@ -60,7 +60,7 @@ def test_looking_away_long_enough_is_a_break():
 
 
 def test_eye_movements_show_slower_jumps_and_more_drift_when_tired():
-    from gaze.health.eyemove import BASELINE_S, EyeMovement
+    from pupil.health.eyemove import BASELINE_S, EyeMovement
 
     rng = np.random.default_rng(0)
     em, t, fid, x = EyeMovement(), 0.0, 0, 0.0

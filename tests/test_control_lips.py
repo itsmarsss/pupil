@@ -1,4 +1,4 @@
-from gaze.control.lips import HOLD_S, WINDOW_S, LipGate
+from pupil.control.lips import HOLD_S, WINDOW_S, LipGate
 
 LOOK = {"state": "tracking", "confidence": 1.0}
 
@@ -54,7 +54,7 @@ def test_shadow_and_off_never_block():
 
 
 def test_someone_else_only_when_sure(monkeypatch):
-    import gaze.control.lips as lips
+    import pupil.control.lips as lips
 
     g = LipGate()
     t = feed(g, 0, 4, lambda t: 0.02)
@@ -81,7 +81,7 @@ def test_opens_for_a_steady_open_mouth():
 
 
 def test_a_flicker_of_movement_during_someone_elses_speech_isnt_you(monkeypatch):
-    import gaze.control.lips as lips
+    import pupil.control.lips as lips
 
     g = LipGate()
     t = feed(g, 0, 6, lambda t: talking(t) if 3.0 < t < 3.15 else 0.02)  # a quick chew in a 3 s utterance
@@ -94,7 +94,7 @@ def test_a_flicker_of_movement_during_someone_elses_speech_isnt_you(monkeypatch)
 
 
 def test_lips_recent_for_cutting_a_turn_short(monkeypatch):
-    import gaze.control.lips as lips
+    import pupil.control.lips as lips
 
     g = LipGate()
     t = feed(g, 0, 2, talking)
@@ -105,7 +105,7 @@ def test_lips_recent_for_cutting_a_turn_short(monkeypatch):
 
 
 def test_audio_is_kept_only_around_your_lip_movement(monkeypatch):
-    import gaze.control.lips as lips
+    import pupil.control.lips as lips
 
     g = LipGate()
     t = feed(g, 0, 2, lambda t: 0.02)  # still: someone else talking
@@ -119,7 +119,7 @@ def test_audio_is_kept_only_around_your_lip_movement(monkeypatch):
 
 
 def test_voice_mutes_chunks_without_lip_movement():
-    from gaze.control.voice import Voice
+    from pupil.control.voice import Voice
 
     class Gate:
         mode = "on"

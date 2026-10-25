@@ -17,7 +17,7 @@ import traceback
 
 import bpy
 
-PORT = int(os.environ.get("GAZE_BLENDER_PORT", "47810"))
+PORT = int(os.environ.get("PUPIL_BLENDER_PORT") or os.environ.get("GAZE_BLENDER_PORT", "47810"))
 TOKEN_FILE = os.path.expanduser("~/Library/Application Support/Gaze/blender_bridge.token")
 MAX_OUTPUT = 8000
 

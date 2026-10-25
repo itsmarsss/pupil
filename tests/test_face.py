@@ -3,8 +3,8 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from gaze.capture.camera import crop_to_aspect
-from gaze.face.tracker import L_INNER, L_OUTER, R_INNER, R_OUTER, eye_rects, face_rect
+from pupil.capture.camera import crop_to_aspect
+from pupil.face.tracker import L_INNER, L_OUTER, R_INNER, R_OUTER, eye_rects, face_rect
 
 FIXTURE = Path(__file__).resolve().parents[1] / "dev" / "fixtures" / "face.jpg"
 
@@ -45,13 +45,13 @@ def test_crop_to_aspect_centre():
 def test_tracker_and_model_on_fixture():
     import cv2
 
-    from gaze.core.paths import GAZE_MODEL_FILE, model_path
-    from gaze.core.types import Frame
-    from gaze.face.tracker import FaceTracker
+    from pupil.core.paths import GAZE_MODEL_FILE, model_path
+    from pupil.core.types import Frame
+    from pupil.face.tracker import FaceTracker
 
     if not model_path(GAZE_MODEL_FILE).exists():
         pytest.skip("gaze model weights not present")
-    from gaze.models.mnn_face_eye import MNNFaceEyeModel
+    from pupil.models.mnn_face_eye import MNNFaceEyeModel
 
     img = cv2.cvtColor(cv2.imread(str(FIXTURE)), cv2.COLOR_BGR2RGB)
     frame = Frame(1_000_000_000, img)

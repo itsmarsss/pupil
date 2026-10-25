@@ -2,10 +2,10 @@
 import numpy as np
 import pytest
 
-from gaze.core.screen import Screen
-from gaze.core.types import FaceObservation
-from gaze.geometry.calibrate import fit
-from gaze.geometry.eyeball import (CENTRE_DEPTH_CM, CORNERS, EYEBALL_RADIUS_CM, IRIS, MEDIAPIPE_VFOV_DEG,
+from pupil.core.screen import Screen
+from pupil.core.types import FaceObservation
+from pupil.geometry.calibrate import fit
+from pupil.geometry.eyeball import (CENTRE_DEPTH_CM, CORNERS, EYEBALL_RADIUS_CM, IRIS, MEDIAPIPE_VFOV_DEG,
                                    ScreenPlane, from_angles, hits, measure, normalize, to_angles)
 
 W, H, FOCAL = 1440, 1080, 1300.0

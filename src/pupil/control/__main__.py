@@ -1,10 +1,10 @@
-"""`gaze control`: the gaze app with voice control on (a shortcut for `gaze --voice`).
+"""`pupil control`: the Pupil app with voice control on (a shortcut for `pupil --voice`).
 
-    gaze control                # eye tracking + voice commands, one process
-    gaze control --dashboard    # ... and the web dashboard
-    gaze control --typed        # type commands in the terminal instead of speaking (dev)
-    gaze control --gaze mouse   # the mouse cursor stands in for gaze: no camera, no calibration (dev)
-    gaze control --calibrate    # recalibrate on start
+    pupil control                # eye tracking + voice commands, one process
+    pupil control --dashboard    # ... and the web dashboard
+    pupil control --typed        # type commands in the terminal instead of speaking (dev)
+    pupil control --gaze mouse   # the mouse cursor stands in for gaze: no camera, no calibration (dev)
+    pupil control --calibrate    # recalibrate on start
 
 Any other option is passed to the tracker (e.g. --targets 25 --snap).
 """
@@ -32,7 +32,7 @@ def run_mouse_mode(typed: bool) -> int:
 
 
 def main(argv=None):
-    parser = argparse.ArgumentParser(prog="gaze control", description=__doc__,
+    parser = argparse.ArgumentParser(prog="pupil control", description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--gaze", choices=["eyes", "mouse"], default="eyes",
                         help="eyes = webcam eye tracking (default); mouse = the cursor stands in for gaze")

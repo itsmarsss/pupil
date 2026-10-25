@@ -74,7 +74,7 @@ class Screen:
         return Image.frombuffer("RGB", (w, h), bytes(data), "raw", "BGRX", Quartz.CGImageGetBytesPerRow(image), 1)
 
     def screenshot(self, gaze=None, target=None):
-        """Screenshot at Claude's size. `gaze` / `target` (screen points) are drawn on it if given."""
+        """Screenshot at Claude's size. `pupil` / `target` (screen points) are drawn on it if given."""
         img = self._grab().resize(self.size, Image.LANCZOS)
         if target is not None:
             draw = ImageDraw.Draw(img)

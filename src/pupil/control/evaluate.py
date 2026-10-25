@@ -1,4 +1,4 @@
-"""`gaze episodes`: look back at logged voice commands, replay routing offline, or score the gate on labelled cases."""
+"""`pupil episodes`: look back at logged voice commands, replay routing offline, or score the gate on labelled cases."""
 from __future__ import annotations
 
 import collections

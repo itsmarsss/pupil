@@ -7,7 +7,7 @@ export function App() {
   return (
     <div className="app">
       <header>
-        <span className="title">Gaze dashboard</span>
+        <span className="title">Pupil dashboard</span>
         <Timeline />
         <button className="header-button" onClick={resetLayout}>Reset layout</button>
       </header>

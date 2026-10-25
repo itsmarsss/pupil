@@ -1,4 +1,4 @@
-"""Command line: `gaze` runs the app; `gaze cameras` and `gaze doctor` help set up."""
+"""Command line: `pupil` runs the app; `pupil cameras` and `pupil doctor` help set up."""
 from __future__ import annotations
 
 import argparse
@@ -185,7 +185,7 @@ def cmd_fov(args) -> int:
     device.focal_px_1080, device.measured = f, True
     device.method = f"iris at {distance_mm / 10:.1f} cm, {len(focals)} frames, spread {spread:.1f} %"
     device.save()
-    print("saved. Recalibrate (`gaze --recalibrate`) so the calibration uses it.")
+    print("saved. Recalibrate (`pupil --recalibrate`) so the calibration uses it.")
     return 0
 
 
@@ -235,7 +235,7 @@ def cmd_doctor(args) -> int:
     if dev.measured:
         print(f"✓ camera focal length {dev.focal_px_1080:.0f} px at 1080p, measured ({dev.method})")
     else:
-        print(f"• camera field of view not measured (assuming {dev.hfov_deg(1920, 1080):.0f}°); run `gaze fov --paper a4`")
+        print(f"• camera field of view not measured (assuming {dev.hfov_deg(1920, 1080):.0f}°); run `pupil fov --paper a4`")
     from .core.lid import LidSensor
 
     lid = LidSensor().angle()
@@ -245,11 +245,14 @@ def cmd_doctor(args) -> int:
 
 def main(argv: list[str] | None = None) -> int:
     argv = sys.argv[1:] if argv is None else argv
+    from .core.paths import migrate_app_support
+
+    migrate_app_support()  # data saved before the rename (".../Gaze") moves to ".../Pupil", once
     if argv[:1] == ["control"]:  # its own options; it starts the tracker itself
         from .control.__main__ import main as control_main
 
         return control_main(argv[1:])
-    parser = argparse.ArgumentParser(prog="gaze", description="Webcam gaze tracking for macOS")
+    parser = argparse.ArgumentParser(prog="pupil", description="Pupil: webcam gaze tracking and voice control for macOS")
     parser.add_argument("-v", "--verbose", action="store_true")
     sub = parser.add_subparsers(dest="command")
 
@@ -267,9 +270,9 @@ def main(argv: list[str] | None = None) -> int:
         p.add_argument("--snap", action="store_true", help="snap the ring to nearby buttons (needs Accessibility access)")
         p.add_argument("--record", help="write every gaze sample to this CSV")
         p.add_argument("--save-session", nargs="?", const="auto", metavar="DIR",
-                       help="save calibration/validation frames for `gaze replay`")
+                       help="save calibration/validation frames for `pupil replay`")
         p.add_argument("--measure", action="store_true", help="run the head-still + head-moving accuracy measurement")
-        p.add_argument("--publish", action="store_true", help="stream gaze over local UDP for `gaze control`")
+        p.add_argument("--publish", action="store_true", help="stream gaze over local UDP for `pupil control`")
         p.add_argument("--dashboard", action="store_true", help="serve the web dashboard on 127.0.0.1 and open it")
         p.add_argument("--voice", action="store_true",
                        help="voice control: look at something and say what to do (needs: uv sync --extra control)")
@@ -282,7 +285,7 @@ def main(argv: list[str] | None = None) -> int:
                        help="ring smoothing; medium holds steady during fixations (default)")
         p.add_argument("--normalise", choices=["roll", "frontal", "none"], default="roll",
                        help="straighten the face before the gaze model (default: level the eyes)")
-    sub.add_parser("control", help="shortcut for `gaze --voice` (see `gaze control -h`)")
+    sub.add_parser("control", help="shortcut for `pupil --voice` (see `pupil control -h`)")
     sub.add_parser("cameras", help="list cameras")
     fov = sub.add_parser("fov", help="measure the camera's field of view (once per camera)")
     spacer = fov.add_mutually_exclusive_group(required=True)

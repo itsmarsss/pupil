@@ -1,8 +1,8 @@
 import numpy as np
 import pytest
 
-from gaze.core.screen import Screen
-from gaze.eval.metrics import append_result, score
+from pupil.core.screen import Screen
+from pupil.eval.metrics import append_result, score
 
 SCREEN = Screen(1512, 982, 302.0, 196.1)
 

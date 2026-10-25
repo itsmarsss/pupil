@@ -6,7 +6,7 @@ is append-only and safe to tail. Implicit labels:
   repeated   the same request again within REPEAT_S (the first attempt probably didn't work)
   confirmed / declined   a pending action (or a question) the user confirmed or cancelled
   answered   the user answered the gate's question
-Episodes with no label after REPEAT_S count as ok (a question nobody answered: unanswered). `gaze episodes` reads the file back (see `load`, `replay`).
+Episodes with no label after REPEAT_S count as ok (a question nobody answered: unanswered). `pupil episodes` reads the file back (see `load`, `replay`).
 """
 from __future__ import annotations
 

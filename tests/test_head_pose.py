@@ -3,12 +3,12 @@ import json
 import numpy as np
 import pytest
 
-from gaze.calibration.features import POSE_DIM, YAW, PoseRange, calibration_vector, pose_of
-from gaze.calibration.profile import EXPLICIT, MOTION, Profile, ProfileMeta
-from gaze.calibration.regression import fit_best
-from gaze.calibration.targets import grid
-from gaze.core.types import FaceObservation, HeadPose
-from gaze.geometry.eyeball import GEO_DIM
+from pupil.calibration.features import POSE_DIM, YAW, PoseRange, calibration_vector, pose_of
+from pupil.calibration.profile import EXPLICIT, MOTION, Profile, ProfileMeta
+from pupil.calibration.regression import fit_best
+from pupil.calibration.targets import grid
+from pupil.core.types import FaceObservation, HeadPose
+from pupil.geometry.eyeball import GEO_DIM
 
 SCREEN = (1512.0, 982.0)
 MODEL_DIM = 30

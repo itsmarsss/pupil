@@ -1,6 +1,6 @@
 import numpy as np
 
-from gaze.filter.smoother import PRESETS, GazeSmoother
+from pupil.filter.smoother import PRESETS, GazeSmoother
 
 MS = 1_000_000
 PPD = 48.0  # points per degree
