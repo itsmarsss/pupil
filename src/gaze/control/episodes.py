@@ -2,7 +2,7 @@
 
 Records are appended to `.logs/episodes.jsonl` as they finish; labels arrive later as separate records, so the file
 is append-only and safe to tail. Implicit labels:
-  corrected  "stop" / "no" / "undo" within CORRECT_S of an action
+  corrected  "stop" within CORRECT_S of an action, or what Jev reads as saying it was wrong ("no, not that")
   repeated   the same request again within REPEAT_S (the first attempt probably didn't work)
   confirmed / declined   a pending action (or a question) the user confirmed or cancelled
   answered   the user answered the gate's question
@@ -26,7 +26,6 @@ CORRECT_S = 4.0
 REPEAT_S = 10.0
 # Saying these again is using them ("scroll down", "next"), not a sign the first one failed.
 STEPWISE = {"scroll", "scroll_down", "scroll_up", "shortcut", "key", "dictation"}
-CORRECTIONS = {"no", "nope", "undo", "undo that", "wrong", "wrong one", "not that", "no not that", "not that one"}
 
 
 def _norm(text: str) -> str:
@@ -63,7 +62,7 @@ class EpisodeLog:
             if prev.get("pending") and kind in ("confirm", "cancel") and not prev.get("label"):
                 self.label(prev, "confirmed" if kind == "confirm" else "declined")
                 break
-            if (kind == "cancel" or norm in CORRECTIONS) and since <= CORRECT_S and prev.get("acted"):
+            if kind == "cancel" and since <= CORRECT_S and prev.get("acted"):
                 self.label(prev, "corrected")
                 break
             stepwise = prev.get("route") in STEPWISE or prev.get("decision") in STEPWISE
@@ -100,6 +99,17 @@ class EpisodeLog:
         ep["audio"] = str(path.relative_to(self.path.parent))
         for old in sorted(folder.glob("*.wav"), key=lambda p: p.stat().st_mtime)[:-MAX_AUDIO_FILES]:
             old.unlink(missing_ok=True)
+
+    def corrected(self, ep: dict) -> None:
+        """`ep` says the action before it was wrong (Jev's reading): label that one, if it acted just before."""
+        with self._lock:
+            recent = list(self._recent)
+        for prev in reversed(recent):
+            if prev is ep or prev.get("label"):
+                continue
+            if ep["t0"] - prev.get("t_done", prev["t"]) <= CORRECT_S and prev.get("acted"):
+                self.label(prev, "corrected")
+            return
 
     def label(self, ep: dict, label: str) -> None:
         ep["label"] = label

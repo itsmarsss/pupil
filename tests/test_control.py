@@ -12,7 +12,9 @@ def test_tracker_phrases_route_to_commands():
     assert router.route("recenter").kind == "recentre"
     assert router.route("check accuracy").kind == "check"
     assert router.route("calibrate").kind == "calibrate"
-    assert router.route("click this").kind == "click"
+    assert router.route("stop").kind == "cancel" and router.route("do it").kind == "confirm"
+    for said in ("click this", "scroll down", "go to github.com", "type hello", "again", "quit games", "please"):
+        assert router.route(said).kind == "unknown", said  # Jev reads everything else
 
 
 def _free_port() -> int:
@@ -98,12 +100,6 @@ def test_tracker_gaze_boosts_only_a_sustained_final_fixation():
     assert g2.cloud_during(time.time() - 5, time.time() + 5).weights == [1.0] * 4
 
 
-def test_split_clauses():
-    assert router.split_clauses("open Safari and then make a new tab") == ["open Safari", "make a new tab"]
-    assert router.split_clauses("copy this, then switch to Notes") == ["copy this", "switch to Notes"]
-    assert router.split_clauses("select all and copy") == ["select all", "copy"]
-
-
 class _A:
     def __init__(self, **kw):
         self.__dict__.update(kw)
@@ -126,7 +122,8 @@ def test_truth_table_clarify_and_compound():
     assert _decide(_answers(enough_context=0.24, wants_shortcut=0.9), [], None, {})[0] == "shortcut"  # terse is fine
     assert _decide(_answers(is_compound=0.95), [], None, {})[0] == "compound"
     assert _decide(_answers(is_compound=0.95, wants_app=0.9), [], None, {}, allow_compound=False)[0] == "open_app"
-    assert _decide(_answers(wants_scroll=0.95, wants_shortcut=0.8), [], None, {})[0] == "scroll_down"
+    route, _, extras = _decide(_answers(wants_scroll=0.95, wants_shortcut=0.8), [], None, {})
+    assert route == "scroll" and extras["args"] == {"direction": "down", "amount": 4}
 
 
 def test_truth_table_unsure_commands_and_follow_ups():
@@ -154,7 +151,8 @@ def test_episodes_label_reactions_and_replay(tmp_path):
     a = log.begin("click this", t, t + 0.5, "click")
     a.update(acted=True)
     log.finish(a)
-    log.begin("undo", t + 1, t + 1.3, "unknown")  # a correction right after an action
+    no = log.begin("no, not that", t + 1, t + 1.3, "unknown")
+    log.corrected(no)  # Jev read it as saying the last action was wrong
     b = log.begin("open notes", t + 2, t + 2.4, "unknown")
     b.update(gate={"route": "open_app", "nouls": {k: v.noul for k, v in _answers(wants_app=0.9).nouls.items()},
                    "choices": {"app": "Notes", "missing": "who", "shortcut": "copy", "scroll_direction": "down",
@@ -185,6 +183,8 @@ def test_compound_hands_the_rest_to_the_agent(monkeypatch):
     monkeypatch.setattr(ctl.macos, "frontmost_app", lambda: "Notes")
     monkeypatch.setattr(ctl.commands, "open_app", lambda path: done.append(path))
     monkeypatch.setattr(ctl, "SETTLE_S", {}), monkeypatch.setattr(ctl, "DEFAULT_SETTLE_S", 0)
+    monkeypatch.setattr(ctl.extract, "steps", lambda request: ["open Notes", "write a shopping list"])
+    c._busy_with = None
     c._compound("open Notes and write a shopping list", (10, 10), None, [], "Safari")
     assert done == ["/Applications/Notes.app"]
     assert started == ["open Notes and write a shopping list (Already done: open Notes. "
@@ -427,21 +427,19 @@ def test_close_never_guesses_a_whole_window(monkeypatch):
     assert c._close(tab) and clicks[-1] == "Figma" and keys == ["command+w"]
 
 
-def test_menu_commands_are_found_by_their_words_in_any_app():
-    from gaze.control.commands import MENU_PHRASES
-    from gaze.control.uitree import find_menu_title
+def test_menu_commands_are_picked_by_jev_once_per_app(monkeypatch):
+    from gaze.control import controller as ctl
 
-    chrome = ["select previous tab", "select next tab", "reload this page", "close tab", "close other tabs", "back"]
-    wezterm = ["activate the tab to the left", "activate the tab to the right", "reload configuration", "close current tab"]
-    finder = ["show previous tab", "open in new tab", "new tab", "back"]
-    assert find_menu_title(chrome, MENU_PHRASES["previous_tab"]) == "select previous tab"
-    assert find_menu_title(wezterm, MENU_PHRASES["previous_tab"]) == "activate the tab to the left"
-    assert find_menu_title(finder, MENU_PHRASES["previous_tab"]) == "show previous tab"
-    assert find_menu_title(chrome, MENU_PHRASES["close_tab"]) == "close tab"  # not "close other tabs"
-    assert find_menu_title(wezterm, MENU_PHRASES["close_tab"]) == "close current tab"
-    assert find_menu_title(wezterm, MENU_PHRASES["refresh"]) is None  # not "reload configuration"
-    assert find_menu_title(finder, MENU_PHRASES["new_tab"]) == "new tab"
-
+    asked, pressed = [], []
+    c = ctl.VoiceController.__new__(ctl.VoiceController)
+    c._menu_choice, c._busy_with, c._status, c._flash = {}, None, lambda text: None, None
+    c.gate = _A(available=True, menu_command=lambda desc, combo, titles: asked.append(titles) or "Select Previous Tab (⌃⇧⇥)")
+    monkeypatch.setattr(ctl.uitree, "menu_commands", lambda: ("Chrome", ["Select Previous Tab (⌃⇧⇥)", "Close Tab (⌘W)"]))
+    monkeypatch.setattr(ctl.uitree, "press_menu_command", lambda command: pressed.append(command) or "Select Previous Tab")
+    c._acted = lambda *a, **k: None
+    c._shortcut("previous_tab")
+    c._shortcut("previous_tab")
+    assert len(asked) == 1 and pressed == ["Select Previous Tab (⌃⇧⇥)"] * 2  # cached for the app
 
 def test_agent_hears_interruptions_and_redirects_when_paused(monkeypatch):
     from gaze.control import agent as agent_mod
@@ -464,18 +462,27 @@ def test_agent_hears_interruptions_and_redirects_when_paused(monkeypatch):
     assert a._paused is None
 
 
-def test_answers_to_which_one():
-    from gaze.control.controller import pick_option
+def test_answers_to_which_one(monkeypatch):
+    from gaze.control import controller as ctl
+    from gaze.control.heat import GazeCloud
     from gaze.control.snapping import Element
 
     a = Element("AXRadioButton", "YouTube", 0, 0, 100, 30)
-    b = Element("AXRadioButton", "Gaze dashboard", 100, 0, 100, 30)
-    assert pick_option("two", [a, b]) is b and pick_option("the first one", [a, b]) is a
-    assert pick_option("the left one", [b, a]) is a and pick_option("right", [a, b]) is b
-    assert pick_option("the youtube one", [a, b]) is a
-    assert pick_option("hmm", [a, b]) is None
-    assert pick_option("one", [a, b]) is a and pick_option("number two", [a, b]) is b and pick_option("this one", [a, b]) is None
+    b = Element("AXRadioButton", "Gaze dashboard", 300, 0, 100, 30)
+    done, said = [], []
+    c = ctl.VoiceController.__new__(ctl.VoiceController)
+    c._ep, c._busy_with, c.hud, c._status = {}, None, _A(badges=[]), said.append
+    c._act_on = lambda action, args, target: done.append(target)
 
+    def ask(answer):
+        c.choosing = {"options": [a, b], "action": "click", "args": {}}
+        c.gate = _A(available=True, pick=lambda text, options: answer)
+        c._resolve_choice("whatever was said", GazeCloud([(350.0, 15.0, 1.0)], 20))
+
+    ask(b)
+    ask("looked_at")  # "this one": where they're looking now
+    ask("none")
+    assert done == [b, b] and said[-1] == "Didn't catch which one: nothing done."
 
 def test_relative_correction_redoes_the_action_on_the_neighbour(monkeypatch):
     from gaze.control import controller as ctl
@@ -525,24 +532,20 @@ def test_gaze_indicator_shows_the_most_important_state(monkeypatch):
 
 
 def test_websites_and_searches_go_through_the_address_bar(monkeypatch):
-    from gaze.control import controller as ctl, router
-
-    assert router.route("Open incognito and go to cornhub.com.").kind == "unknown"  # compound: split first
-    assert router.route("go to cornhub.com").args == {"url": "cornhub.com"}
-    assert router.route("search for best eye trackers").args == {"query": "best eye trackers"}
-    assert router.route("open notes").kind == "unknown"  # an app, not a site
+    from gaze.control import controller as ctl
 
     typed, pressed, opened = [], [], []
     c = ctl.VoiceController.__new__(ctl.VoiceController)
     c._ep, c._status, c._flash = {}, lambda text: None, None
+    c._menu_for = lambda shortcut: "Open Location… (⌘L)"
     monkeypatch.setattr(ctl.actions, "type_text", typed.append)
     monkeypatch.setattr(ctl.actions, "press", lambda combo: pressed.append(combo))
     monkeypatch.setattr(ctl.time, "sleep", lambda s: None)
     monkeypatch.setattr(ctl.subprocess, "Popen", lambda cmd: opened.append(cmd))
-    monkeypatch.setattr(ctl.uitree, "press_menu_command", lambda phrases: "Open Location…")  # a browser in front
+    monkeypatch.setattr(ctl.uitree, "press_menu_command", lambda command: "Open Location…")  # a browser in front
     c._navigate(url="cornhub.com")
     assert typed == ["cornhub.com"] and pressed == ["return"] and not opened  # in the window you're in
-    monkeypatch.setattr(ctl.uitree, "press_menu_command", lambda phrases: None)  # not a browser
+    monkeypatch.setattr(ctl.uitree, "press_menu_command", lambda command: None)  # not a browser
     c._navigate(query="eye trackers")
     assert opened == [["open", "https://www.google.com/search?q=eye+trackers"]]
 
@@ -560,7 +563,7 @@ def test_quitting_targets_the_named_app_and_always_asks(monkeypatch):
     c._quit_app("games", force=True)
     assert pending[-1][0][0] == "quit" and pending[-1][0][1]["pid"] == 1 and pending[-1][1] == "Force quit Games"
     dock_icon = Element("AXDockItem", "WezTerm", 0, 0, 50, 50)
-    c._quit_app("that app", force=False, target=dock_icon)  # "quit that app" looking at its Dock icon
+    c._quit_app(None, force=False, target=dock_icon)  # "quit that app" looking at its Dock icon
     assert pending[-1][0][1]["name"] == "WezTerm" and pending[-1][1] == "Quit WezTerm"
     assert "quit_app" in commands.ALWAYS_CONFIRM  # Jev's Cmd+Q asks too, whatever its risk score
 

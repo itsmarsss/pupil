@@ -11,12 +11,13 @@ import queue
 import threading
 import time
 import urllib.parse
+from pathlib import Path
 from collections import deque
 
 import numpy as np
 import sounddevice as sd
 
-from . import audio, config
+from . import audio, config, models
 
 CHUNK_S = audio.CHUNK / audio.RATE
 SPEECH_START, SPEECH_END = 0.5, 0.35  # Silero probability to start / keep an utterance (hysteresis)
@@ -303,8 +304,9 @@ class Voice(threading.Thread):
             preroll.clear()
             audio_clip = np.concatenate([c if self._yours(t) else np.zeros_like(c) for t, c in buf])
             self.on_state("transcribing")
-            segments, _ = model.transcribe(audio_clip, language="en", beam_size=1, condition_on_previous_text=False)
-            text = " ".join(s.text for s in segments).strip()
+            with models.calling("stt", f"Whisper {Path(str(config.WHISPER_MODEL)).name} (on device)", "transcribing"):
+                segments, _ = model.transcribe(audio_clip, language="en", beam_size=1, condition_on_previous_text=False)
+                text = " ".join(s.text for s in segments).strip()
             if text.lower().strip(" .!?,") not in HALLUCINATIONS:
                 self.on_utterance(text, started, ended)
             self.on_state("idle")
@@ -436,6 +438,7 @@ class CartesiaVoice(Voice):
                                 in_turn.is_set() and self.gate.face_recent() and self.gate.lips_recent(TURN_LIPS_STILL_S)):
                             if not sending:
                                 sending = True
+                                models.streaming("stt", f"Cartesia {config.CARTESIA_MODEL}", True, "listening")
                                 self._opened_at = (preroll[0][0] if preroll else t_block) - SEND_S
                                 for t_pre, b in preroll:  # the lead-in, muted where your lips weren't moving
                                     ws.send(b if self._yours(t_pre) else SILENCE)
@@ -446,6 +449,8 @@ class CartesiaVoice(Voice):
                             ws.send(SILENCE)
                             last_sent = time.time()
                         else:
+                            if sending:
+                                models.streaming("stt", f"Cartesia {config.CARTESIA_MODEL}", False)
                             sending = False
                             preroll.append((t_block, block))
                             if KEEPALIVE_S and time.time() - last_sent > KEEPALIVE_S:

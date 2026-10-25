@@ -1,6 +1,6 @@
 """Look at something, say what to do: voice control running inside the gaze app.
 
-Tiers: 0 = exact phrases (router.py), 1 = Jev gate (gate.py), 2 = Claude computer-use agent (agent.py).
+Tiers: 0 = stop/confirm/dictation phrases (router.py), 1 = Jev gate (gate.py), 2 = the computer-use agent (agent.py).
 "This" is where the user looked while speaking, snapped to the nearest Accessibility element. The gate may also
 ask a question first (not enough to act on) or split a command into a few actions run one after another.
 Work happens on background threads; `tick()` (called ~30 Hz on the AppKit main thread) applies their results
@@ -16,11 +16,12 @@ import urllib.parse
 import threading
 import time
 from dataclasses import dataclass
+from pathlib import Path
 
-from . import actions, apps, commands, config, dictation, heat, macos, router, settings, snapping, uitree
+from . import actions, apps, commands, config, dictation, extract, heat, macos, models, router, settings, snapping, uitree
 from .agent import Agent
 from .episodes import EpisodeLog, element_dict
-from .gate import CLARIFY_PROMPTS, MAX_CANDIDATES, NO, Gate
+from .gate import CLARIFY_PROMPTS, MAX_CANDIDATES, NO, YES, Gate
 from .hud import Hud
 from .indicator import Indicator, Status
 from .lips import LipGate
@@ -33,8 +34,6 @@ _ROUTE_ACTIONS = {
     "click": ("click", {"clicks": 1, "button": "left"}),
     "double_click": ("click", {"clicks": 2, "button": "left"}),
     "right_click": ("click", {"clicks": 1, "button": "right"}),
-    "scroll_down": ("scroll", {"direction": "down", "amount": 4}),
-    "scroll_up": ("scroll", {"direction": "up", "amount": 4}),
 }
 CLARIFY_WINDOW_S = 10.0  # how long an answer to "Which one?" is taken as the answer
 MAX_CLAUSES = 3  # longer chains go to the agent whole
@@ -45,8 +44,7 @@ FLASH_S = 0.9  # how long "✓ clicked" stays on the gaze indicator
 CHOOSE_WINDOW_S = 12.0  # how long "which one?" waits for an answer
 RELATIVE_WINDOW_S = 20.0  # "no, the left one" refers to the last target this recently
 MAYBE_WINDOW_S = 10.0  # how long "do it" runs something Jev wasn't sure was a command
-NUMBERS = ["one", "two", "three"]
-_ORDINALS = [("one", "1", "first"), ("two", "2", "second", "too", "to"), ("three", "3", "third")]  # as heard
+NUMBERS = ["one", "two", "three"]  # how "which one?" names the badges
 
 
 @dataclass
@@ -67,24 +65,6 @@ def _last_sentence(text):
     """The last sentence of something said in several ("is now beginning. Click join." -> "Click join."), or None."""
     parts = [p for p in re.split(r"(?<=[.?!])\s+", text.strip()) if p]
     return parts[-1] if len(parts) > 1 and len(parts[-1].split()) >= 2 else None
-
-
-def pick_option(text, options):
-    """Which of `options` an answer means: a position ("the left one", "top"), a number ("two", "the first",
-    "number one"; "one" alone is a pronoun in "the left one"), or a name ("the YouTube one"). None if unclear."""
-    words = set(re.findall(r"[a-z0-9]+", text.lower()))
-    for side, key, sign in (("left", 0, 1), ("right", 0, -1), ("top", 1, 1), ("upper", 1, 1),
-                            ("bottom", 1, -1), ("lower", 1, -1)):
-        if side in words:
-            return min(options, key=lambda el: sign * el.center[key])
-    if "last" in words:
-        return options[-1]
-    number_only = words <= {"one", "number", "option", "the", "it", "s", "that"}
-    for i, names in enumerate(_ORDINALS[:len(options)]):
-        if words & set(names[1:]) or (names[0] in words and (names[0] != "one" or number_only)):
-            return options[i]
-    named = [el for el in options if el.label and any(w in el.label.lower() for w in words if len(w) > 3)]
-    return named[0] if len(named) == 1 else None
 
 
 CLIP_PAD_S = 0.3  # audio saved with each episode: the utterance plus this either side
@@ -128,11 +108,31 @@ class VoiceController:
         self.lips = LipGate(config.LIP_GATE) if gaze.calibratable and config.LIP_GATE != "off" else None
         gaze.lips = self.lips
         self._lip_state = None  # last lip-gate state sent to the dashboard
+        self._models_seen = -1  # models.version() last sent to the dashboard
+        self._menu_choice: dict = {}  # (app, shortcut) -> the app's menu command for it (Jev's pick), or None
+
+    def _configure_models(self):
+        """What each role will call, for the dashboard before anything has been called."""
+        if not self._typed:
+            models.configure("stt", f"Cartesia {config.CARTESIA_MODEL}" if config.STT == "cartesia"
+                             else f"Whisper {Path(str(config.WHISPER_MODEL)).name} (on device)")
+        if self.gate.available:
+            models.configure("jev", config.GATE_MODEL)
+        if extract.available():
+            models.configure("extract", config.EXTRACT_MODEL)
+        if config.DICTATION_FORMAT:
+            models.configure("dictation", config.DICTATION_MODEL)
+        if self.agent.available:
+            models.configure("agent", config.AGENT_TIERS["standard"][0])
+        if self.speaker.available:
+            models.configure("tts", f"Cartesia {config.TTS_MODEL}")
 
     def start(self) -> None:
+        self._configure_models()
         threading.Thread(target=self._snap_loop, name="snap", daemon=True).start()
         threading.Thread(target=self._command_loop, name="voice-commands", daemon=True).start()
         threading.Thread(target=dictation.warm, name="warm-dictation", daemon=True).start()
+        threading.Thread(target=extract.warm, name="warm-extract", daemon=True).start()
         if self._typed:
             TypedInput(self._on_utterance).start()
             self.hud.mic = "typing in terminal"
@@ -272,6 +272,9 @@ class VoiceController:
             elif kind == "flash":
                 self.hud.flash = payload
                 self.flash_until = time.time() + 0.4
+        if models.version() != self._models_seen:  # which model is being called, for the Voice & agent panel
+            self._models_seen = models.version()
+            self.gaze.report("models", models=models.snapshot())
         h = self.hud
         h.gaze = self.gaze.point()
         self.indicator.update(self._indicator_status(), h.gaze)
@@ -314,18 +317,7 @@ class VoiceController:
         self.episodes.save_audio(ep, clip)
         self.hud.heard = cmd.text
         if cmd.kind == "cancel":  # handled immediately, even while a command is running
-            self.speaker.stop()
-            self.choosing, self.hud.badges = None, []
-            if self.dictating:
-                self.dictating = False
-                self.hud.status = "Dictation off."
-            self.agent.cancel()
-            self._set_pending(None)
-            self._last_target = self.maybe = None
-            if self.clarifying is not None:
-                self.episodes.label(self.clarifying[3], "declined")
-                self.clarifying = None
-            self.hud.status = "Cancelled."
+            self._cancel()
             ep["route"] = "cancel"
             self.episodes.finish(ep)
             return
@@ -336,9 +328,6 @@ class VoiceController:
             ep["route"] = cmd.kind
             self.episodes.finish(ep)
             return
-        if cmd.kind == "relative" and (self._last_target is None
-                                       or time.time() - self._last_target.t > RELATIVE_WINDOW_S):
-            cmd = router.Command("unknown", {"request": text}, text)  # no recent target: "left" is just a command
         if self.choosing is not None and cmd.kind != "cancel":
             if time.time() < self.choosing["deadline"]:  # the answer to "which one?"
                 cmd = router.Command("choice", {"text": text}, text)
@@ -362,6 +351,21 @@ class VoiceController:
                 ep["clarified"] = {"from": original, "missing": missing, "answer": ep["text"]}
                 self.gaze.report("pending", "")
         self.commands.put((cmd, t0, t1, ep))
+
+    def _cancel(self):
+        """Stop everything: speech, the agent, anything waiting for an answer."""
+        self.speaker.stop()
+        self.choosing, self.hud.badges = None, []
+        if self.dictating:
+            self.dictating = False
+            self.hud.status = "Dictation off."
+        self.agent.cancel()
+        self._set_pending(None)
+        self._last_target = self.maybe = None
+        if self.clarifying is not None:
+            self.episodes.label(self.clarifying[3], "declined")
+            self.clarifying = None
+        self.hud.status = "Cancelled."
 
     def _tracker_command(self, kind):
         """The tracker owns calibration screens: recalibrate, re-centre (1 dot) or check accuracy (9 dots)."""
@@ -457,63 +461,17 @@ class VoiceController:
         target, candidates = snapping.snap(*gaze, self.screen.w_pt, self.screen.h_pt) if gaze else (None, [])
         self._report_target(target)
         confidence = self.gaze.confidence_during(t0, t1)
-        self._cloud, self._candidates = cloud, candidates
+        self._cloud, self._candidates, self._confidence = cloud, candidates, confidence
         ep.update(gaze=[round(v, 1) for v in gaze] if gaze else None, confidence=round(confidence, 3),
                   target=element_dict(target, gaze), cloud=cloud.summary(),
                   elements=[element_dict(c, gaze) for c in candidates[:MAX_CANDIDATES]])
         if cmd.kind == "choice":
             self._resolve_choice(cmd.args["text"], cloud)
             return
-        if cmd.kind == "relative":
-            self._relative(cmd.args["direction"])
-            return
-        if cmd.kind == "reference":
-            self._reference(cmd.args["mode"], gaze, cloud, candidates)
-            return
-
         if cmd.kind == "unknown":
             ep["route"] = "gate"
-            request = cmd.args["request"]
-            self._route_with_gate(request, gaze, target, candidates, allow_clarify=not cmd.args.get("clarified"))
-            return
-
-        ep["route"] = cmd.kind
-        if cmd.kind == "shortcut":
-            self._shortcut(cmd.args["shortcut"])
-            return
-        if cmd.kind == "navigate":
-            self._navigate(**cmd.args)
-            return
-        if cmd.kind == "quit_app":
-            self._quit_app(cmd.args["name"], cmd.args["force"], target)
-            return
-        # Exact phrase ("click this"): the element with the most gaze heat (x fit with the words, when Jev is
-        # there to judge it); if two are too close to call, ask.
-        if cmd.kind in ("click", "type") and cloud and len(candidates) > 1:
-            els = candidates[:MAX_CANDIDATES]
-            fit = None
-            if self.gate.available:
-                try:
-                    with self._working("thinking", "thinking"):
-                        fit = self.gate.element_fit(cmd.text, gaze, els)
-                except Exception:
-                    pass  # heat alone
-            shares = heat.scores(els, cloud, fit)
-            ranked = sorted(zip(shares, els), key=lambda x: -x[0])
-            ep["shares"] = {el.describe(): round(s, 3) for s, el in ranked[:5]}
-            self.gaze.report("heat", options=[{"x": el.x, "y": el.y, "w": el.w, "h": el.h, "label": el.label[:40],
-                                               "share": round(s, 3)} for s, el in ranked[:4] if s >= 0.05])
-            if heat.ambiguous(shares) and cmd.kind == "click":
-                self._ask_which([(s, el) for s, el in ranked[:3] if s >= 0.1], "click", cmd.args)
-                return
-            target = ranked[0][1]
-        if cmd.kind in ("click", "type") and confidence < config.GAZE_MIN_CONFIDENCE:
-            # The tracker wasn't sure (head turned past what calibration covered): ask instead of acting.
-            where = target.describe() if target else "there"
-            self._set_pending((cmd.kind, cmd.args, gaze, target), f"{cmd.kind} {where}")
-            self._status(f'Not sure where you\'re looking ({cmd.kind} {where}?). Say "confirm", or "re-centre".')
-            return
-        self._do(cmd.kind, cmd.args, gaze, target)
+            self._route_with_gate(cmd.args["request"], gaze, target, candidates,
+                                  allow_clarify=not cmd.args.get("clarified"))
 
     def _report_target(self, target):
         if target is None:
@@ -545,13 +503,14 @@ class VoiceController:
             return
         try:
             with self._working("thinking", "thinking"):
+                context = {"last": self._last_action(), "running": [n for n, _ in macos.running_apps()]}
                 d = self.gate.decide(request, gaze, candidates, app, allow_clarify=allow_clarify, cloud=self._cloud,
-                                     assume_command=assume_command)
+                                     assume_command=assume_command, **context)
                 last = _last_sentence(request)
                 if d.route in BLOCKED and last and allow_clarify:
                     # Talk before the command ("...matches at a time. Can you drag this here?") can sink the
                     # whole thing: judge the last sentence on its own, and act on it if that's clearly a command.
-                    retry = self.gate.decide(last, gaze, candidates, app, allow_clarify=False, cloud=self._cloud)
+                    retry = self.gate.decide(last, gaze, candidates, app, allow_clarify=False, cloud=self._cloud, **context)
                     ep["last_sentence"] = {"text": last, "route": retry.route, "gate": retry.answers}
                     if retry.route not in BLOCKED:
                         d, request = retry, last
@@ -561,6 +520,8 @@ class VoiceController:
             self._start_agent(request, gaze, target, candidates, app)
             return
         ep["gate"], ep["decision"] = d.answers, d.route
+        if d.answers["nouls"].get("corrects_last", 0) >= YES:  # "no, not that": the last action was wrong
+            self.episodes.corrected(ep)
         self._agent_route = (d.tier, d.budget)  # which model and how long, if this goes to the agent
         self._candidates = candidates  # for _close: the close button that belongs to the target
         self._status(d.summary())
@@ -585,7 +546,7 @@ class VoiceController:
         if d.route == "compound":
             self._compound(request, gaze, target, candidates, app)
             return
-        if self._apply(d, gaze):
+        if self._apply(d, gaze, request, target):
             return
         # Needs writing, reading the screen, or nothing direct matched: Claude takes it.
         if not self.agent.available:
@@ -594,9 +555,47 @@ class VoiceController:
         self._status(f"Asking the agent ({d.why})...")
         self._start_agent(request, gaze, d.target or target, candidates, app)
 
-    def _apply(self, d, gaze) -> bool:
-        """Carry out a direct decision (or hold it for "confirm" if risky). False if it isn't a direct one."""
+    def _apply(self, d, gaze, request="", target=None) -> bool:
+        """Carry out a direct decision (or hold it for "confirm" if risky). False if it isn't a direct one, or its
+        text couldn't be pulled out (the agent takes it)."""
         risky = d.risky >= config.GATE_RISKY_MIN
+        args = d.args or {}
+        if d.route == "cancel":
+            self._cancel()
+            return True
+        if d.route == "scroll":
+            self._do("scroll", args, gaze, d.target or target)
+            return True
+        if d.route == "reference":
+            self._reference(args["mode"], gaze, self._cloud, self._candidates)
+            return True
+        if d.route == "relative":
+            self._relative(args["direction"])
+            return True
+        if d.route == "quit_app":
+            self._quit_app(args.get("app"), args.get("force", False), target)
+            return True
+        if d.route == "navigate":
+            with self._working("thinking", "reading"):
+                where = extract.web(request)
+            if where is None:
+                return False
+            self._navigate(**where)
+            return True
+        if d.route == "type":
+            with self._working("thinking", "reading"):
+                text = extract.text_to_type(request)
+            if text is None:
+                return False
+            self._do("type", {"text": text}, gaze, d.target or target)
+            return True
+        if d.route in ("click", "double_click", "right_click", "close") and d.target is not None \
+                and getattr(self, "_confidence", 1.0) < config.GAZE_MIN_CONFIDENCE:
+            # The tracker wasn't sure (head turned past what calibration covered): ask instead of acting.
+            kind, kargs = _ROUTE_ACTIONS.get(d.route, ("close", {}))
+            self._set_pending((kind, kargs, gaze, d.target), f"{kind} {d.target.describe()}")
+            self._status(f'Not sure where you\'re looking ({kind} {d.target.describe()}?). Say "confirm", or "re-centre".')
+            return True
         if d.route == "open_app" and d.app_path:
             self._status(f"Opening {d.app}: {d.summary()}")
             self._acted("open_app", {"app": d.app})
@@ -628,10 +627,12 @@ class VoiceController:
         return False
 
     def _quit_app(self, name, force, target=None):
-        """Quit (or force quit) the app the user names, or the one whose Dock icon they're looking at ("that app"):
-        never just whatever is in front. Always asks first: quitting loses whatever it had open."""
-        if name in ("that", "that app", "this app", "that one") and target is not None and target.label:
-            name = target.label  # e.g. the Dock icon under the gaze
+        """Quit (or force quit) the app the user names (Jev picks it from the running ones), or with name None the
+        one they're looking at: its Dock icon, else the app in front. Always asks first: quitting loses whatever it
+        had open."""
+        if name is None:
+            name = target.label if target is not None and target.role == "AXDockItem" and target.label \
+                else macos.frontmost_app()
         running = macos.running_apps()
         wanted = name.lower().strip()
         match = next(((n, pid) for n, pid in running if n.lower() == wanted), None) or next(
@@ -661,7 +662,8 @@ class VoiceController:
         type, Return, so it lands in the window you're in (an incognito one included). Elsewhere: the default
         browser."""
         text = url or query
-        via = uitree.press_menu_command(commands.MENU_PHRASES["address_bar"])
+        command = self._menu_for("address_bar")
+        via = uitree.press_menu_command(command) if command else None
         if via:
             time.sleep(0.15)  # let the address bar take focus
             actions.type_text(text)
@@ -677,19 +679,47 @@ class VoiceController:
         self._acted("open_app", {"url": target})
         self._status(f"Opened {target}")
 
+    def _last_action(self):
+        """What the last action did, for Jev to read "again" / "no, the left one" against; None if none recent."""
+        last = self._last_target
+        if last is None or time.time() - last.t > RELATIVE_WINDOW_S:
+            return None
+        return f"{last.action.replace('_', ' ')} on {last.target.describe()}, {time.time() - last.t:.0f} s ago"
+
     def _remember_command(self, text):
         """Recent commands, as context for Jev's next decision (follow-ups, clarifications)."""
         now = time.time()
         self._recent = [(t, s) for t, s in self._recent if now - t < RECENT_CONTEXT_S][-3:] + [(now, text)]
         self.gate.recent = [s for _, s in self._recent[:-1]]  # before this one
 
+    def _menu_for(self, shortcut):
+        """The frontmost app's own menu command for a standard action, chosen by Jev from its real menus once per
+        app (they don't change), or None: press the keys."""
+        if not self.gate.available:
+            return None
+        try:
+            app, titles = uitree.menu_commands()
+        except Exception:
+            return None
+        if not titles:
+            return None
+        key = (app, shortcut)
+        if key not in self._menu_choice:
+            desc, combo = commands.SHORTCUTS[shortcut]
+            try:
+                with self._working("thinking", "thinking"):
+                    self._menu_choice[key] = self.gate.menu_command(desc, combo, titles)
+            except Exception:
+                return None  # not cached: ask again next time
+        return self._menu_choice[key]
+
     def _shortcut(self, shortcut, times=1):
         """A standard action, the way the frontmost app does it: its own menu command if it has one (shortcuts
         differ between apps: "previous tab" is Ctrl+Shift+Tab in Chrome, Cmd+Shift+[ in Finder), else the keys."""
         desc, combo = commands.SHORTCUTS[shortcut]
-        phrases = commands.MENU_PHRASES.get(shortcut)
+        command = self._menu_for(shortcut)
         for i in range(max(1, times)):
-            via = uitree.press_menu_command(phrases) if phrases else None
+            via = uitree.press_menu_command(command) if command else None
             if via == "":
                 self._status(f"{desc}: not available right now")
                 return
@@ -724,12 +754,21 @@ class VoiceController:
         choosing, self.choosing = self.choosing, None
         self.hud.badges = []
         options = choosing["options"]
-        pick = pick_option(text, options)
-        if pick is None and cloud:  # "this one" / "that": wherever they're looking now, among the options
+        pick = None
+        if self.gate.available:
+            try:
+                with self._working("thinking", "thinking"):
+                    pick = self.gate.pick(text, options)
+            except Exception:
+                pick = "looked_at"
+        if pick == "none":
+            self._status("Didn't catch which one: nothing done.")
+            return
+        if (pick is None or isinstance(pick, str)) and cloud:  # "this one" / "that": where they're looking now
             shares = heat.scores(options, cloud)
             best = max(range(len(options)), key=shares.__getitem__)
             pick = options[best] if shares[best] >= 0.5 else None
-        if pick is None:
+        if pick is None or isinstance(pick, str):
             self._status("Didn't catch which one: nothing done.")
             return
         self._ep["route"] = "choice"
@@ -851,10 +890,12 @@ class VoiceController:
         return False
 
     def _compound(self, request, gaze, target, candidates, app):
-        """Several actions in a row. Each clause is decided just before it runs, against the screen the earlier
-        ones left; the first one that isn't a direct action hands the rest of the request to Claude."""
+        """Several actions in a row (split by the extraction model). Each step is decided by Jev just before it runs,
+        against the screen the earlier ones left; the first one that isn't a direct action hands the rest of the
+        request to the agent."""
         ep = self._ep
-        clauses = router.split_clauses(request)
+        with self._working("thinking", "reading"):
+            clauses = extract.steps(request) or []
         ep["clauses"] = steps = []
         if not 2 <= len(clauses) <= MAX_CLAUSES:
             self._status(f"Asking the agent ({len(clauses)} parts)...")
@@ -869,24 +910,8 @@ class VoiceController:
                 app = macos.frontmost_app()
             step = {"clause": clause}
             steps.append(step)
-            sub = router.route(clause)
-            if sub is not None and sub.kind == "navigate":
-                step["route"] = "navigate"
-                self._navigate(**sub.args)
-                done.append(clause)
-                continue
-            if sub is not None and sub.kind == "shortcut":
-                step["route"] = "shortcut"
-                self._shortcut(sub.args["shortcut"])
-                done.append(clause)
-                continue
-            if sub is not None and sub.kind in ("click", "type", "scroll", "key"):
-                step["route"] = sub.kind
-                self._do(sub.kind, sub.args, gaze, target)
-                done.append(clause)
-                continue
             d = None
-            if sub is not None and sub.kind == "unknown" and self.gate.available:
+            if self.gate.available:
                 try:
                     with self._working("thinking", "thinking"):
                         d = self.gate.decide(clause, gaze, candidates, app, allow_clarify=False, allow_compound=False,
@@ -899,7 +924,7 @@ class VoiceController:
                 if d.route == "ignore":
                     continue
                 before = self.pending
-                if self._apply(d, gaze):
+                if self._apply(d, gaze, clause, target):
                     if self.pending is not before:  # risky: wait for "confirm" and drop the rest
                         rest = ", ".join(clauses[i + 1:])
                         self._status(f'Say "confirm" to {clause}' + (f" (skipping: {rest})" if rest else ""))

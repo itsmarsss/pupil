@@ -65,21 +65,9 @@ ALWAYS_CONFIRM = {"quit_app"}  # loses everything the app had open: ask, whateve
 REPEATABLE = {k for k in SHORTCUTS if k.startswith("key_")} | {"next_tab", "previous_tab", "back", "forward",
                                                                "undo", "redo", "zoom_in", "zoom_out"}
 
-# The same action is a menu command in nearly every Mac app, under slightly different names and shortcuts. Run it
-# from the frontmost app's own menu (uitree.press_menu_command) and fall back to the keys above only if it has
-# none. Each phrase matches a menu title containing all its words; tried in order.
-MENU_PHRASES = {
-    "new_tab": ["new tab"], "close_tab": ["close tab", "close current tab", "close editor"],
-    "reopen_tab": ["reopen closed tab", "reopen tab", "reopen closed editor"],
-    "next_tab": ["next tab", "next editor", "tab to the right"],
-    "previous_tab": ["previous tab", "previous editor", "tab to the left"],
-    "new_window": ["new window"], "private_window": ["new private window", "new incognito window"],
-    "refresh": ["reload this page", "reload page", "reload", "refresh"],
-    "back": ["back"], "forward": ["forward"], "find": ["find"], "save": ["save"],
-    "zoom_in": ["zoom in"], "zoom_out": ["zoom out"], "actual_size": ["actual size", "reset zoom"],
-    "full_screen": ["enter full screen", "toggle full screen", "full screen"], "minimize": ["minimize"],
-    "address_bar": ["open location"], "select_all": ["select all"],
-}
+# The same action is a menu command in nearly every Mac app, under different names and shortcuts ("Select Previous
+# Tab" in Chrome, "Show Previous Tab" in Finder): Jev picks the frontmost app's own (controller._menu_for), and the
+# keys above are the fallback when it has none.
 
 
 def _app_paths():

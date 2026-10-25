@@ -48,6 +48,10 @@ GAZE_MIN_CONFIDENCE = 0.5  # below this (head outside its calibrated range) clic
 DICTATION_FORMAT = os.environ.get("GAZE_DICTATION_FORMAT", "1") != "0"
 DICTATION_MODEL = os.environ.get("GAZE_DICTATION_MODEL", "claude-haiku-4-5-20251001")
 DICTATION_TIMEOUT_S = 4.0  # then type it as heard
+# Extraction (extract.py): the text inside a command that Jev's yes/no and pick-one answers can't carry: what to
+# type, a URL or search, the steps of a multi-step request.
+EXTRACT_MODEL = os.environ.get("GAZE_EXTRACT_MODEL", DICTATION_MODEL)
+EXTRACT_TIMEOUT_S = 4.0
 
 # Voice: Cartesia Ink-2 streaming speech-to-text when CARTESIA_API_KEY is set; on-device Whisper otherwise or offline
 CARTESIA_API_KEY = os.environ.get("CARTESIA_API_KEY", "")

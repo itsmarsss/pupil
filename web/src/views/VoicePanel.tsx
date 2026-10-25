@@ -1,4 +1,25 @@
 import { useEngine } from "../engine";
+import type { ModelCall } from "../protocol";
+
+const ROLE: Record<string, string> = {
+  stt: "hearing", jev: "Jev", extract: "extracting", dictation: "dictation", agent: "agent", tts: "speaking",
+};
+
+/** One model row: its name, and either "calling…" (live) or how long its last call took and how long ago. */
+function ModelRow({ m }: { m: ModelCall }) {
+  const ago = m.t ? Math.max(0, Math.round(Date.now() / 1000 - m.t)) : null;
+  const last = m.active ? `${m.what || "calling"}…`
+    : m.ms != null ? `${m.ms} ms${ago != null ? ` · ${ago < 60 ? `${ago}s` : `${Math.round(ago / 60)}m`} ago` : ""}`
+    : "not called yet";
+  return (
+    <>
+      <dt title={m.does}>{ROLE[m.role] ?? m.role}</dt>
+      <dd className={m.active ? "model live" : "model"} title={m.does}>
+        <span className="model-dot" />{m.model} <span className="muted">{last}</span>
+      </dd>
+    </>
+  );
+}
 
 const time = (t: number) => new Date(t * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
 
@@ -22,6 +43,12 @@ export function VoicePanel() {
         <dt>target</dt><dd>{v.target?.label ?? "–"}</dd>
       </dl>
       {v.pending && <div className="pending">Waiting for “confirm”: {v.pending}</div>}
+      {v.models && v.models.length > 0 && (
+        <>
+          <h4>Models</h4>
+          <dl>{v.models.map((m) => <ModelRow key={m.role} m={m} />)}</dl>
+        </>
+      )}
       <h4>Log</h4>
       <ul className="voice-log">
         {[...v.log].reverse().map((e, i) => (

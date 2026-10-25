@@ -12,7 +12,7 @@ import re
 import time
 from dataclasses import dataclass
 
-from . import commands, config, heat
+from . import commands, config, heat, models
 from .snapping import Element
 
 try:
@@ -27,6 +27,7 @@ NAMED_ELEMENT = 0.85  # an element the command clearly names  # Noul thresholds:
 CLARIFY_BELOW = 0.15
 ASK_ABOUT = {"cut_off", "who", "content"}  # what's missing that's worth a question (the screen can't supply it)
 MAX_CANDIDATES = 25  # nearest elements, one question each
+MAX_RUNNING = 60  # open apps offered for "quit ..."
 
 # --- Question wording (everything Jev reads lives here) ---
 
@@ -60,7 +61,8 @@ WANTS_SHORTCUT = Noul(instructions="Does `command` ask for a standard editing, n
                                    "or a plain key, such as copy, paste, undo, save, find, go back, go forward, "
                                    "reload, new tab, close tab, zoom, quit, or a key it names or implies (an arrow key "
                                    "to move something, \"with space\", \"press enter\", page down)?")
-WANTS_SCROLL = Noul(instructions="Does `command` ask to scroll or move up or down the page?")
+WANTS_SCROLL = Noul(instructions="Does `command` ask to scroll the page or view, up, down, left or right (not to "
+                                "move a selected item or game piece with the arrow keys)?")
 NEEDS_AGENT = Noul(
     instructions="Does `command` need writing new text, reading or summarizing the screen, searching for "
                  "something, or steps that depend on what appears on screen?",
@@ -70,7 +72,8 @@ NEEDS_AGENT = Noul(
              "tabs but keep one\", \"delete all the empty ones\", or anything that takes several different steps, like "
              "renaming or moving a file or setting a field to a value (pressing one key a few times is one step)",
         false="One click or keypress on something it names or points at (\"press send\") (\"search repositories\" means press the "
-              "search button), scrolling, opening an app, a keyboard command, or a few of these in a row",
+              "search button), scrolling, opening an app or a website, one web search, a keyboard command, or a few "
+              "of these in a row",
     ),
 )
 ENOUGH_CONTEXT = Noul(
@@ -144,7 +147,55 @@ TIMES = Choice(instructions="How many times does `command` want it done?",
                          "many": "many times or as far as it goes: \"all the way\", \"to the end\", \"lots\""})
 TIMES_COUNT = {"once": 1, "few": 3, "many": 10}
 SCROLL_DIRECTION = Choice(instructions="Which way does `command` want to scroll?",
-                          criteria={"down": "down, further, next, more", "up": "up, back, toward the top"})
+                          criteria={"down": "down, further, next, more", "up": "up, back, toward the top",
+                                    "left": "left, sideways back", "right": "right, sideways on"})
+SCROLL_AMOUNT = Choice(instructions="How far does `command` want to scroll?",
+                       criteria={"little": "a little, a bit, a touch", "normal": "it doesn't say",
+                                 "lot": "a lot, much further, all the way"})
+SCROLL_STEPS = {"little": 1, "normal": 4, "lot": 10}
+WANTS_CANCEL = Noul(instructions="Does `command` ask the computer itself to stop, cancel or drop what it's doing or "
+                                 "about to do (\"stop\", \"never mind\", \"forget it\")? Not closing or dismissing "
+                                 "something on screen (a popup, dialog or tab), and not undoing a change already made.")
+WANTS_TYPE = Noul(
+    instructions="Does `command` explicitly ask for some words to be typed into a text field, and give those exact "
+                 "words?",
+    criteria=NoulCriteria(
+        true="\"type hello world\", \"write see you at five\", \"enter sam at example dot com\"",
+        false="Anything else: text still to be composed (\"reply saying I'm late\", \"write back that I'll join\"), "
+              "renaming or editing something, a move in a game, a name or a single word on its own (\"castle\"), "
+              "or a command",
+    ),
+)
+WANTS_WEB = Noul(instructions="Is `command` one step: open a website by its address, or run one web search "
+                              "(\"go to github.com\", \"google eye trackers\", \"look up the weather\")? Not a task "
+                              "that needs browsing several pages (\"find the cheapest flight\"), and not searching "
+                              "inside the current app or page.")
+WANTS_QUIT = Noul(instructions="Does `command` ask to quit or force quit an application (not close a tab, window or "
+                               "popup)?")
+FORCE_QUIT = Noul(instructions="Does `command` ask to force quit (kill) the app rather than quit it normally?")
+LOOKED_AT = "looked_at"  # quit_which: the app the user is looking at (its window or Dock icon), or the frontmost
+ABOUT_LAST = Noul(
+    instructions="Does `command` refer back to `last_action` (do it again, do the same somewhere else, undo or "
+                 "correct it, or act on what it acted on)?",
+    criteria=NoulCriteria(
+        true="e.g. \"again\", \"do that again\", \"same here\", \"close the one I just clicked\", \"no, the left "
+             "one\", \"the next one\", \"not that one\"",
+        false="A new command that doesn't depend on what was just done",
+    ),
+)
+LAST_MODE = Choice(
+    instructions="How does `command` use `last_action`?",
+    criteria={"again": "do the same action to the same thing again",
+              "same_here": "do the same action to what the user is looking at now",
+              "close_it": "close the thing the last action was on",
+              "neighbour": "the last action hit the wrong thing: do it to the one beside it (left, right, above, "
+                           "below, next, previous)"},
+)
+NEIGHBOUR = Choice(instructions="Which neighbour of the thing `last_action` acted on does `command` mean?",
+                   criteria={"left": "to its left, or the previous one", "right": "to its right, or the next one",
+                             "up": "above it", "down": "below it"})
+CORRECTS_LAST = Noul(instructions="Is `command` saying that `last_action` was wrong or unwanted (\"no\", \"wrong "
+                                  "one\", \"not that\", \"undo that\")?")
 ELEMENT_ACTION = Choice(
     instructions="What does `command` want done to the on-screen element it is about?",
     criteria={"activate": "click it: open, press, select, go to, search with, play or check it",
@@ -195,8 +246,8 @@ CLARIFY_PROMPTS = {"what": "Which one? Look at it and say what to do.", "who": "
 
 @dataclass
 class Decision:
-    route: str  # choose | click | close | double_click | right_click | scroll_down | scroll_up | open_app | shortcut | agent | ignore | maybe
-    #             | clarify | compound
+    route: str  # choose | click | close | double_click | right_click | scroll | open_app | shortcut | agent | ignore
+    #             | maybe | clarify | compound | cancel | type | navigate | quit_app | reference | relative
     why: str  # the judgment(s) that decided it, for the status line and logs
     ms: float
     target: Element | None = None
@@ -211,6 +262,7 @@ class Decision:
     budget: str = "normal"  # agent routes: how many steps (config.AGENT_BUDGETS)
     options: list | None = None  # "choose": [(share, element)] to ask between
     action: str | None = None  # "choose": what to do to the one picked
+    args: dict | None = None  # scroll {direction, amount}; quit_app {app, force}; reference {mode}; relative {direction}
 
     def summary(self):
         what = {"open_app": self.app, "shortcut": self.shortcut}.get(self.route) or \
@@ -253,26 +305,31 @@ def _decide(a, elements, gaze, apps, allow_clarify=True, allow_compound=True, co
     A clarified request never asks again, and a clause of a compound one is never split again. assume_command:
     the user already said it's for the computer ("do it" after a "maybe"), or it's a clause of a command."""
     nouls, choices = a.nouls, a.choices
-    p = lambda k: nouls[k].noul  # noqa: E731
+    p = lambda k: nouls[k].noul if k in nouls else 0.0  # noqa: E731  (not asked, or a log from before it was)
     element_p = sorted(((p(f"el_{i}"), el) for i, el in enumerate(elements)), key=lambda x: -x[0])
 
     if p("is_command") < NO and not assume_command:
         return "ignore", f"not a command {p('is_command'):.2f}", {}
-    follow_up = "follows_up" in nouls and p("follows_up") >= YES  # "knight g2" after "play the best move"
+    follow_up = p("follows_up") >= YES  # "knight g2" after "play the best move"
     sure = p("is_command") >= YES or follow_up or assume_command
     # Ask only when it's clearly missing something the screen can't supply (a cut-off sentence, a person, text to
     # write): which thing and where, the gaze and the screen settle, so those go on to be guessed or worked out.
-    missing = "cut_off" if "cut_off" in nouls and p("cut_off") >= YES else choices["missing"].choice
+    missing = "cut_off" if p("cut_off") >= YES else choices["missing"].choice
     if allow_clarify and sure and p("enough_context") < CLARIFY_BELOW and missing in ASK_ABOUT:
         return "clarify", f"not enough to act on {p('enough_context'):.2f}", {"missing": missing}
     if allow_compound and p("is_compound") >= YES:
         return "compound", f"several actions {p('is_compound'):.2f}", {}
+    if p("about_last") >= YES:  # "again", "same here", "no, the left one"
+        mode = choices["last_mode"].choice
+        if mode == "neighbour":
+            return "relative", f"next to the last one {p('about_last'):.2f}", {"args": {"direction": choices["neighbour"].choice}}
+        return "reference", f"the last action {p('about_last'):.2f}", {"args": {"mode": {"close_it": "close_last"}.get(mode, mode)}}
     if p("needs_agent") >= YES:
         return "agent", f"needs steps/writing {p('needs_agent'):.2f}", {}
     # A specific on-screen control wins over apps/shortcuts ("close this" on a window's close button), and since
     # the command is clearly about some element, the best match only needs to be more likely than not. "This" /
     # "that" point at what's under the gaze too: Cmd+W for "close this" on a popup would close the window behind.
-    pointing = p("points_at_gaze") >= YES if "points_at_gaze" in nouls else False
+    pointing = p("points_at_gaze") >= YES
     if (p("wants_element") >= YES or pointing and sure) and element_p and element_p[0][0] >= 0.5:
         return _element_route(element_p, gaze, choices, f"control {p('wants_element'):.2f}", cloud)
     # Clearly "close" something, but no one element clearly meant: close what's under the gaze (its own or its
@@ -283,11 +340,25 @@ def _decide(a, elements, gaze, apps, allow_clarify=True, allow_compound=True, co
     # with a GitHub tab in view is that tab, not "next tab").
     if element_p and element_p[0][0] >= NAMED_ELEMENT and p("wants_element") >= 0.5:
         return _element_route(element_p, gaze, choices, f"names it {element_p[0][0]:.2f}", cloud)
+    # Commands that need no particular control, after the on-screen ones ("switch to github" with a GitHub tab in
+    # view is that tab, "don't save" in a dialog is its button)
+    if sure and p("wants_cancel") >= YES:
+        return "cancel", f"stop {p('wants_cancel'):.2f}", {}
+    if p("wants_quit") >= YES:
+        which = choices["quit_which"].choice
+        return "quit_app", f"quit {p('wants_quit'):.2f}", {"args": {"app": None if which == LOOKED_AT else which,
+                                                                  "force": p("force_quit") >= YES}}
+    if p("wants_web") >= YES:
+        return "navigate", f"web {p('wants_web'):.2f}", {}
+    if sure and p("wants_type") >= YES:
+        return "type", f"type {p('wants_type'):.2f}", {}
     if p("wants_app") >= YES:
         app = choices["app"].choice
         return "open_app", f"open app {p('wants_app'):.2f}", {"app": app, "app_path": apps.get(app)}
     if p("wants_scroll") >= YES:  # before shortcuts: "scroll down" also reads as navigation
-        return f"scroll_{choices['scroll_direction'].choice}", f"scroll {p('wants_scroll'):.2f}", {}
+        return "scroll", f"scroll {p('wants_scroll'):.2f}", {"args": {
+            "direction": choices["scroll_direction"].choice,
+            "amount": SCROLL_STEPS.get(choices["scroll_amount"].choice, 4) if "scroll_amount" in choices else 4}}
     if p("wants_shortcut") >= YES:
         shortcut = choices["shortcut"].choice
         times = TIMES_COUNT.get(choices["times"].choice, 1) if shortcut in commands.REPEATABLE and "times" in choices else 1
@@ -326,25 +397,30 @@ class Gate:
 
     def _ask(self, kind, state, questions):
         t0 = time.perf_counter()
-        result = self._client.system_one(state, questions)
+        with models.calling("jev", config.GATE_MODEL, kind):
+            result = self._client.system_one(state, questions)
         ms = (time.perf_counter() - t0) * 1000
         _log({"tier": "gate", "kind": kind, "ms": round(ms), "request_id": getattr(result, "request_id", None)})
         return result, ms
 
-    def _state(self, utterance, app_name, gaze, elements):
+    def _state(self, utterance, app_name, gaze, elements, last=None):
         return {
             "command": utterance,
             **({"previous_commands": self.recent[-3:]} if self.recent else {}),
+            **({"last_action": last} if last else {}),
             "frontmost_app": app_name,
             "pointer": "The user is pointing at (looking at) a spot on screen; distances are measured from it.",
             "elements_near_pointer": [_element_info(el, gaze) for el in elements],
         }
 
     def decide(self, utterance, gaze, candidates, app_name, allow_clarify=True, allow_compound=True,
-               cloud=None, assume_command=False) -> Decision:
-        """All judgments for a free-form command in one request; `_decide` turns them into an action."""
+               cloud=None, assume_command=False, last=None, running=()) -> Decision:
+        """All judgments for a free-form command in one request; `_decide` turns them into an action.
+        last: what the previous action did, if recent ("clicked the Run button 4 s ago"); running: open apps."""
         elements = candidates[:MAX_CANDIDATES]
         apps = commands.available_apps()
+        quit_options = {LOOKED_AT: "the app the user is looking at (its window or Dock icon), or the one in front",
+                        **{name: None for name in list(running)[:MAX_RUNNING]}}
         questions = {
             "is_command": IS_COMMAND, "enough_context": ENOUGH_CONTEXT, "cut_off": CUT_OFF,
             "points_at_gaze": POINTS_AT_GAZE,
@@ -353,10 +429,15 @@ class Gate:
             "wants_shortcut": WANTS_SHORTCUT, "wants_scroll": WANTS_SCROLL, "risky": RISKY,
             "app": _app_question(apps), "shortcut": _shortcut_question(), "times": TIMES,
             "agent_tier": AGENT_TIER, "agent_budget": AGENT_BUDGET,
-            "scroll_direction": SCROLL_DIRECTION, "element_action": ELEMENT_ACTION,
+            "scroll_direction": SCROLL_DIRECTION, "scroll_amount": SCROLL_AMOUNT, "element_action": ELEMENT_ACTION,
+            "wants_cancel": WANTS_CANCEL, "wants_type": WANTS_TYPE, "wants_web": WANTS_WEB,
+            "wants_quit": WANTS_QUIT, "force_quit": FORCE_QUIT,
+            "quit_which": Choice(instructions="Which application does `command` want to quit?", criteria=quit_options),
+            **({"about_last": ABOUT_LAST, "last_mode": LAST_MODE, "neighbour": NEIGHBOUR,
+                "corrects_last": CORRECTS_LAST} if last else {}),
             **_element_questions(gaze, elements),
         }
-        result, ms = self._ask("decide", self._state(utterance, app_name, gaze, elements), questions)
+        result, ms = self._ask("decide", self._state(utterance, app_name, gaze, elements, last), questions)
         flags = {"allow_clarify": allow_clarify, "allow_compound": allow_compound, "assume_command": assume_command}
         route, why, extras = _decide(result, elements, gaze, apps, command=utterance, cloud=cloud, **flags)
         answers = {"route": route, "why": why, "ms": round(ms), "flags": flags,
@@ -390,6 +471,38 @@ class Gate:
         result, ms = self._ask("target", self._state(utterance, "", gaze, elements),
                                _element_questions(gaze, elements))
         return [result.nouls[f"el_{i}"].noul for i in range(len(elements))]
+
+    def pick(self, answer, options, question="Which one?"):
+        """Which of `options` (elements, as shown with numbered badges) the answer to "which one?" means, or None
+        ("this one" while looking: the caller uses the gaze). Positions are given relative to each other."""
+        def place(el):
+            cx, cy = el.center
+            xs, ys = sorted(o.center[0] for o in options), sorted(o.center[1] for o in options)
+            h = "leftmost" if cx == xs[0] else "rightmost" if cx == xs[-1] else "in the middle"
+            v = "top" if cy == ys[0] and ys[0] != ys[-1] else "bottom" if cy == ys[-1] and ys[0] != ys[-1] else ""
+            return f"{h}{', ' + v if v else ''}"
+
+        criteria = {str(i + 1): f"option {i + 1} ({['first', 'second', 'third', 'fourth'][i]}): "
+                                f"{el.describe()}, {place(el)}" for i, el in enumerate(options)}
+        criteria["looked_at"] = "the one the user is looking at (\"this one\", \"that\"), not named or numbered"
+        criteria["none"] = "none of them, or the answer isn't about the choice"
+        result, _ = self._ask("pick", {"asked": question, "answer": answer}, {
+            "pick": Choice(instructions="Which option does `answer` choose?", criteria=criteria)})
+        choice = result.choices["pick"].choice
+        return options[int(choice) - 1] if choice.isdigit() else choice
+
+    def menu_command(self, action, combo, titles):
+        """The frontmost app's menu command for a standard action ("Go to the previous tab", Ctrl+Shift+Tab), from
+        its menu `titles` ("title (shortcut)"), or None if it has none."""
+        criteria = {t: None for t in titles[:250]}
+        criteria["none"] = "the app has no menu command for this"
+        result, _ = self._ask("menu", {"action": action, "usual_shortcut": combo}, {
+            "menu": Choice(instructions="Which of this app's menu commands does `action` (usually `usual_shortcut`)? "
+                                        "Only one that does that same action to what's open; a command with a "
+                                        "similar name that does something else (reloading the app's settings or "
+                                        "configuration instead of the page) is none.", criteria=criteria)})
+        choice = result.choices["menu"].choice
+        return None if choice == "none" else choice
 
     def risk_of(self, request, planned_actions):
         """Probability that the agent's next actions do something irreversible the user didn't ask for."""

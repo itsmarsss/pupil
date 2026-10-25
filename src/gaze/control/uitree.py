@@ -155,29 +155,24 @@ def _menu_index(app_element, pid, rebuild=False) -> dict:
     return index
 
 
-def find_menu_title(index_titles, phrases: list[str]) -> str | None:
-    """The menu title for an action described by `phrases` (tried in order): an exact title, else the shortest
-    title containing all of the phrase's words. "previous tab" finds "Select Previous Tab" (Chrome), "Show
-    Previous Tab" (Finder); "tab to the left" finds "Activate the tab to the left" (WezTerm). Single words match
-    only exactly."""
-    titles = list(index_titles)
-    for phrase in phrases:
-        want = _norm_title(phrase)
-        if want in titles:
-            return want
-        words = set(want.split())
-        if len(words) < 2:
-            continue  # one word only matches exactly: "reload" must not find "Reload Configuration"
-        matches = [t for t in titles if words <= set(t.replace("-", " ").split())]
-        if matches:
-            return min(matches, key=len)
-    return None
+def menu_commands() -> tuple[str, list[str]]:
+    """The frontmost app's name and its menu commands as "Title (shortcut)" (menus and one level of submenus)."""
+    app = NSWorkspace.sharedWorkspace().frontmostApplication()
+    if app is None:
+        return "", []
+    pid = app.processIdentifier()
+    index = _menu_index(AXUIElementCreateApplication(pid), pid)
+    return str(app.localizedName() or ""), [_describe_command(item) for item in index.values()]
 
 
-def press_menu_command(phrases: list[str]) -> str | None:
-    """Run the frontmost app's own menu command for an action (see find_menu_title). Shortcuts differ between
-    apps; the menu command is the same action wherever it lives. Returns the title used, "" if it exists but is
-    disabled right now, or None if the app has no such command."""
+def _describe_command(item) -> str:
+    title = _text(item, "AXTitle")
+    return f"{title} ({shortcut})" if (shortcut := _shortcut(item)) else title
+
+
+def press_menu_command(command: str) -> str | None:
+    """Press the frontmost app's menu command `command` (as menu_commands lists it). Returns its title, "" if it
+    exists but is disabled right now, or None if the app has no such command."""
     app = NSWorkspace.sharedWorkspace().frontmostApplication()
     if app is None:
         return None
@@ -187,9 +182,8 @@ def press_menu_command(phrases: list[str]) -> str | None:
         if attempt and time.time() - _index_cache.get(pid, (0,))[0] < 5:
             break  # just indexed: it really isn't there
         index = _menu_index(app_element, pid, rebuild=attempt > 0)
-        key = find_menu_title(index, phrases)
-        if key is not None:
-            item = index[key]
+        item = next((it for it in index.values() if _describe_command(it) == command), None)
+        if item is not None:
             if _attr(item, "AXEnabled") is False:
                 return ""
             if AXUIElementPerformAction(item, "AXPress") == 0:

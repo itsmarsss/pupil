@@ -87,3 +87,11 @@ code { background: #1c2230; padding: 1px 4px; border-radius: 4px; }
 .lips .plot { flex: 1; min-height: 0; }
 
 .warn { color: #ffc43d; }
+
+/* Voice & agent: which model each role calls; the dot lights while a call is open */
+.model { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.model-dot { display: inline-block; width: 6px; height: 6px; border-radius: 50%; margin-right: 6px;
+  background: var(--muted); opacity: .4; vertical-align: 1px; }
+.model.live { color: #3ddc84; }
+.model.live .model-dot { background: #3ddc84; opacity: 1; animation: model-pulse 1s ease-in-out infinite; }
+@keyframes model-pulse { 50% { opacity: .35; } }

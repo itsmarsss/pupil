@@ -10,7 +10,7 @@ import json
 import threading
 import time
 
-from . import config
+from . import config, models
 
 TTS_URL = "https://api.cartesia.ai/tts/bytes"
 VOICES_URL = "https://api.cartesia.ai/voices?limit=100&language=en"
@@ -126,7 +126,8 @@ class Speaker:
                     "language": "en", "output_format": {"container": "raw", "encoding": "pcm_s16le", "sample_rate": RATE}}
             request = urllib.request.Request(TTS_URL, data=json.dumps(body).encode(), method="POST", headers=_headers())
             t0 = time.perf_counter()
-            with urllib.request.urlopen(request, timeout=10, context=_tls()) as response, \
+            with models.calling("tts", f"Cartesia {config.TTS_MODEL}", "speaking"), \
+                    urllib.request.urlopen(request, timeout=10, context=_tls()) as response, \
                     sd.RawOutputStream(samplerate=RATE, channels=1, dtype="int16") as out:
                 carry = b""
                 while not stop.is_set():

@@ -1,4 +1,4 @@
-"""Tier 0: exact command phrases, matched with rules in microseconds.
+"""Tier 0: the few phrases that must work instantly and offline, matched with rules in microseconds.
 
 Anything that isn't an exact phrase comes back as kind "unknown" and goes to the Jev gate (gate.py),
 which decides between a direct action, the agent, or ignoring it. Misheard words ("closed time") are Jev's to
@@ -13,38 +13,19 @@ from . import config
 
 @dataclass
 class Command:
-    kind: str  # click | scroll | key | shortcut | type | cancel | confirm | calibrate | recentre | check | dictate_on |
-    # dictate_off | relative | reference | unknown
+    kind: str  # cancel | confirm | calibrate | recentre | check | dictate_on | dictate_off | unknown (for Jev)
     args: dict = field(default_factory=dict)
     text: str = ""
 
 
-_DEICTIC = r"(?: (?:it|this|that|here|there|this one|that one))?"
+# Only what must work instantly, offline and mid-anything: stopping, confirming, dictation on/off (while dictating
+# everything else is typed) and the tracker's own controls. Everything else is Jev's to read (gate.py).
 _PATTERNS = [
-    (rf"^(?:click|tap|press|select|open){_DEICTIC}$", lambda m: Command("click", {"clicks": 1, "button": "left"})),
-    (rf"^double[ -]?click{_DEICTIC}$", lambda m: Command("click", {"clicks": 2, "button": "left"})),
-    (rf"^right[ -]?click{_DEICTIC}$", lambda m: Command("click", {"clicks": 1, "button": "right"})),
-    (r"^scroll (up|down|left|right)(?: (a lot|a little))?$",
-     lambda m: Command("scroll", {"direction": m[1], "amount": {"a lot": 10, "a little": 1}.get(m[2], 4)})),
-    (r"^(?:go )?back$", lambda m: Command("shortcut", {"shortcut": "back"})),  # run as the app's own menu command
-    (r"^(?:go )?forward$", lambda m: Command("shortcut", {"shortcut": "forward"})),
-    (r"^new tab$", lambda m: Command("shortcut", {"shortcut": "new_tab"})),
     (r"^(?:stop|cancel|never ?mind|abort)$", lambda m: Command("cancel")),
     (r"^(?:confirm|yes|yes please|do it|go ahead)$", lambda m: Command("confirm")),
     (r"^(?:re)?calibrate$", lambda m: Command("calibrate")),
     (r"^re[ -]?cent(?:re|er)(?: (?:gaze|tracking))?$", lambda m: Command("recentre")),
     (r"^(?:check|test) (?:the )?(?:accuracy|tracking|gaze)$", lambda m: Command("check")),
-    # a website or a search: typed into the browser's address bar (controller._navigate)
-    (r"^(?:search|google|look up)(?: the web| google)?(?: for)? (.+)$", lambda m: Command("navigate", {"query": m[1]})),
-    (r"^(?:do )?(?:that|it) again$|^again$", lambda m: Command("reference", {"mode": "again"})),
-    (r"^(?:do )?(?:the )?same(?: thing)? here$", lambda m: Command("reference", {"mode": "same_here"})),
-    (r"^close (?:the )?(?:one|thing) i just (?:clicked|opened)$",
-     lambda m: Command("reference", {"mode": "close_last"})),
-    # "no, the left one" / "the next one": the last target's neighbour (controller._relative)
-    (r"^(?:no,? |not that,? )?(?:the )?(?:one )?(?:to the |on the )?(left|right)(?: one)?$|^(?:no,? )?(?:the )?(?:one )?(above|below)(?: it| that)?$",
-     lambda m: Command("relative", {"direction": {"above": "up", "below": "down"}.get(m[1] or m[2], m[1] or m[2])})),
-    (r"^(?:no,? )?(?:the )?(next|previous) one$",
-     lambda m: Command("relative", {"direction": "right" if m[1] == "next" else "left"})),
     (r"^(?:start )?(?:dictation|dictating)(?: mode)?$|^start dictating$|^dictate$", lambda m: Command("dictate_on")),
     (r"^(?:stop|end|finish|exit) (?:dictation|dictating)(?: mode)?$", lambda m: Command("dictate_off")),
 ]
@@ -64,12 +45,6 @@ def route(utterance: str, wake: bool = True) -> Command | None:
         norm = norm[len(config.WAKE_WORD):].strip()
         text = text[text.lower().find(config.WAKE_WORD) + len(config.WAKE_WORD):].lstrip(" ,.:")
 
-    # "can you scroll down?" is "scroll down": politeness doesn't change the command
-    polite = re.compile(r"^(?:(?:hey|ok|okay|so|um|uh)\s+)?(?:(?:can|could|would|will) you\s+(?:please\s+)?|please\s+)",
-                        re.IGNORECASE)
-    norm = polite.sub("", norm).strip()
-    text = polite.sub("", text.strip()).strip()
-
     for pattern, build in _PATTERNS:
         m = re.match(pattern, norm)
         if m:
@@ -77,32 +52,4 @@ def route(utterance: str, wake: bool = True) -> Command | None:
             cmd.text = text
             return cmd
 
-    # Quitting a named app ("force quit games", "quit that app"): the controller finds it and always confirms.
-    # Only "quit": "close X" stays a close (a popup, a tab).
-    m = re.match(r"^(force )?quit (?:the )?(?:app |application )?(.+)$", norm)
-    if m:
-        name = re.split(r"\s+(?:that|this|the) app(?:lication)?\b|\s+(?:at the bottom|in the dock|down there|for me)\b",
-                        m[2])[0].strip() or "that"
-        return Command("quit_app", {"name": name, "force": bool(m[1])}, text)
-
-    # A website ("go to github.com"): matched on the original text, since normalising drops the dots.
-    m = re.match(r"^(?:go to|open|visit|navigate to|load|pull up) (?:the )?(?:website |site |page )?"
-                 r"((?:https?://)?[\w-]+(?:\.[\w-]+)+(?:/\S*)?)[.!?]?$", text.strip(), flags=re.IGNORECASE)
-    if m:
-        return Command("navigate", {"url": m[1]}, text)
-
-    # "type hello world" -> click the snapped field, then type. Keep the original casing/punctuation.
-    m = re.match(r"^\s*type\s+(.+)$", text, flags=re.IGNORECASE)
-    if m:
-        return Command("type", {"text": m[1]}, text)
-
     return Command("unknown", {"request": text}, text)
-
-
-_CLAUSE_BREAK = re.compile(r"\s*,?\s*\b(?:and then|after that|then|and)\b\s*,?\s*", re.IGNORECASE)
-
-
-def split_clauses(text: str) -> list[str]:
-    """ "open Safari and then make a new tab" -> ["open Safari", "make a new tab"]. Only used once the gate has
-    judged the command to be several actions, so "salt and pepper" inside one action isn't split."""
-    return [c.strip(" ,.") for c in _CLAUSE_BREAK.split(text) if c.strip(" ,.")]

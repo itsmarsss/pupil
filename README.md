@@ -137,8 +137,8 @@ as well as Camera.
 
 | Tier | | Examples |
 |---|---|---|
-| 0 · `router.py` | exact phrases, matched by rules | "click", "double click this", "scroll down a lot", "go back", "type hello", "stop", "calibrate", "re-centre", "check accuracy" |
-| 1 · `gate.py` | Jev answers small yes/no questions about the command and the elements near your gaze; a truth table picks the action. It asks a question when something essential is missing, and runs a few actions in a row itself, handing the rest to Claude if a step needs it | "open Safari", "search repositories", "close this tab" (asks to confirm risky ones), "select all and copy", "send it to…" → "Who to?" |
+| 0 · `router.py` | only what must work instantly and offline, matched by rules | "stop", "confirm" / "do it", "start/stop dictation", "calibrate", "re-centre", "check accuracy" |
+| 1 · `gate.py` | Jev answers small yes/no and pick-one questions about the command and the elements near your gaze; a truth table picks the action. No keyword lists: clicks, scrolling, shortcuts (via the app's own menu command, which Jev picks from its real menus), websites and searches, typing, quitting apps, "again" / "no, the left one" and answers to "which one?" are all its reading. A fast model (`extract.py`) pulls out the text Jev can't carry: what to type, the URL or search, the steps of a multi-step request. It asks a question only when something the screen can't supply is missing, offers commands it isn't sure were meant for it ("do it" runs them), and runs a few actions in a row itself, handing the rest to the agent if a step needs it | "click this", "scroll down a little", "go to github.com", "type hello world", "quit Games", "open Safari", "close this tab" (asks to confirm risky ones), "select all and copy", "send it to…" → "Who to?" |
 | 2 · `agent.py` | Claude computer-use loop, told where you were looking while you spoke, with app-agnostic tools beside the screenshot/mouse/keyboard ones (`uitree.py`): any app's menu bar (`menu`), its controls by id (`ui_elements`, `press_element`, `set_value`), AppleScript/JXA, `drag` with any button and modifiers, `open_app`; plus app adapters where an app has its own scripting (`apps/`: Blender via `blender_python`) | "open this in a new tab and summarize it", "export this as PDF", "build me a car in Blender" |
 
 Listening: the default mic (AirPods included), raw; Apple's voice processing (noise suppression, echo
@@ -172,7 +172,9 @@ fillers and self-corrections ("at 5, no wait, 6" → "at 6"). Password fields ar
 "This" means where you looked *while speaking*, snapped to the nearest Accessibility element
 (`snapping.py`). If the tracker wasn't confident then (head turned past what calibration covered),
 "click" and "type" ask you to confirm instead of acting. A pill at the bottom of the screen shows the mic,
-what was heard and what happened; the dashboard's "Voice & agent" panel logs it and outlines the target.
+what was heard and what happened; the dashboard's "Voice & agent" panel logs it, outlines the target and
+lists which model each part calls (speech in, Jev, extraction, dictation, agent tier, speech out), lit
+while a call is open.
 Say "stop" to cancel, "confirm" to approve. All settings are in `.env.example`. This drives your real
 Mac: use a test browser profile.
 
@@ -181,9 +183,10 @@ The heat map gives extra weight to your final stable fixation. For a recent clic
 "close the one I just clicked". References expire after `RELATIVE_WINDOW_S` (20 s) and never cross apps or windows.
 
 Every command is logged to `.logs/episodes.jsonl` with what was seen, decided and done, and labelled by
-your reaction ("stop" / "undo" right after = corrected, saying it again = repeated). `gaze episodes` lists
+your reaction ("stop" right after, or what Jev reads as "no, not that" = corrected; saying it again =
+repeated). `gaze episodes` lists
 them with latency per route, `--replay` re-runs the routing rules on the logged answers offline, and
-`--eval` scores the gate live on the labelled cases in `tests/agent_cases.jsonl`.
+`--eval` scores the gate live on the labelled cases in `tests/agent_cases*.jsonl`.
 
 ## How it works
 

@@ -12,7 +12,7 @@ import time
 import anthropic
 import pyautogui
 
-from . import actions, apps, config, settings, snapping, uitree
+from . import actions, apps, config, models, settings, snapping, uitree
 from .actions import ComputerExecutor
 from .screen import ScreenshotUnavailable, image_block
 
@@ -245,7 +245,7 @@ class Agent:
             self.phase, self.doing = "thinking", ""
             self._steps += 1
             t0 = time.perf_counter()
-            with self.client.beta.messages.stream(
+            with models.calling("agent", self._model, f"step {step + 1}"), self.client.beta.messages.stream(
                 model=self._model,
                 max_tokens=16000,
                 system=SYSTEM,
@@ -257,6 +257,8 @@ class Agent:
                 fallbacks="default",
             ) as stream:
                 response = stream.get_final_message()
+            if getattr(response, "model", None) and response.model != self._model:  # a server-side fallback answered
+                models.used("agent", f"{response.model} (fallback)")
             _log_step(step, time.perf_counter() - t0, response)
 
             if response.stop_reason == "refusal":

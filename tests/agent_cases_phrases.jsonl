@@ -1,0 +1,28 @@
+// what the router used to match with fixed phrases (before 2026-10-25), now read by Jev
+{"text": "click this", "expect": ["click"], "app": "Google Chrome", "gaze": [610, 60], "elements": [{"role": "AXButton", "label": "Search repositories", "x": 560, "y": 45, "w": 200, "h": 30}]}
+{"text": "double click that", "expect": ["double_click"], "app": "Finder", "gaze": [300, 200], "elements": [{"role": "AXRow", "label": "Report.pdf", "x": 200, "y": 190, "w": 400, "h": 22}]}
+{"text": "right click it", "expect": ["right_click"], "app": "Finder", "gaze": [300, 200], "elements": [{"role": "AXRow", "label": "Report.pdf", "x": 200, "y": 190, "w": 400, "h": 22}]}
+{"text": "scroll down", "expect": ["scroll_down"], "app": "Google Chrome", "gaze": [700, 400]}
+{"text": "can you scroll up a little?", "expect": ["scroll_up"], "app": "Google Chrome", "gaze": [700, 400]}
+{"text": "scroll right", "expect": ["scroll_right"], "app": "Google Chrome", "gaze": [700, 400]}
+{"text": "go back", "expect": ["shortcut_back"], "app": "Google Chrome", "gaze": [700, 400]}
+{"text": "forward", "expect": ["shortcut_forward"], "app": "Google Chrome", "gaze": [700, 400]}
+{"text": "new tab", "expect": ["shortcut_new_tab"], "app": "Google Chrome", "gaze": [700, 400]}
+{"text": "go to github.com", "expect": ["navigate"], "app": "Google Chrome", "gaze": [700, 400]}
+{"text": "search for best eye trackers", "expect": ["navigate"], "app": "Google Chrome", "gaze": [700, 400]}
+{"text": "look up the weather in Toronto", "expect": ["navigate", "agent"], "app": "Google Chrome", "gaze": [700, 400]}
+{"text": "type hello world", "expect": ["type"], "app": "Notes", "gaze": [700, 400]}
+{"text": "quit games", "expect": ["quit_app_Games"], "app": "Google Chrome", "gaze": [700, 400]}
+{"text": "force quit chrome", "expect": ["quit_app_Google Chrome_force"], "app": "Finder", "gaze": [700, 400]}
+{"text": "quit that app", "expect": ["quit_app_looked_at", "quit_app_Notes"], "app": "Finder", "gaze": [700, 880], "elements": [{"role": "AXDockItem", "label": "Notes", "x": 680, "y": 860, "w": 50, "h": 50}]}
+{"text": "please stop", "expect": ["cancel"], "app": "Google Chrome", "gaze": [700, 400]}
+{"text": "forget it", "expect": ["cancel", "ignore"], "app": "Google Chrome", "gaze": [700, 400]}
+{"text": "again", "expect": ["reference_again"], "app": "Google Chrome", "gaze": [700, 400], "last": "click on 'Run' button, 3 s ago"}
+{"text": "do that again", "expect": ["reference_again"], "app": "Google Chrome", "gaze": [700, 400], "last": "click on 'Next' button, 5 s ago"}
+{"text": "do the same here", "expect": ["reference_same_here"], "app": "Google Chrome", "gaze": [700, 400], "last": "double click on 'Report.pdf' row, 4 s ago"}
+{"text": "close the one I just clicked", "expect": ["reference_close_last"], "app": "Google Chrome", "gaze": [700, 400], "last": "click on 'GitHub' tab, 6 s ago"}
+{"text": "no, the left one", "expect": ["relative_left"], "app": "Google Chrome", "gaze": [700, 400], "last": "click on 'Pull requests' link, 2 s ago"}
+{"text": "the next one", "expect": ["relative_right"], "app": "Google Chrome", "gaze": [700, 400], "last": "click on 'Issues' tab, 3 s ago"}
+{"text": "the one below it", "expect": ["relative_down"], "app": "Finder", "gaze": [700, 400], "last": "click on 'Report.pdf' row, 3 s ago"}
+{"text": "copy that", "expect": ["shortcut_copy"], "app": "Notes", "gaze": [700, 400], "last": "double click on 'hello' text, 3 s ago"}
+{"text": "open notes", "expect": ["open_app"], "app": "Google Chrome", "gaze": [700, 400], "last": "click on 'Run' button, 3 s ago"}

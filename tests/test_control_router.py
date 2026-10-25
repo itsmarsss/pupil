@@ -1,8 +1,7 @@
 from gaze.control.router import route
 
 
-def test_short_action_references_route_without_the_agent():
-    assert route("again").args == {"mode": "again"}
-    assert route("do that again").kind == "reference"
-    assert route("do the same here").args == {"mode": "same_here"}
-    assert route("close the one I just clicked").args == {"mode": "close_last"}
+def test_only_safety_phrases_are_matched_here():
+    assert route("never mind").kind == "cancel" and route("yes please").kind == "confirm"
+    assert route("stop dictation").kind == "dictate_off" and route("recalibrate").kind == "calibrate"
+    assert route("again").kind == "unknown" and route("do the same here").kind == "unknown"  # Jev's to read

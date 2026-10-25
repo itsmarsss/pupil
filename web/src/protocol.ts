@@ -115,6 +115,18 @@ export interface VoiceState {
   lip_gate?: LipGateState;
   heat?: { x: number; y: number; w: number; h: number; label: string; share: number }[]; // last "this": candidates
   lips?: LipVerdict[];
+  models?: ModelCall[]; // which model each role calls (control/models.py)
+}
+
+/** One role's model and its latest call: active while a request (or a stream: hearing, speaking) is open. */
+export interface ModelCall {
+  role: "stt" | "jev" | "extract" | "dictation" | "agent" | "tts" | string;
+  does: string; // what that role is for
+  model: string;
+  active: boolean;
+  what?: string; // what the call is for: the Jev question set, the agent step, "listening"...
+  t?: number; // when it started (active) or finished (seconds)
+  ms?: number | null; // how long the last call took
 }
 
 /** The live lip gate (control/lips.py): audio only counts while it's open. */
