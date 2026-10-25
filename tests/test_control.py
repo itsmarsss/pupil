@@ -295,25 +295,20 @@ def test_blender_python_without_a_bridge_explains_what_to_do(monkeypatch, tmp_pa
     assert "open_app" in blender.run("1")["error"]
 
 
-def test_type_text_uses_shift_return_for_new_lines_and_restores_the_clipboard(monkeypatch):
+def test_short_text_is_typed_long_or_unicode_text_is_pasted(monkeypatch):
     from gaze.control import actions
 
-    calls, clipboard = [], [b"mine"]
+    calls = []
     monkeypatch.setattr(actions.pyautogui, "write", lambda s, interval=0: calls.append(("write", s)))
     monkeypatch.setattr(actions.pyautogui, "hotkey", lambda *k: calls.append(("hotkey", k)))
-    monkeypatch.setattr(actions, "press", lambda combo, repeat=1: calls.append(("press", combo)))
-    monkeypatch.setattr(actions.time, "sleep", lambda s: None)
-
-    def run(cmd, input=None, capture_output=False, check=False):
-        if cmd == ["pbpaste"]:
-            return _A(stdout=clipboard[-1])
-        clipboard.append(input)
-        return _A(stdout=b"")
-
-    monkeypatch.setattr(actions.subprocess, "run", run)
-    actions.type_text("/btw café\nline two")
-    assert calls == [("press", "command+v"), ("hotkey", ("shift", "enter")), ("write", "line two")]
-    assert clipboard[1] == "/btw café".encode() and clipboard[-1] == b"mine"  # pasted, then put back
+    monkeypatch.setattr(actions, "paste", lambda text: calls.append(("paste", text)))
+    actions.type_text("/btw\nok")
+    assert calls == [("write", "/btw"), ("hotkey", ("shift", "enter")), ("write", "ok")]  # new line, not send
+    calls.clear()
+    long = "a whole paragraph of dictation that would take seconds to type key by key"
+    actions.type_text(long)
+    actions.type_text("café")
+    assert calls == [("paste", long), ("paste", "café")]
 
 
 def test_dictation_join_spacing():

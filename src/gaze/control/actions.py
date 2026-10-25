@@ -31,22 +31,49 @@ def press(combo, repeat=1):
         pyautogui.hotkey(*keys) if len(keys) > 1 else pyautogui.press(keys[0])
 
 
+PASTE_OVER = 24  # characters: longer text is pasted (instant) instead of typed key by key (~250 per second)
+PASTE_SETTLE_S = 0.3  # let the app read the clipboard before the user's is put back (some apps read late)
+TRANSIENT = "org.nspasteboard.TransientType"  # clipboard managers skip items marked with this
+
+
 def type_text(text):
-    """Type `text` at the focus. Line breaks are Shift+Return (a new line in chat boxes and editors, where a plain
-    Return would send); non-ASCII goes through the clipboard, which is put back afterwards."""
+    """Put `text` at the focus. Short ASCII is typed; longer or non-ASCII text is pasted, keeping its line breaks
+    as text (a pasted new line doesn't send in chat apps). When typed, line breaks are Shift+Return for the same
+    reason."""
+    if len(text) > PASTE_OVER or not text.isascii():
+        paste(text)
+        return
     for i, line in enumerate(text.split("\n")):
         if i:
             pyautogui.hotkey("shift", "enter")
-        if not line:
-            continue
-        if line.isascii():
+        if line:
             pyautogui.write(line, interval=0.004)
-            continue
-        saved = subprocess.run(["pbpaste"], capture_output=True).stdout  # pyautogui can't type non-ASCII
-        subprocess.run(["pbcopy"], input=line.encode(), check=True)
-        press("command+v")
-        time.sleep(0.15)  # let the paste read the clipboard before restoring it
-        subprocess.run(["pbcopy"], input=saved, check=False)
+
+
+def paste(text):
+    """Paste `text` with Cmd+V, then put the user's clipboard back exactly (every item and type: images, rich
+    text, files), so voice typing never costs them what they had copied."""
+    from AppKit import NSPasteboard, NSPasteboardItem, NSPasteboardTypeString
+
+    board = NSPasteboard.generalPasteboard()
+    saved = [{t: item.dataForType_(t) for t in item.types()} for item in (board.pasteboardItems() or [])]
+    board.clearContents()
+    item = NSPasteboardItem.alloc().init()
+    item.setString_forType_(text, NSPasteboardTypeString)
+    item.setString_forType_("", TRANSIENT)
+    board.writeObjects_([item])
+    press("command+v")
+    time.sleep(PASTE_SETTLE_S)
+    board.clearContents()
+    restored = []
+    for types in saved:
+        old = NSPasteboardItem.alloc().init()
+        for kind, data in types.items():
+            if data is not None:
+                old.setData_forType_(data, kind)
+        restored.append(old)
+    if restored:
+        board.writeObjects_(restored)
 
 
 def click(x, y, clicks=1, button="left", modifiers=()):
