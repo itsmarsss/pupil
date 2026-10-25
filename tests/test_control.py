@@ -293,3 +293,68 @@ def test_blender_python_without_a_bridge_explains_what_to_do(monkeypatch, tmp_pa
     assert "wasn't started by voice control" in blender.run("1")["error"]
     monkeypatch.setattr(blender, "_running", lambda: False)
     assert "open_app" in blender.run("1")["error"]
+
+
+def test_type_text_uses_shift_return_for_new_lines_and_restores_the_clipboard(monkeypatch):
+    from gaze.control import actions
+
+    calls, clipboard = [], [b"mine"]
+    monkeypatch.setattr(actions.pyautogui, "write", lambda s, interval=0: calls.append(("write", s)))
+    monkeypatch.setattr(actions.pyautogui, "hotkey", lambda *k: calls.append(("hotkey", k)))
+    monkeypatch.setattr(actions, "press", lambda combo, repeat=1: calls.append(("press", combo)))
+    monkeypatch.setattr(actions.time, "sleep", lambda s: None)
+
+    def run(cmd, input=None, capture_output=False, check=False):
+        if cmd == ["pbpaste"]:
+            return _A(stdout=clipboard[-1])
+        clipboard.append(input)
+        return _A(stdout=b"")
+
+    monkeypatch.setattr(actions.subprocess, "run", run)
+    actions.type_text("/btw café\nline two")
+    assert calls == [("press", "command+v"), ("hotkey", ("shift", "enter")), ("write", "line two")]
+    assert clipboard[1] == "/btw café".encode() and clipboard[-1] == b"mine"  # pasted, then put back
+
+
+def test_dictation_join_spacing():
+    from gaze.control.dictation import join
+
+    assert join("We test on Monday", "and then we ship it.") == " and then we ship it."
+    assert join("Hello ", "world") == "world"
+    assert join("Done", ". Next") == ". Next"
+    assert join("", "/btw") == "/btw"
+
+
+def test_menu_paths_match_titles_and_report_what_exists(monkeypatch):
+    import pytest
+
+    from gaze.control import uitree
+
+    def node(role, title="", children=(), enabled=True):
+        return {"AXRole": role, "AXTitle": title, "AXChildren": list(children), "AXEnabled": enabled}
+
+    export = node("AXMenuItem", "Export…", [node("AXMenu", children=[node("AXMenuItem", "PNG"),
+                                                                       node("AXMenuItem", "PDF", enabled=False)])])
+    file_menu = node("AXMenuBarItem", "File", [node("AXMenu", children=[node("AXMenuItem", "Save"), export])])
+    app = {"AXMenuBar": node("AXMenuBar", children=[node("AXMenuBarItem", "Apple"), file_menu])}
+    pressed = []
+    monkeypatch.setattr(uitree, "_attr", lambda e, name: e.get(name))
+    monkeypatch.setattr(uitree, "_text", lambda e, name: e.get(name) or "")
+    monkeypatch.setattr(uitree, "_app", lambda name=None: (app, "Demo"))
+    monkeypatch.setattr(uitree, "AXUIElementPerformAction", lambda e, a: pressed.append(e["AXTitle"]) or 0)
+
+    assert uitree.menu("list", "file > export") == "file > export: PNG; PDF [disabled]"
+    assert uitree.menu("choose", "File > Export > PNG") == "Chose Demo: File > Export > PNG"
+    assert pressed == ["PNG"]
+    with pytest.raises(RuntimeError, match="disabled"):
+        uitree.menu("choose", "File > Export > PDF")
+    with pytest.raises(LookupError, match="there is: Save, Export"):
+        uitree.menu("choose", "File > Print")
+
+
+def test_applescript_reports_errors():
+    from gaze.control import uitree
+
+    assert uitree.applescript("return 6 * 7") == ("42", False)
+    out, error = uitree.applescript("this is not applescript")
+    assert error and "error" in out.lower()

@@ -123,7 +123,7 @@ as well as Camera.
 |---|---|---|
 | 0 · `router.py` | exact phrases, matched by rules | "click", "double click this", "scroll down a lot", "go back", "type hello", "stop", "calibrate", "re-centre", "check accuracy" |
 | 1 · `gate.py` | Jev answers small yes/no questions about the command and the elements near your gaze; a truth table picks the action. It asks a question when something essential is missing, and runs a few actions in a row itself, handing the rest to Claude if a step needs it | "open Safari", "search repositories", "close this tab" (asks to confirm risky ones), "select all and copy", "send it to…" → "Who to?" |
-| 2 · `agent.py` | Claude computer-use loop, told where you were looking while you spoke, plus our own tools: `drag` (any button, with modifiers: Blender's middle-drag orbit), `open_app`, and `blender_python` (runs Python in a Blender opened by voice control, via `apps/blender_bridge.py`) | "open this in a new tab and summarize it", "build me a car in Blender" |
+| 2 · `agent.py` | Claude computer-use loop, told where you were looking while you spoke, with app-agnostic tools beside the screenshot/mouse/keyboard ones (`uitree.py`): any app's menu bar (`menu`), its controls by id (`ui_elements`, `press_element`, `set_value`), AppleScript/JXA, `drag` with any button and modifiers, `open_app`; plus app adapters where an app has its own scripting (`apps/`: Blender via `blender_python`) | "open this in a new tab and summarize it", "export this as PDF", "build me a car in Blender" |
 
 Listening: the default mic (AirPods included), raw; Apple's voice processing (noise suppression, echo
 cancellation) is optional, ◉ → Voice isolation. The lip gate (`lips.py`) only lets speech through while
@@ -134,6 +134,11 @@ ends ~1 s after you stop; only while the gate is open, since it bills per second
 device Whisper `base.en` behind a Silero speech detector. `GAZE_LIP_GATE=shadow` logs what the gate
 would block; `GAZE_VOICE_PROCESSING=1` turns voice isolation on at start. Misheard commands and on-
 screen labels are snapped to what was meant ("closed time" → "close tab").
+
+Typing: "type …" and dictation mode ("start dictation" … "stop dictation") type what you meant, not the
+raw transcript: a fast model (Claude Haiku) uses the app and the text before the cursor to turn "slash btw"
+into `/btw` in a chat box, "dash dash help" into `--help`, spoken punctuation into punctuation, and to drop
+fillers and self-corrections ("at 5, no wait, 6" → "at 6"). Password fields are never read.
 
 "This" means where you looked *while speaking*, snapped to the nearest Accessibility element
 (`snapping.py`). If the tracker wasn't confident then (head turned past what calibration covered),
