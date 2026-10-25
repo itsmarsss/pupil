@@ -94,7 +94,12 @@ class App:
 
     def _start_tracker(self):
         """The tracker runs as its own AppKit app (menu bar ◉, calibration screens) next to our Qt one."""
+        from ..core.paths import GAZE_MODEL_FILE, model_path
+
         cmd = [sys.executable, "-m", "gaze.cli", "--publish"] + (["--recalibrate"] if self.args.calibrate else [])
+        if not model_path(GAZE_MODEL_FILE).exists() and "--appearance" not in self.args.tracker_args:
+            print("No models/gaze_base.mnn: tracking with per-person eye patches (--appearance patches).", flush=True)
+            cmd += ["--appearance", "patches"]
         tracker = subprocess.Popen(cmd + self.args.tracker_args)
         atexit.register(tracker.terminate)
 
