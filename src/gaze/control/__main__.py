@@ -23,6 +23,7 @@ from . import actions, commands, config, macos, router, snapping
 from .agent import Agent
 from .gate import YES, Gate
 from .gaze_client import GazeClient, MouseGaze
+from .lips import LipGate
 from .overlay import Overlay
 from .screen import Screen
 from .voice import CartesiaVoice, TypedInput, Voice
@@ -48,6 +49,8 @@ class App:
         self.geometry = self.qt.primaryScreen().geometry()
         self.events = queue.Queue()  # (kind, payload) from worker threads; handled on the UI thread
         self.gaze = GazeClient() if args.gaze == "eyes" else MouseGaze()
+        self.lips = LipGate(config.LIP_GATE) if args.gaze == "eyes" and config.LIP_GATE != "off" else None
+        self.gaze.lips = self.lips
         self.gaze.start()
         if args.gaze == "eyes" and not args.no_tracker:
             self._start_tracker()
@@ -66,7 +69,16 @@ class App:
         threading.Thread(target=self._command_loop, daemon=True).start()
 
         def on_utterance(text, t0, t1):
-            print(f"[{time.strftime('%H:%M:%S')}] heard: \"{text}\"", flush=True)
+            stamp = time.strftime('%H:%M:%S')
+            if self.lips and self.lips.someone_else(t0, t1):
+                if self.lips.mode == "on":
+                    print(f"[{stamp}] ignored (your lips didn't move): \"{text}\"", flush=True)
+                    self.events.put(("partial", ""))
+                    return
+                print(f"[{stamp}] [shadow] gate would have BLOCKED: \"{text}\"", flush=True)
+            elif self.lips and self.lips.mode == "shadow":
+                print(f"[{stamp}] [shadow] gate would have let through: \"{text}\"", flush=True)
+            print(f"[{stamp}] heard: \"{text}\"", flush=True)
             self.events.put(("speech", (text, t0, t1)))
 
         def on_mic_state(state):
@@ -79,7 +91,8 @@ class App:
             self.overlay.mic = "typing in terminal"
         else:
             voice = CartesiaVoice if config.STT == "cartesia" else Voice
-            voice(on_utterance, on_mic_state, lambda name: self.events.put(("mic_device", name))).start()
+            voice(on_utterance, on_mic_state, lambda name: self.events.put(("mic_device", name)),
+                  on_partial=lambda text: self.events.put(("partial", text)), gate=self.lips).start()
             self.overlay.mic = "loading"
 
         self.timer = QTimer()
@@ -126,6 +139,8 @@ class App:
                 self._on_speech(*payload)
             elif kind == "mic":
                 self.overlay.mic = payload
+            elif kind == "partial":  # words so far, while you're still talking
+                self.overlay.heard = f"{payload}…" if payload else ""
             elif kind == "mic_device":
                 self.overlay.mic_device = payload
             elif kind == "status":
@@ -136,6 +151,8 @@ class App:
 
         o = self.overlay
         o.gaze = self.gaze.point()
+        if self.lips and self.lips.mode == "on":
+            o.gate = "open" if self.lips.would_open() else f"waiting ({self.lips.reason})"
         o.target, o.candidates = self.snap
         o.warning = ("" if self.gaze.connected and not self.gaze.busy
                      else "calibrating" if self.gaze.busy else "no gaze - is the tracker running?")

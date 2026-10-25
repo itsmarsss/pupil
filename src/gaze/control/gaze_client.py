@@ -27,6 +27,7 @@ class GazeClient(threading.Thread):
         self._last_seen = 0.0  # any message: the tracker is running
         self._last_point = 0.0  # a valid point: the tracker can see you
         self.busy = False  # the tracker has a calibration or accuracy check on screen
+        self.lips = None  # a lips.LipGate fed with every tracker message
 
     def run(self):
         while True:
@@ -37,6 +38,8 @@ class GazeClient(threading.Thread):
             now = time.time()
             self._last_seen = now
             self.busy = msg.get("busy", False)
+            if self.lips is not None:
+                self.lips.update(msg, now)
             if "x" not in msg:
                 continue  # no face, blink or uncalibrated: keep the last point
             with self._lock:

@@ -22,6 +22,7 @@ RATE = 16000
 BLOCK_S = 0.03
 END_SILENCE_S = 0.6
 MAX_UTTERANCE_S = 15
+PREROLL_S = 1.5  # audio kept from before the lip gate opens, so a late open loses no words
 HALLUCINATIONS = {"", "you", "thank you", "thanks for watching", "bye"}  # Whisper's favorite outputs on noise
 
 
@@ -77,13 +78,16 @@ def pick_mic():
 
 
 class Voice(threading.Thread):
-    def __init__(self, on_utterance, on_state, on_device=lambda name: None):
+    def __init__(self, on_utterance, on_state, on_device=lambda name: None, on_partial=lambda text: None, gate=None):
         """on_utterance(text, t_start, t_end) with unix timestamps; on_state("listening" | "transcribing" | "idle");
-        on_device(name) whenever the microphone in use changes."""
+        on_device(name) whenever the microphone in use changes; on_partial(text) with words so far (Cartesia only).
+        gate: a lips.LipGate; speech only counts while it is open."""
         super().__init__(daemon=True)
         self.on_utterance = on_utterance
         self.on_state = on_state
         self.on_device = on_device
+        self.on_partial = on_partial
+        self.gate = gate
 
     def run(self):
         from faster_whisper import WhisperModel  # slow import; keep it off the UI thread
@@ -111,7 +115,7 @@ class Voice(threading.Thread):
     def _listen(self, model, blocks, watched):
         """Detect utterances until the system default input changes (then return so run() switches mics)."""
         noise = 0.01
-        preroll = deque(maxlen=10)
+        preroll = deque(maxlen=int(PREROLL_S / BLOCK_S))  # covers the lip gate opening a moment after you start
         speaking, voiced, silence, buf, started = False, 0, 0, [], 0.0
         last_check = time.time()
         while True:
@@ -130,7 +134,7 @@ class Voice(threading.Thread):
                     noise = 0.95 * noise + 0.05 * rms
                 preroll.append(block)
                 voiced = voiced + 1 if rms > threshold else 0
-                if voiced >= 3:
+                if voiced >= 3 and (self.gate is None or self.gate.is_open()):
                     speaking, buf, silence = True, list(preroll), 0
                     started = time.time() - len(preroll) * BLOCK_S
                     self.on_state("listening")
@@ -155,6 +159,8 @@ CARTESIA_URL = "wss://api.cartesia.ai/stt/turns/websocket"
 CARTESIA_VERSION = "2026-03-01"
 CHUNK_S = 0.1  # Cartesia recommends ~100 ms audio chunks
 SPEECH_LEAD_S = 0.3  # turn.start arrives a little after speech begins
+KEEPALIVE_S = 60  # gate closed = nothing sent, and Cartesia drops a connection idle for 180 s: 0.1 s of silence this often
+SILENCE = bytes(int(RATE * CHUNK_S) * 2)
 MAX_FAILURES = 3  # consecutive connection failures before falling back to Whisper
 # Phrases the recognizer should expect (Cartesia keyterms: up to 100 terms, 1200 characters). Running and installed
 # app names fill the rest, so "open Blender" isn't heard as "open blunder".
@@ -216,15 +222,37 @@ class CartesiaVoice(Voice):
         return f"{CARTESIA_URL}?{urllib.parse.urlencode(params, quote_via=urllib.parse.quote)}"
 
     def _stream(self, ws, mic, watched):
-        """Send audio and handle turn events until the connection drops or the default mic changes."""
+        """Send audio and handle turn events until the connection drops or the default mic changes.
+
+        Audio only goes out while the lip gate is open or a turn is in progress (Cartesia bills every second sent).
+        While closed it's kept in a pre-roll buffer, sent first when the gate opens, so the start isn't lost."""
         blocks, stop = queue.Queue(), threading.Event()
+        in_turn = threading.Event()
+        self._opened_at = None  # when the gate last opened: speech started about then
 
         def send_audio():  # off the audio callback, which must never block on the network
+            preroll = deque(maxlen=int(PREROLL_S / CHUNK_S))
+            sending, last_sent = False, time.time()
             while not stop.is_set():
                 try:
-                    ws.send(blocks.get(timeout=0.5))
+                    block = blocks.get(timeout=0.5)
                 except queue.Empty:
                     continue
+                try:
+                    if self.gate is None or self.gate.is_open() or in_turn.is_set():
+                        if not sending:
+                            sending, self._opened_at = True, time.time() - len(preroll) * CHUNK_S
+                            for b in preroll:
+                                ws.send(b)
+                            preroll.clear()
+                        ws.send(block)
+                        last_sent = time.time()
+                    else:
+                        sending = False
+                        preroll.append(block)
+                        if KEEPALIVE_S and time.time() - last_sent > KEEPALIVE_S:
+                            ws.send(SILENCE)
+                            last_sent = time.time()
                 except Exception:
                     stop.set()
 
@@ -245,11 +273,17 @@ class CartesiaVoice(Voice):
                     if kind == "connected":
                         self._failures = 0
                     elif kind == "turn.start":
+                        in_turn.set()
                         started, last_word = time.time() - SPEECH_LEAD_S, time.time()
+                        if self._opened_at is not None:  # pre-roll arrives in a burst: speech began at the gate
+                            started = max(min(started, self._opened_at + PREROLL_S), self._opened_at)
                         self.on_state("listening")
                     elif kind == "turn.update":
                         last_word = time.time()
+                        if msg.get("transcript"):
+                            self.on_partial(msg["transcript"])
                     elif kind == "turn.end":
+                        in_turn.clear()
                         text = msg.get("transcript", "").strip()
                         now = time.time()
                         if text:

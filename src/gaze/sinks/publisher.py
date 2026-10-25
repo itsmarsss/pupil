@@ -2,7 +2,8 @@
 `gaze.control`) can use them, and takes commands back (e.g. "recalibrate").
 
 Points are JSON: {"t": wall-clock seconds, "x", "y": screen points (top-left origin,
-smoothed), "state", "fixation", "confidence", "busy": calibration on screen}.
+smoothed), "state", "fixation", "confidence", "busy": calibration on screen, "mouth": how open
+the mouth is, when a face is visible, for the controller's lip-movement gate}.
 """
 from __future__ import annotations
 
@@ -13,12 +14,23 @@ import threading
 import time
 from typing import Callable
 
-from ..core.types import Sample
+import numpy as np
+
+from ..core.types import FaceObservation, Sample
 
 log = logging.getLogger(__name__)
 
 GAZE_PORT = 47800  # points out
 CMD_PORT = 47801  # commands in
+# MediaPipe face mesh: inner lips (upper, lower) and mouth corners
+LIP_TOP, LIP_BOTTOM, MOUTH_LEFT, MOUTH_RIGHT = 13, 14, 78, 308
+
+
+def mouth_open(face: FaceObservation) -> float | None:
+    """Inner-lip gap over mouth width: ~0 closed, ~0.3+ wide open; independent of distance to the camera."""
+    lm = face.landmarks
+    width = float(np.linalg.norm(lm[MOUTH_LEFT, :2] - lm[MOUTH_RIGHT, :2]))
+    return float(np.linalg.norm(lm[LIP_TOP, :2] - lm[LIP_BOTTOM, :2])) / width if width > 0 else None
 
 
 class GazePublisher:
@@ -38,6 +50,8 @@ class GazePublisher:
                "confidence": round(float(p.confidence), 3), "fixation": p.fixation_id}
         if p.valid:
             msg["x"], msg["y"] = round(float(p.x), 1), round(float(p.y), 1)
+        if s.face is not None and (m := mouth_open(s.face)) is not None:
+            msg["mouth"] = round(m, 4)
         return msg
 
     def on_sample(self, s: Sample) -> None:

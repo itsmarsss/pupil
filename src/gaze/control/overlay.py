@@ -25,6 +25,7 @@ class Overlay(QWidget):
         self.heard = ""
         self.mic = "off"
         self.mic_device = ""
+        self.gate = ""  # lip gate state, when it's on
         self.warning = ""
         self.flash = None  # (x, y) of the last click, drawn briefly
 
@@ -47,6 +48,8 @@ class Overlay(QWidget):
             p.drawEllipse(QPointF(*self.flash), 22, 22)
 
         mic = f"mic: {self.mic_device} · {self.mic}" if self.mic_device else f"mic: {self.mic}"
+        if self.gate:
+            mic += f" · {self.gate}"
         lines = [s for s in (self.warning, mic, f'heard: "{self.heard}"' if self.heard else "",
                              self.status) if s]
         p.setFont(QFont("Helvetica Neue", 14))

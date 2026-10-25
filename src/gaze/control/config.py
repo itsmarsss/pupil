@@ -38,6 +38,9 @@ GAZE_STALE_S = 1.0  # no point for this long = tracker lost you
 CARTESIA_API_KEY = os.environ.get("CARTESIA_API_KEY", "")
 STT = os.environ.get("GAZE_STT", "cartesia" if CARTESIA_API_KEY else "whisper")  # cartesia | whisper
 CARTESIA_MODEL = os.environ.get("GAZE_CARTESIA_MODEL", "ink-2")
+# Lip gate (lips.py): speech counts only while you face the screen and move your lips. on | shadow (log what it
+# would block, block nothing) | off. Eye tracking only; with --gaze mouse there is no face to watch.
+LIP_GATE = os.environ.get("GAZE_LIP_GATE", "on")
 # How sure Ink-2 must be that you're done before ending the turn (0.05-0.5, Cartesia's default 0.2). 0.5 = end
 # soonest: measured ~0.95 s after speech vs ~1.45 s at 0.2; a long mid-sentence pause may split a request.
 CARTESIA_END_THRESHOLD = os.environ.get("GAZE_CARTESIA_END_THRESHOLD", "0.5")
