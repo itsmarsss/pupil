@@ -59,6 +59,7 @@ class VoiceController:
         self._ep: dict | None = None  # episode the worker is handling (one at a time)
         self.lips = LipGate(config.LIP_GATE) if gaze.calibratable and config.LIP_GATE != "off" else None
         gaze.lips = self.lips
+        self._lip_state = None  # last lip-gate state sent to the dashboard
 
     def start(self) -> None:
         threading.Thread(target=self._snap_loop, name="snap", daemon=True).start()
@@ -72,8 +73,6 @@ class VoiceController:
                                on_partial=lambda text: self.events.put(("partial", text)), gate=self.lips)
             self.voice.start()
             self.hud.mic = "loading"
-        self.gaze.report("lip_gate", enabled=self.lips is not None and self.lips.mode == "on",
-                         threshold=self.lips.threshold if self.lips else None)
         if not macos.has_accessibility():
             self.hud.status = "Grant Accessibility permission to your terminal (System Settings > Privacy & Security)."
         self.hud.show()
@@ -97,7 +96,11 @@ class VoiceController:
         if not self.enabled:
             return
         stamp = time.strftime('%H:%M:%S')
-        if self.lips and self.lips.someone_else(t0, t1):
+        someone_else = self.lips.someone_else(t0, t1) if self.lips else False
+        if self.lips:  # the dashboard's Lips plot marks each utterance with the verdict
+            self.gaze.report("lips", t0=round(self.gaze.frame_time(t0), 3), t1=round(self.gaze.frame_time(t1), 3),
+                             moving=not someone_else, why="lips didn't move" if someone_else else "")
+        if someone_else:
             if self.lips.mode == "on":
                 print(f"[{stamp}] ignored (your lips didn't move): \"{text}\"", flush=True)
                 self.events.put(("partial", ""))
@@ -157,8 +160,15 @@ class VoiceController:
                 self.flash_until = time.time() + 0.4
         h = self.hud
         h.gaze = self.gaze.point()
-        if self.lips and self.lips.mode == "on":
-            h.gate = "open" if self.lips.would_open() else f"waiting ({self.lips.reason})"
+        if self.lips:
+            is_open = self.lips.would_open()
+            if self.lips.mode == "on":
+                h.gate = "open" if is_open else f"waiting ({self.lips.reason})"
+            state = (is_open, self.lips.reason, round(self.lips.threshold, 3), round(self.lips.open_above, 3))
+            if state != self._lip_state:  # for the dashboard's Lips plot
+                self._lip_state = state
+                self.gaze.report("lip_gate", mode=self.lips.mode, open=is_open, reason=state[1],
+                                 threshold=state[2], open_above=state[3])
         h.target, h.candidates = self.snap
         h.warning = ("" if self.gaze.connected and not self.gaze.busy
                      else "calibrating" if self.gaze.busy else "no gaze: is the camera on?")

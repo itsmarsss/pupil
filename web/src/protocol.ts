@@ -93,19 +93,25 @@ export interface VoiceState {
   pending?: string | null;
   target?: { x: number; y: number; w: number; h: number; label: string } | null;
   log: { t: number; kind: "heard" | "status" | string; text: string }[];
-  lip_gate?: { enabled: boolean; threshold: number };
+  lip_gate?: LipGateState;
   lips?: LipVerdict[];
 }
 
-/** The lip gate's decision for one utterance; t0/t1 on the frame clock (FrameState.t). */
+/** The live lip gate (control/lips.py): audio only counts while it's open. */
+export interface LipGateState {
+  mode: "on" | "shadow";
+  open: boolean;
+  reason: string; // open | lips still | not looking | no tracker - open
+  threshold: number; // lip movement (max - min over 0.4 s) that opens it; adapts to your resting jitter
+  open_above: number; // or a mouth held open wider than this
+}
+
+/** The gate's verdict on one transcript; t0/t1 on the frame clock (FrameState.t). */
 export interface LipVerdict {
   t0: number;
   t1: number;
-  moving: boolean | null; // null: face seen too little to tell (let through)
-  range?: number; // p10-p90 of mouth openness over the utterance
+  moving: boolean; // false: your face was visible and your lips never moved, so it was dropped
   why?: string;
-  frames: number;
-  face_frames: number;
 }
 
 export type EngineMessage = SceneInfo | CalibrationInfo | FrameState;

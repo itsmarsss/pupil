@@ -43,6 +43,10 @@ class TrackerGaze:
                 self._history.append((self._offset + s.t_ns / 1e9, p.x, p.y, float(p.confidence)))
             self._last_point = now
 
+    def frame_time(self, t: float) -> float:
+        """A time.time() timestamp on the tracker's clock (monotonic seconds, as the dashboard plots use)."""
+        return t - self._offset
+
     @property
     def busy(self) -> bool:
         return self._busy()

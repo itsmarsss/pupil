@@ -15,20 +15,22 @@ export interface Series {
 
 export const SERIES_KEYS = [
   "yaw", "pitch", "roll", "distance", "open_l", "open_r", "confidence", "disagreement", "fps", "latency", "lid",
-  "mouth", "mouth_range",
+  "mouth", "mouth_motion", "lip_open",
 ] as const;
 
-const LIP_WINDOW_S = 1.0; // rolling window for the live mouth-movement range (the gate uses the whole utterance)
+const LIP_WINDOW_S = 0.4; // control/lips.py WINDOW_S
 
-/** p10-p90 range of mouth openness over the last LIP_WINDOW_S: the same statistic the lip gate thresholds. */
-function rollingRange(t: number[], v: (number | null)[]): number | null {
+/** Lip movement as the lip gate measures it: max - min mouth openness over the last LIP_WINDOW_S. */
+function lipMotion(t: number[], v: (number | null)[]): number | null {
   const now = t[t.length - 1];
-  const w: number[] = [];
-  for (let i = t.length - 1; i >= 0 && now - t[i] <= LIP_WINDOW_S; i--) if (v[i] != null) w.push(v[i] as number);
-  if (w.length < 5) return null;
-  w.sort((a, b) => a - b);
-  const q = (p: number) => w[Math.min(w.length - 1, Math.floor(p * (w.length - 1)))];
-  return q(0.9) - q(0.1);
+  let lo = Infinity, hi = -Infinity;
+  for (let i = t.length - 1; i >= 0 && now - t[i] <= LIP_WINDOW_S; i--) {
+    const x = v[i];
+    if (x == null) return null; // the gate forgets the window when the face is lost
+    lo = Math.min(lo, x);
+    hi = Math.max(hi, x);
+  }
+  return hi >= lo ? hi - lo : null;
 }
 
 class EngineStore {
@@ -130,7 +132,9 @@ class EngineStore {
     push("latency", f.latency_ms);
     push("lid", f.lid_deg);
     push("mouth", f.mouth_open);
-    push("mouth_range", rollingRange(s.t, s.mouth));
+    push("mouth_motion", lipMotion(s.t, s.mouth));
+    const gate = f.voice?.lip_gate;
+    push("lip_open", gate ? (gate.open ? 1 : 0) : null);
     while (s.t.length && s.t[s.t.length - 1] - s.t[0] > HISTORY_S) {
       for (const k of Object.keys(s)) s[k].shift();
     }

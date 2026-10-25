@@ -126,10 +126,14 @@ as well as Camera.
 | 2 · `agent.py` | Claude computer-use loop, told where you were looking while you spoke | "open this in a new tab and summarize it" |
 
 Listening: the default mic goes through Apple's voice processing (noise suppression, and the Mac's own
-audio is cancelled out); a speech detector (Silero), not loudness, starts an utterance, so typing and
-clicks don't; and speech while the camera sees your lips still (someone else, a video) is ignored before
-it's transcribed. Whisper `base.en` transcribes on-device. `GAZE_VOICE_PROCESSING=0` / `GAZE_LIP_GATE=0`
-turn the first and last off.
+audio is cancelled out). The lip gate (`lips.py`) only lets speech through while you face the screen and
+your lips move, keeping 1.5 s of audio so a late open loses nothing, and drops transcripts from a visible
+face whose lips never moved (someone else, a video); the dashboard's Lips panel shows it live. Speech goes
+to Cartesia Ink-2 when `CARTESIA_API_KEY` is set (streamed, so the turn ends ~1 s after you stop; only
+while the gate is open, since it bills per second), otherwise to on-device Whisper `base.en` behind a
+Silero speech detector. `GAZE_LIP_GATE=shadow` logs what the gate would block; `GAZE_VOICE_PROCESSING=0`
+uses the raw mic. Misheard commands and on-screen labels are snapped to what was meant ("closed time" →
+"close tab").
 
 "This" means where you looked *while speaking*, snapped to the nearest Accessibility element
 (`snapping.py`). If the tracker wasn't confident then (head turned past what calibration covered),

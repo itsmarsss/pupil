@@ -71,6 +71,11 @@ class LipGate:
     def threshold(self):
         return max(MIN_MOTION, NOISE_FACTOR * self._noise)
 
+    @property
+    def open_above(self):
+        """Mouth opening that counts as talking even without movement (learned rest + OPEN_MIN)."""
+        return self._rest + OPEN_MIN
+
     def is_open(self, now=None):
         """Whether audio should go to the recognizer right now (always True when off or in shadow mode)."""
         return self.mode != "on" or self.would_open(now)
