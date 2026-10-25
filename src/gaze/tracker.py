@@ -110,6 +110,11 @@ class Tracker:
         self._filter = GazeSmoother(PRESETS[name])
 
     @property
+    def last_point(self) -> GazePoint | None:
+        """The newest gaze point (read from the UI thread; a single reference, so no lock needed)."""
+        return self._last_point
+
+    @property
     def pt_per_deg(self) -> float:
         return self.screen.deg_to_pt(1.0, self.distance_mm)
 

@@ -1,71 +1,36 @@
-"""Menu-bar app: launch flow, calibration, validation, overlay and click learning.
+"""Menu-bar app: wires the tracker to the ring, the fullscreen flows, services, menu and outputs.
 
-Everything here runs on the AppKit main thread. The tracker runs inference on its own
-thread; we read its latest point from a 60 Hz timer instead of calling into AppKit
-from that thread.
+Everything here runs on the AppKit main thread. The tracker runs inference on its own thread; the ring
+reads its latest point from a 60 Hz timer instead of calling into AppKit from that thread.
 """
 from __future__ import annotations
 
 import json
 import logging
 import signal
-import threading
 import time
 from pathlib import Path
 
 import numpy as np
-import objc
-from AppKit import (
-    NSApplication,
-    NSApplicationActivationPolicyAccessory,
-    NSEvent,
-    NSEventMaskLeftMouseDown,
-    NSMenu,
-    NSMenuItem,
-    NSObject,
-    NSStatusBar,
-    NSTimer,
-    NSVariableStatusItemLength,
-)
+from AppKit import NSApplication, NSApplicationActivationPolicyAccessory, NSEvent, NSEventMaskLeftMouseDown, NSTimer
 from PyObjCTools import AppHelper
 
-from ..calibration.implicit import evaluate_click, window
-from ..calibration.profile import CLICK, EXPLICIT, MOTION, Profile, ProfileMeta
-from ..calibration.targets import TargetTiming, grid, shuffled
+from ..calibration.profile import CLICK
+from ..calibration.targets import TargetTiming
 from ..core.lid import LidSensor
-from ..core.paths import APP_SUPPORT, recordings_dir
-from ..core.types import TrackingState
-from ..eval.metrics import ValidationResult, append_result, score
+from ..core.paths import APP_SUPPORT
 from ..eval.session import SessionWriter
-from ..sinks.publisher import GazePublisher
-from ..sinks.recorder import GazeRecorder
-from ..sinks.snapper import Element, Snapper
 from ..tracker import Tracker
+from .flows import MOTION_TIMING, Flows
+from .menu import MenuBar
 from .overlay import GazeRing
-from .target_screen import ESC, RETURN, SPACE, TargetScreen, TargetSequence
+from .services import ClickLearner, Recording, SnapService
+from .target_screen import TargetScreen
 
 log = logging.getLogger(__name__)
 
-LAUNCH_CHECK_MAX_DEG = 4.0  # saved calibration is reused if the quick check beats this
-REFIT_EVERY_CLICKS = 8
-MIN_SAMPLES_PER_TARGET = 8
-SNAP_RADIUS_DEG = 2.5
 LID_MOVED_DEG = 4.0  # hinge change since calibration that flags the fit as suspect
-MOTION_TIMING = TargetTiming(dwell_s=6.5, settle_s=0.8, tail_s=0.1)
-MOTION_CHUNK = 15  # score the head-motion sweep in half-second pieces
-
-
-class _MenuTarget(NSObject):
-    """Bridges menu actions (Objective-C selectors) to Python callables."""
-
-    def initWithActions_(self, actions):
-        self = objc.super(_MenuTarget, self).init()
-        if self is not None:
-            self.actions = actions
-        return self
-
-    def run_(self, sender):
-        self.actions[sender.tag()]()
+SMOOTHING_ORDER = ["off", "light", "medium", "strong"]
 
 
 class GazeApp:
@@ -86,632 +51,234 @@ class GazeApp:
     ):
         self.tracker = tracker
         self.screen = tracker.screen
-        self.profile_name = profile_name
-        self.n_targets = n_targets
-        self.force_recalibrate = recalibrate
-        self.results_csv = results_csv or APP_SUPPORT / "validation.csv"
-        self.learn_from_clicks = learn_from_clicks
+        self.options = dict(profile_name=profile_name, n_targets=n_targets, recalibrate=recalibrate,
+                            results_csv=results_csv or APP_SUPPORT / "validation.csv", snap=snap,
+                            record_path=record_path, session_dir=session_dir, measure=measure,
+                            publish=publish, dashboard_port=dashboard_port)
         self.overlay_on = True
-        self.snap_on = snap
-        self._snapper: Snapper | None = None
-        self._snap: tuple[int, Element | None] | None = None  # (fixation id, element)
-        self._snap_pending: int | None = None
-        self.recorder: GazeRecorder | None = None
-        self._record_path = record_path
-        self._session_dir = session_dir
-        self._pending_measure = measure  # run the measurement once the launch flow finishes
-        self._publish = publish  # stream gaze to the voice controller (gaze.control)
-        self._dashboard_port = dashboard_port
-        self.dashboard = None
-        self._phase: tuple[str, tuple | None] = ("idle", None)  # what's on screen, for the dashboard
         self.lid = LidSensor()
-        self._lid_now: float | None = self.lid.angle()
+        self.lid_now: float | None = self.lid.angle()
+        self.clicks = ClickLearner(tracker, learn_from_clicks)
+        self.snapping = SnapService(tracker)
+        self.recording = Recording(tracker)
         self.session: SessionWriter | None = None
-
+        self.dashboard = None
+        self.flows: Flows | None = None
         self.ring: GazeRing | None = None
-        self.targets: TargetScreen | None = None
-        self.timing = TargetTiming()
-        self._busy = False  # calibration/validation on screen
+        self.menu: MenuBar | None = None
         self._last_valid_ns = 0
-        self._click_stats = {"ok": 0, "seen": 0}
-        self._clicks_since_fit = 0
-        self._fitting = False
-        self._status_item = None
-        self._status_line = None
-        self._menu_items: dict[str, NSMenuItem] = {}
-        self._timers = []
-        self._last_result: ValidationResult | None = None
         self._shut_down = False
 
-    # ---- startup -------------------------------------------------------------------
+    # ---- lifecycle --------------------------------------------------------------------
     def run(self) -> None:
-        app = NSApplication.sharedApplication()
-        app.setActivationPolicy_(NSApplicationActivationPolicyAccessory)
+        o = self.options
+        NSApplication.sharedApplication().setActivationPolicy_(NSApplicationActivationPolicyAccessory)
         self.ring = GazeRing(self.screen)
-        self.targets = TargetScreen(self.screen)
+        if o["session_dir"] is not None:
+            self._start_session(o["session_dir"])
+        self.flows = Flows(self.tracker, TargetScreen(self.screen), self.ring, self.lid,
+                           profile_name=o["profile_name"], n_targets=o["n_targets"], results_csv=o["results_csv"],
+                           quit=self.quit, session_label=self._session_label)
+        self.flows.pending_measure = o["measure"]
         self._build_menu()
-        if self.snap_on:
-            self.snap_on = False
+        if o["snap"]:
             self._toggle_snap()
-        if self._record_path is not None:
-            self._start_recording(self._record_path)
-        if self._dashboard_port is not None:
-            self._start_dashboard(self._dashboard_port)
-        if self._publish:
-            publisher = GazePublisher(busy=lambda: self._busy)
-            self.tracker.add_listener(publisher.on_sample)
-            publisher.listen({
-                "recalibrate": lambda: AppHelper.callAfter(self._when_idle, self._calibrate),
-                "validate": lambda: AppHelper.callAfter(self._when_idle, lambda: self._validate(9)),
-            })
-            log.info("publishing gaze to the controller over UDP")
-        if self._session_dir is not None:
-            self.session = SessionWriter(self._session_dir, {
-                "screen_pt": [self.screen.width_pt, self.screen.height_pt],
-                "screen_mm": [self.screen.width_mm, self.screen.height_mm],
-                "timing": vars(self.timing),
-                "motion_timing": vars(MOTION_TIMING),
-                "mode": getattr(getattr(self.tracker.source, "mode", None), "name", ""),
-                "model": self.tracker.model.model_id,
-                "camera": self.tracker.source.source_id,
-                "n_targets": self.n_targets,
-                "lid_deg": self._lid_now,
-            })
-            self.session.context["lid"] = self._lid_now
-            self.tracker.add_frame_listener(self.session.on_frame)
-            log.info("saving calibration/validation frames to %s", self._session_dir)
+        if o["record_path"] is not None:
+            self.recording.start(o["record_path"])
+            self.menu.set_checked("record", True)
+        if o["dashboard_port"] is not None:
+            self._start_dashboard(o["dashboard_port"])
+        if o["publish"]:
+            self._start_publisher()
         self.tracker.start()
-        self._timers.append(NSTimer.scheduledTimerWithTimeInterval_repeats_block_(1 / 60, True, self._tick))
-        self._timers.append(NSTimer.scheduledTimerWithTimeInterval_repeats_block_(1.0, True, self._update_status))
+        NSTimer.scheduledTimerWithTimeInterval_repeats_block_(1 / 60, True, self._tick)
+        NSTimer.scheduledTimerWithTimeInterval_repeats_block_(1.0, True, self._update_status)
         NSEvent.addGlobalMonitorForEventsMatchingMask_handler_(NSEventMaskLeftMouseDown, self._on_click)
         # start the launch flow once the run loop is going
-        NSTimer.scheduledTimerWithTimeInterval_repeats_block_(0.1, False, lambda _t: self._launch())
-        # Python only runs signal handlers while the main thread executes Python code;
-        # the 1 s status timer guarantees that, so Ctrl+C and kill quit cleanly.
+        NSTimer.scheduledTimerWithTimeInterval_repeats_block_(0.1, False, lambda _t: self.flows.launch(o["recalibrate"]))
+        # Python only runs signal handlers while the main thread executes Python code; the 1 s status timer
+        # guarantees that, so Ctrl+C and kill quit cleanly.
         for sig in (signal.SIGINT, signal.SIGTERM):
-            signal.signal(sig, lambda *_: self._quit())
+            signal.signal(sig, lambda *_: self.quit())
         try:
             AppHelper.runEventLoop()
         finally:
             self._shutdown()
 
+    def quit(self) -> None:
+        self._shutdown()
+        AppHelper.stopEventLoop()
+
     def _shutdown(self) -> None:
-        """Idempotent: stopping the AppKit loop may exit the process without unwinding,
-        so every quit path calls this first."""
+        """Idempotent: stopping the AppKit loop may exit the process without unwinding, so every quit path
+        calls this first."""
         if self._shut_down:
             return
         self._shut_down = True
         self.tracker.stop()
         if self.dashboard is not None:
             self.dashboard.stop()
-        self._stop_recording()
-        if self.session is not None:
-            delivered = getattr(self.tracker.source, "delivered", None)
-            if delivered:
-                meta_path = self.session.root / "meta.json"
-                meta = json.loads(meta_path.read_text())
-                meta["delivered"] = list(delivered)
-                meta_path.write_text(json.dumps(meta, indent=2))
-            self.session.close()
-            log.info("session: %d frames in %s", self.session.frames, self.session.root)
+        self.recording.stop()
+        self._close_session()
         if self.tracker.profile is not None and self.tracker.profile.calibrated:
             self.tracker.profile.save()
 
-    def _launch(self) -> None:
-        model_id = self.tracker.model.model_id
-        camera = self.tracker.source.source_id
-        screen_pt = (self.screen.width_pt, self.screen.height_pt)
-        profile = None if self.force_recalibrate else Profile.load(self.profile_name, plane=self.tracker.plane)
-        if profile is not None and profile.meta.matches(model_id, camera, screen_pt) and profile.calibrated:
-            log.info("loaded profile %r (%d targets, %d from clicks)", self.profile_name, profile.n_groups, profile.count(CLICK))
-            self.tracker.profile = profile
-            self._validate(n=3, launch_check=True)
-            return
-        if profile is not None and profile.meta.matches(model_id, camera, screen_pt):
-            self.tracker.profile = profile  # keep its click samples
-        self._intro()
+    # ---- outputs ----------------------------------------------------------------------
+    def _start_session(self, root: Path) -> None:
+        self.session = SessionWriter(root, {
+            "screen_pt": [self.screen.width_pt, self.screen.height_pt],
+            "screen_mm": [self.screen.width_mm, self.screen.height_mm],
+            "timing": vars(TargetTiming()),
+            "motion_timing": vars(MOTION_TIMING),
+            "mode": getattr(getattr(self.tracker.source, "mode", None), "name", ""),
+            "model": self.tracker.model.model_id,
+            "camera": self.tracker.source.source_id,
+            "n_targets": self.options["n_targets"],
+            "lid_deg": self.lid_now,
+        })
+        self.session.context["lid"] = self.lid_now
+        self.tracker.add_frame_listener(self.session.on_frame)
+        log.info("saving calibration/validation frames to %s", root)
 
-    # ---- screens -------------------------------------------------------------------
-    def _intro(self) -> None:
-        self._busy = True
-        self.ring.hide()
-
-        def lines():
-            last = self.tracker.samples_between(time.monotonic_ns() - 500_000_000, time.monotonic_ns())
-            faces = [s.face for s in last if s.face is not None]
-            if not faces:
-                status = "Looking for your face…  make sure it's lit and in view of the camera"
-            else:
-                d = np.median([f.distance_mm for f in faces if f.distance_mm]) / 10
-                hint = "  ·  a bit close" if d < 40 else "  ·  a bit far" if d > 85 else ""
-                status = f"Face found  ·  {d:.0f} cm from the camera{hint}"
-            if getattr(self.tracker.source, "downgraded", False):
-                w, h = self.tracker.source.delivered
-                status += f"  ·  camera is only giving {w}x{h}: close other apps using it"
-            return [
-                "Look at each dot until it shrinks away",
-                f"{self.n_targets} dots, then a few seconds turning your head (about "
-                f"{self.n_targets * self.timing.dwell_s + MOTION_TIMING.dwell_s:.0f} s). Sit the way you normally do.",
-                status,
-                "Press Space to start  ·  Esc to quit",
-            ]
-
-        def on_key(c):
-            if c == SPACE:
-                timer.invalidate()
-                self._calibrate()
-            elif c == ESC:
-                timer.invalidate()
-                self._quit()
-
-        self.targets.show(lines(), on_key=on_key)
-        timer = NSTimer.scheduledTimerWithTimeInterval_repeats_block_(0.25, True, lambda _t: self.targets.set_lines(lines()))
-
-    def _profile_for(self, dim: int) -> Profile:
-        """The current profile, or a new one if there is none or its features differ."""
-        p = self.tracker.profile
-        if p is None or p.X.shape[1] != dim:
-            meta = ProfileMeta(
-                self.profile_name,
-                self.tracker.model.model_id,
-                self.tracker.source.source_id,
-                (self.screen.width_pt, self.screen.height_pt),
-            )
-            p = Profile(meta, dim)
-        p.plane = self.tracker.plane
-        return p
-
-    def _calibrate(self) -> None:
-        self._busy = True
-        self.ring.hide()
-        collected: dict[tuple, tuple[np.ndarray, np.ndarray]] = {}  # target -> (features, eyeball measurements)
-        points = shuffled(grid(self.n_targets, self.screen.width_pt, self.screen.height_pt))
-
-        def on_target(target, onset_ns, end_ns):
-            self._label(None)
-            feats, geos = self._features_for(onset_ns, self.timing)
-            if len(feats) >= MIN_SAMPLES_PER_TARGET:
-                collected[target] = (feats, geos)
-
-        def on_done(cancelled):
-            if cancelled:
-                self._after_cancel()
-                return
-            if len(collected) < len(points) - len(points) // 3:
-                self._message(
-                    ["Couldn't see your eyes clearly", f"Got {len(collected)} of {len(points)} dots. Check lighting and that your face is in view.", "Press Space to try again  ·  Esc to quit"],
-                    {SPACE: self._calibrate, ESC: self._quit},
-                )
-                return
-            self._head_motion(collected)
-
-        TargetSequence(self.targets, points, self.timing, on_target, on_done,
-                       on_start=lambda t, onset: self._label("calib", t, onset)).start()
-
-    def _head_motion(self, dots: dict[tuple, tuple[np.ndarray, np.ndarray]]) -> None:
-        """Hold gaze on one dot while turning the head, so the fit learns to separate
-        head movement from eye movement."""
-        centre = (self.screen.width_pt / 2, self.screen.height_pt / 2)
-        sweep: list[tuple[np.ndarray, np.ndarray]] = []
-
-        def on_target(target, onset_ns, end_ns):
-            self._label(None)
-            feats, geos = self._features_for(onset_ns, MOTION_TIMING)
-            if len(feats):
-                sweep.append((feats, geos))
-
-        def on_done(cancelled):
-            if cancelled:
-                self._after_cancel()
-                return
-            self._finish_calibration(dots, centre, sweep[0] if sweep else None)
-
-        lines = ["Keep looking at the dot", "and slowly turn your head: left, right, up, down"]
-        TargetSequence(self.targets, [centre], MOTION_TIMING, on_target, on_done,
-                       on_start=lambda t, onset: self._label("motion", t, onset), lines=lines).start()
-
-    def _finish_calibration(self, dots: dict[tuple, tuple[np.ndarray, np.ndarray]], centre,
-                            sweep: tuple[np.ndarray, np.ndarray] | None) -> None:
-        profile = self._profile_for(next(iter(dots.values()))[0].shape[1])
-        profile.clear(EXPLICIT, MOTION)  # click samples are kept
-        profile.meta.lid_deg = self.lid.angle()
-        profile.meta.offset_pt = (0.0, 0.0)  # a fresh calibration needs no drift correction
-        for target, (feats, geos) in dots.items():
-            profile.add(feats, target, EXPLICIT, measures=geos)
-        if sweep is not None and len(sweep[0]) >= MIN_SAMPLES_PER_TARGET:
-            profile.add(sweep[0], centre, MOTION, chunk=MOTION_CHUNK, measures=sweep[1])
-        report = profile.fit()
-        if report is None:
-            self._message(["Calibration failed", "Press Space to try again"], {SPACE: self._calibrate, ESC: self._quit})
-            return
-        profile.save()
-        self.tracker.profile = profile
-        self._validate(n=3, launch_check=False)
-
-    def _label(self, phase, target=None, onset_ns: int = 0) -> None:
-        self._phase = (phase or "idle", tuple(target) if target is not None else None)
+    def _session_label(self, phase, target, onset_ns) -> None:
         if self.session is not None:
             self.session.label(phase, target, onset_ns)
 
-    def _features_for(self, onset_ns: int, timing: TargetTiming) -> tuple[np.ndarray, np.ndarray]:
-        """Calibration features and eyeball measurements of the usable frames in a target's window."""
-        start = onset_ns + int(timing.settle_s * 1e9)
-        end = onset_ns + int((timing.dwell_s - timing.tail_s) * 1e9)
-        self.tracker.wait_until(end, timeout=0.2)
-        samples = [s for s in self.tracker.samples_between(start, end)
-                   if s.calib is not None and s.geo is not None and not s.face.is_blinking]
-        if not samples:
-            return np.zeros((0, 0), np.float32), np.zeros((0, 0), np.float32)
-        return np.stack([s.calib for s in samples]), np.stack([s.geo for s in samples])
-
-    def _validate(self, n: int = 9, launch_check: bool = False, phase: str = "valid", then=None,
-                  lines: list[str] | None = None) -> None:
-        """Show `n` dots and score gaze against them. `then(result)` replaces the results
-        screen, for chaining checks; `phase` labels the frames in a saved session."""
-        self._busy = True
-        self.ring.hide()
-        points = shuffled(grid(n, self.screen.width_pt, self.screen.height_pt))
-        per_target: dict[tuple, list] = {}
-        totals = {"frames": 0}
-        distances = []
-
-        def on_target(target, onset_ns, end_ns):
-            self._label(None)
-            start = onset_ns + int(self.timing.settle_s * 1e9)
-            end = onset_ns + int((self.timing.dwell_s - self.timing.tail_s) * 1e9)
-            self.tracker.wait_until(end, timeout=0.2)
-            samples = self.tracker.samples_between(start, end)
-            totals["frames"] += len(samples)
-            per_target[target] = [(s.point.raw_x, s.point.raw_y) for s in samples if s.point.state is TrackingState.TRACKING]
-            distances.extend(s.point.distance_mm for s in samples if s.point.distance_mm)
-
-        def on_done(cancelled):
-            if cancelled:
-                self._after_cancel()
-                return
-            dist = float(np.median(distances)) if distances else self.tracker.distance_mm
-            result = score(per_target, self.screen, dist, totals["frames"])
-            self._last_result = result
-            log.info("validation (%d targets): %s", n, result.summary())
-            try:
-                kind = "launch" if launch_check else phase if phase != "valid" else "quick" if n <= 3 else "manual"
-                append_result(self.results_csv, result, targets=n, kind=kind,
-                              mode=getattr(getattr(self.tracker.source, "mode", None), "name", ""),
-                              model=self.tracker.model.model_id,
-                              fit=self.tracker.profile.report.chosen if self.tracker.profile and self.tracker.profile.report else "")
-            except OSError:
-                log.exception("could not write results")
-            if launch_check and not (result.accuracy_deg <= LAUNCH_CHECK_MAX_DEG):
-                log.info("saved calibration is off (%.1f°)", result.accuracy_deg)
-                off = "no data" if np.isnan(result.accuracy_deg) else f"{result.accuracy_deg:.1f}°"
-                self._message(
-                    [f"Your saved calibration is off ({off})",
-                     "If you've just moved a little, a 2-second re-centre may be enough.",
-                     "Space: re-centre (1 dot)  ·  Return: full calibration  ·  Esc: quit"],
-                    {SPACE: self._recentre, RETURN: self._intro, ESC: self._quit},
-                )
-                return
-            if then is not None:
-                then(result)
-                return
-            acc = "no data" if np.isnan(result.accuracy_deg) else f"{result.accuracy_deg:.1f}°  (about {result.accuracy_pt:.0f} pt)"
-            title = f"Quick check ({n} dots): {acc}" if n <= 3 else f"Accuracy ({n} dots): {acc}"
-            hint = "  ·  Measure from the ◉ menu for a full check" if n <= 3 else ""
-            lines = [title, result.summary() + hint, "Return to start  ·  Space to recalibrate"]
-            self._message(lines, {RETURN: self._start_overlay, SPACE: self._calibrate, ESC: self._start_overlay},
-                          auto_continue=None if n > 3 else 2.5)
-
-        TargetSequence(self.targets, points, self.timing, on_target, on_done,
-                       on_start=lambda t, onset: self._label(phase, t, onset), lines=lines).start()
-
-    def _recentre(self) -> None:
-        """Drift correction: one centre dot; shift every prediction so it lands on the dot."""
-        profile = self.tracker.profile
-        if profile is None or not profile.calibrated:
-            self._intro()
+    def _close_session(self) -> None:
+        if self.session is None:
             return
-        self._busy = True
-        self.ring.hide()
-        centre = (self.screen.width_pt / 2, self.screen.height_pt / 2)
-        got: list = []
+        delivered = getattr(self.tracker.source, "delivered", None)
+        if delivered:  # record what the camera actually sent
+            meta_path = self.session.root / "meta.json"
+            meta = json.loads(meta_path.read_text())
+            meta["delivered"] = list(delivered)
+            meta_path.write_text(json.dumps(meta, indent=2))
+        self.session.close()
+        log.info("session: %d frames in %s", self.session.frames, self.session.root)
 
-        def on_target(target, onset_ns, end_ns):
-            self._label(None)
-            start = onset_ns + int(self.timing.settle_s * 1e9)
-            end = onset_ns + int((self.timing.dwell_s - self.timing.tail_s) * 1e9)
-            self.tracker.wait_until(end, timeout=0.2)
-            got.extend((s.point.raw_x, s.point.raw_y) for s in self.tracker.samples_between(start, end)
-                       if s.point.state is TrackingState.TRACKING)
+    def _remote_commands(self) -> dict:
+        """Commands from the dashboard or the voice controller, run on the main thread."""
+        f = self.flows
 
-        def on_done(cancelled):
-            if cancelled:
-                self._after_cancel()
-                return
-            if len(got) < MIN_SAMPLES_PER_TARGET:
-                self._message(["Couldn't see your eyes", "Space: try again  ·  Return: full calibration"],
-                              {SPACE: self._recentre, RETURN: self._intro, ESC: self._start_overlay})
-                return
-            try:
-                before = profile.meta.offset_pt
-                after = profile.recentre(np.array(got), centre)
-            except ValueError as e:
-                log.info("re-centre refused: %s", e)
-                self._message(["Too far off for a re-centre", "Press Space for a full calibration"],
-                              {SPACE: self._intro, ESC: self._start_overlay})
-                return
-            profile.save()
-            shift = float(np.hypot(after[0] - before[0], after[1] - before[1]))
-            log.info("re-centred by %.0f pt (offset now %.0f, %.0f)", shift, *after)
-            self._validate(n=3, launch_check=False)
+        def on_main(fn):
+            return lambda: AppHelper.callAfter(fn)
 
-        TargetSequence(self.targets, [centre], self.timing, on_target, on_done,
-                       on_start=lambda t, onset: self._label("recentre", t, onset),
-                       lines=["Look at the dot"]).start()
+        return {
+            "recalibrate": on_main(lambda: f.when_idle(f.calibrate)),
+            "recentre": on_main(lambda: f.when_idle(f.recentre)),
+            "check": on_main(lambda: f.when_idle(lambda: f.validate(9))),
+            "validate": on_main(lambda: f.when_idle(lambda: f.validate(9))),
+            "measure": on_main(lambda: f.when_idle(f.measure)),
+            "cycle_smoothing": on_main(self._cycle_smoothing),
+            "toggle_overlay": on_main(self._toggle_overlay),
+        }
 
-    def _measure(self) -> None:
-        """Two 9-dot checks: head still, then head moving naturally."""
-        if self.tracker.profile is None or not self.tracker.profile.calibrated:
-            return
-        self._busy = True
-        self.ring.hide()
-        results = {}
+    def _start_dashboard(self, port: int) -> None:
+        from ..dashboard.server import DashboardServer
 
-        def show_results(moving):
-            results["moving"] = moving
-            fmt = lambda r: "no data" if np.isnan(r.accuracy_deg) else f"{r.accuracy_deg:.1f}° (p95 {r.accuracy_p95_deg:.1f}°, jitter {r.precision_rms_deg:.2f}°)"  # noqa: E731
-            self._message(
-                ["Measurement done", f"Head still:  {fmt(results['still'])}", f"Head moving:  {fmt(moving)}",
-                 f"Distance {results['still'].distance_mm / 10:.0f} cm  ·  Return to continue"],
-                {RETURN: self._start_overlay, ESC: self._start_overlay},
-            )
+        self.dashboard = DashboardServer(self.tracker, context=self._dashboard_context,
+                                         commands=self._remote_commands(), lid=lambda: self.lid_now, port=port)
+        self.dashboard.start()
 
-        def moving_intro(still):
-            results["still"] = still
-            self._message(
-                ["Now move your head naturally", "Follow the dots with your eyes while turning and tilting your head a little.",
-                 "Press Space to start"],
-                {SPACE: lambda: self._validate(9, phase="valid_moving", then=show_results), ESC: self._start_overlay},
-            )
+    def _dashboard_context(self) -> dict:
+        phase, target = self.flows.phase
+        return {"phase": phase, "target": target, "busy": self.flows.busy, "lid_deg": self.lid_now,
+                "smoothing": self.tracker.smoothing, "overlay": self.overlay_on}
 
-        self._message(
-            ["Accuracy measurement", "First 9 dots: keep your head as still as you can. Then 9 more while moving it.",
-             "Press Space to start  ·  Esc to cancel"],
-            {SPACE: lambda: self._validate(9, phase="valid_still", then=moving_intro), ESC: self._start_overlay},
-        )
+    def _start_publisher(self) -> None:
+        from ..sinks.publisher import GazePublisher
 
-    def _message(self, lines, keys: dict, auto_continue: float | None = None) -> None:
-        self._label(None)  # no target on screen: stop saving session frames
-        state = {"done": False}
+        publisher = GazePublisher(busy=lambda: self.flows.busy)
+        self.tracker.add_listener(publisher.on_sample)
+        commands = self._remote_commands()
+        publisher.listen({k: commands[k] for k in ("recalibrate", "validate")})
+        log.info("publishing gaze to the controller over UDP")
 
-        def go(fn):
-            if not state["done"]:
-                state["done"] = True
-                fn()
-
-        self.targets.show(lines, on_key=lambda c: c in keys and go(keys[c]))
-        if auto_continue:
-            NSTimer.scheduledTimerWithTimeInterval_repeats_block_(auto_continue, False, lambda _t: go(keys[RETURN]))
-
-    def _after_cancel(self) -> None:
-        self._label(None)
-        if self.tracker.profile is not None and self.tracker.profile.calibrated:
-            self._start_overlay()
-        else:
-            self._quit()
-
-    def _when_idle(self, fn) -> None:
-        """Remote commands arrive any time; ignore them while a screen is already up."""
-        if not self._busy:
-            fn()
-
-    def _start_overlay(self) -> None:
-        self._label(None)
-        if self._pending_measure:
-            self._pending_measure = False
-            self._measure()
-            return
-        self.targets.hide()
-        self._busy = False
-
-    # ---- per-frame ----------------------------------------------------------------
+    # ---- per frame ------------------------------------------------------------------------
     def _tick(self, _timer) -> None:
-        if self._busy or not self.overlay_on:
+        if self.flows.busy or not self.overlay_on:
             self.ring.hide()
             return
-        p = self.tracker._last_point
+        p = self.tracker.last_point
         now = time.monotonic_ns()
         if p is not None and p.valid:
             self._last_valid_ns = now
-            target = self._snapped(p)
             confidence = min(p.confidence, 0.3) if self.lid_moved else p.confidence
-            if target is not None:
-                self.ring.show_at(*target.centre, fixating=True, confidence=confidence)
+            element = self.snapping.element_for(p)
+            if element is not None:
+                self.ring.show_at(*element.centre, fixating=True, confidence=confidence)
             else:
                 self.ring.show_at(p.x, p.y, fixating=p.fixation_id is not None, confidence=confidence)
         elif now - self._last_valid_ns > 400_000_000:  # brief dropouts (blinks) keep the ring
             self.ring.hide()
 
-    # ---- snapping -------------------------------------------------------------------
-    def _snapped(self, p) -> Element | None:
-        """Element for the current fixation; looked up once per fixation off the main thread."""
-        if not self.snap_on or self._snapper is None or p.fixation_id is None:
-            return None
-        if self._snap is not None and self._snap[0] == p.fixation_id:
-            return self._snap[1]
-        if self._snap_pending is None:
-            self._snap_pending = p.fixation_id
-            radius = self.screen.deg_to_pt(SNAP_RADIUS_DEG, self.tracker.distance_mm)
-            threading.Thread(target=self._lookup, args=(p.fixation_id, (p.x, p.y), radius), daemon=True).start()
-        return None
-
-    def _lookup(self, fixation_id: int, gaze, radius: float) -> None:
-        try:
-            self._snap = (fixation_id, self._snapper.snap(gaze, radius))
-        except Exception:
-            log.exception("snap lookup failed")
-            self._snap = (fixation_id, None)
-        finally:
-            self._snap_pending = None
-
-    # ---- dashboard ------------------------------------------------------------------
-    def _start_dashboard(self, port: int) -> None:
-        from ..dashboard.server import DashboardServer
-
-        def on_main(fn):
-            return lambda: AppHelper.callAfter(fn)
-
-        self.dashboard = DashboardServer(
-            self.tracker,
-            context=self._dashboard_context,
-            commands={
-                "recalibrate": on_main(lambda: self._when_idle(self._calibrate)),
-                "recentre": on_main(lambda: self._when_idle(self._recentre)),
-                "check": on_main(lambda: self._when_idle(lambda: self._validate(9))),
-                "measure": on_main(lambda: self._when_idle(self._measure)),
-                "cycle_smoothing": on_main(self._cycle_smoothing),
-                "toggle_overlay": on_main(self._toggle_overlay),
-            },
-            lid=lambda: self._lid_now,
-            port=port,
-        )
-        self.dashboard.start()
-
-    def _dashboard_context(self) -> dict:
-        phase, target = self._phase
-        return {"phase": phase if self._busy or phase != "idle" else "idle", "target": target,
-                "busy": self._busy, "lid_deg": self._lid_now, "smoothing": self.tracker.smoothing,
-                "overlay": self.overlay_on}
-
-    # ---- recording ------------------------------------------------------------------
-    def _start_recording(self, path: Path | None = None) -> None:
-        path = path or recordings_dir() / time.strftime("gaze-%Y%m%d-%H%M%S.csv")
-        self.recorder = GazeRecorder(path)
-        self.tracker.add_listener(self.recorder.on_sample)
-        log.info("recording gaze to %s", path)
-
-    def _stop_recording(self) -> None:
-        if self.recorder is not None:
-            self.tracker.remove_listener(self.recorder.on_sample)
-            self.recorder.close()
-            log.info("saved %d rows to %s", self.recorder.rows, self.recorder.path)
-            self.recorder = None
-
-    # ---- click learning --------------------------------------------------------------
-    def _on_click(self, event) -> None:
-        if self.recorder is not None:
-            loc = NSEvent.mouseLocation()
-            self.recorder.event("click", float(loc.x), self.screen.to_cocoa_y(float(loc.y)))
-        profile = self.tracker.profile
-        if not self.learn_from_clicks or self._busy or profile is None or not profile.calibrated:
-            return
+    def _on_click(self, _event) -> None:
         loc = NSEvent.mouseLocation()
         click = (float(loc.x), self.screen.to_cocoa_y(float(loc.y)))
-        t = time.monotonic_ns()
-        start, end = window(t)
-        decision = evaluate_click(self.tracker.samples_between(start, end), click, self.tracker.pt_per_deg)
-        self._click_stats["seen"] += 1
-        if not decision.accepted:
-            log.debug("click ignored: %s", decision.reason)
-            return
-        self._click_stats["ok"] += 1
-        profile.add(decision.features, click, CLICK, measures=decision.measures)
-        self._clicks_since_fit += 1
-        if self._clicks_since_fit >= REFIT_EVERY_CLICKS and not self._fitting:
-            self._clicks_since_fit = 0
-            self._fitting = True
-            threading.Thread(target=self._refit, args=(profile,), daemon=True).start()
-
-    def _refit(self, profile: Profile) -> None:
-        try:
-            profile.fit()
-            profile.save()
-        finally:
-            self._fitting = False
-
-    # ---- menu ------------------------------------------------------------------------
-    def _build_menu(self) -> None:
-        actions = [self._calibrate, self._recentre, lambda: self._validate(9), self._measure, self._toggle_overlay,
-                   self._cycle_smoothing, self._toggle_clicks, self._toggle_snap, self._toggle_recording, self._quit]
-        self._menu_target = _MenuTarget.alloc().initWithActions_(actions)
-        menu = NSMenu.alloc().init()
-        self._status_line = menu.addItemWithTitle_action_keyEquivalent_("Starting…", None, "")
-        self._status_line.setEnabled_(False)
-        menu.addItem_(NSMenuItem.separatorItem())
-        for tag, (key, title) in enumerate(
-            [("calibrate", "Recalibrate"), ("recentre", "Re-centre (1 dot)"), ("validate", "Check accuracy"),
-             ("measure", "Measure (head still + moving)"),
-             ("overlay", "Show gaze ring"), ("smoothing", f"Smoothing: {self.tracker.smoothing}"),
-             ("clicks", "Learn from clicks"), ("snap", "Snap to buttons"), ("record", "Record gaze"), ("quit", "Quit")]
-        ):
-            if key == "quit":
-                menu.addItem_(NSMenuItem.separatorItem())
-            item = menu.addItemWithTitle_action_keyEquivalent_(title, "run:", "")
-            item.setTarget_(self._menu_target)
-            item.setTag_(tag)
-            self._menu_items[key] = item
-        self._menu_items["overlay"].setState_(1)
-        self._menu_items["clicks"].setState_(1 if self.learn_from_clicks else 0)
-        self._status_item = NSStatusBar.systemStatusBar().statusItemWithLength_(NSVariableStatusItemLength)
-        self._status_item.button().setTitle_("◉")
-        self._status_item.setMenu_(menu)
+        self.recording.click(click)
+        if not self.flows.busy:
+            self.clicks.on_click(click)
 
     @property
     def lid_moved(self) -> float | None:
         """Degrees the lid has moved since calibration, if beyond LID_MOVED_DEG."""
         prof = self.tracker.profile
-        if prof is None or prof.meta.lid_deg is None or self._lid_now is None:
+        if prof is None or prof.meta.lid_deg is None or self.lid_now is None:
             return None
-        delta = self._lid_now - prof.meta.lid_deg
+        delta = self.lid_now - prof.meta.lid_deg
         return delta if abs(delta) > LID_MOVED_DEG else None
 
+    # ---- menu ------------------------------------------------------------------------
+    def _build_menu(self) -> None:
+        f = self.flows
+        self.menu = MenuBar([
+            ("calibrate", "Recalibrate", f.calibrate),
+            ("recentre", "Re-centre (1 dot)", f.recentre),
+            ("validate", "Check accuracy", lambda: f.validate(9)),
+            ("measure", "Measure (head still + moving)", f.measure),
+            ("overlay", "Show gaze ring", self._toggle_overlay),
+            ("smoothing", f"Smoothing: {self.tracker.smoothing}", self._cycle_smoothing),
+            ("clicks", "Learn from clicks", self._toggle_clicks),
+            ("snap", "Snap to buttons", self._toggle_snap),
+            ("record", "Record gaze", self._toggle_recording),
+            ("-", "", None),
+            ("quit", "Quit", self.quit),
+        ])
+        self.menu.set_checked("overlay", self.overlay_on)
+        self.menu.set_checked("clicks", self.clicks.enabled)
+
     def _update_status(self, _timer) -> None:
-        self._lid_now = self.lid.angle()
+        self.lid_now = self.lid.angle()
         if self.session is not None:
-            self.session.context["lid"] = self._lid_now
-        p = self.tracker._last_point
-        state = p.state.value.replace("_", " ") if p is not None else "starting"
-        parts = [state.capitalize(), f"{self.tracker.fps:.0f} fps", f"{self.tracker.distance_mm / 10:.0f} cm"]
+            self.session.context["lid"] = self.lid_now
+        p = self.tracker.last_point
+        parts = [(p.state.value.replace("_", " ") if p is not None else "starting").capitalize(),
+                 f"{self.tracker.fps:.0f} fps", f"{self.tracker.distance_mm / 10:.0f} cm"]
         prof = self.tracker.profile
         if prof is not None and prof.calibrated:
             parts.append(f"{prof.count(CLICK)} clicks learned")
-        if self._last_result is not None and not np.isnan(self._last_result.accuracy_deg):
-            parts.append(f"last check {self._last_result.accuracy_deg:.1f}°")
+        last = self.flows.last_result
+        if last is not None and not np.isnan(last.accuracy_deg):
+            parts.append(f"last check {last.accuracy_deg:.1f}°")
         if self.lid_moved:
             parts.append(f"lid moved {self.lid_moved:+.0f}° since calibration: check accuracy")
-        self._status_line.setTitle_("  ·  ".join(parts))
+        self.menu.set_status("  ·  ".join(parts))
 
     def _toggle_overlay(self) -> None:
         self.overlay_on = not self.overlay_on
-        self._menu_items["overlay"].setState_(1 if self.overlay_on else 0)
+        self.menu.set_checked("overlay", self.overlay_on)
 
     def _cycle_smoothing(self) -> None:
-        order = ["off", "light", "medium", "strong"]
-        name = order[(order.index(self.tracker.smoothing) + 1) % len(order)]
+        name = SMOOTHING_ORDER[(SMOOTHING_ORDER.index(self.tracker.smoothing) + 1) % len(SMOOTHING_ORDER)]
         self.tracker.set_smoothing(name)
-        self._menu_items["smoothing"].setTitle_(f"Smoothing: {name}")
+        self.menu.set_title("smoothing", f"Smoothing: {name}")
 
     def _toggle_clicks(self) -> None:
-        self.learn_from_clicks = not self.learn_from_clicks
-        self._menu_items["clicks"].setState_(1 if self.learn_from_clicks else 0)
+        self.clicks.enabled = not self.clicks.enabled
+        self.menu.set_checked("clicks", self.clicks.enabled)
 
     def _toggle_snap(self) -> None:
-        if not self.snap_on:
-            if self._snapper is None:
-                self._snapper = Snapper()
-            if not self._snapper.available:
-                self._snapper.request_permission()
-                log.info("snapping needs Accessibility access for this terminal; it starts once granted")
-        self.snap_on = not self.snap_on
-        self._snap = None
-        self._menu_items["snap"].setState_(1 if self.snap_on else 0)
+        self.menu.set_checked("snap", self.snapping.toggle())
 
     def _toggle_recording(self) -> None:
-        if self.recorder is None:
-            self._start_recording()
-        else:
-            self._stop_recording()
-        self._menu_items["record"].setState_(1 if self.recorder is not None else 0)
-
-    def _quit(self) -> None:
-        self._shutdown()
-        AppHelper.stopEventLoop()
+        self.menu.set_checked("record", self.recording.toggle())

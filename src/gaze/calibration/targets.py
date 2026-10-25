@@ -44,6 +44,10 @@ class TargetTiming:
     settle_s: float = 0.45  # ignore samples right after onset (saccade + latency)
     tail_s: float = 0.05  # ignore the last moment as the dot leaves
 
+    def window_ns(self, onset_ns: int) -> tuple[int, int]:
+        """The span of a target's display whose samples are used."""
+        return onset_ns + int(self.settle_s * 1e9), onset_ns + int((self.dwell_s - self.tail_s) * 1e9)
+
     def accepts(self, onset_ns: int, t_ns: int) -> bool:
         dt = (t_ns - onset_ns) / 1e9
         return self.settle_s <= dt <= self.dwell_s - self.tail_s
