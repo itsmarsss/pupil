@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { C } from "../colors";
 import { useEngine } from "../engine";
+import { FitBox } from "./FitBox";
 
 const MIRROR_KEY = "gaze.camera.mirror";
 
@@ -34,7 +35,7 @@ export function CameraView() {
   return (
     <>
       <button className="corner-toggle" onClick={toggle}>{mirror ? "Mirrored" : "Not mirrored"}</button>
-      <div className="media" style={{ aspectRatio: aspect, transform: mirror ? "scaleX(-1)" : undefined }}>
+      <FitBox aspect={aspect} style={{ transform: mirror ? "scaleX(-1)" : undefined }}>
         {imageUrl ? <img src={imageUrl} alt="camera" /> : <div className="placeholder">no image</div>}
         {img && (
           <svg viewBox={`0 0 ${aspect} 1`} preserveAspectRatio="none">
@@ -52,7 +53,7 @@ export function CameraView() {
             </g>
           </svg>
         )}
-      </div>
+      </FitBox>
     </>
   );
 }
