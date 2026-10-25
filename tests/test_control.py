@@ -454,3 +454,29 @@ def test_relative_correction_redoes_the_action_on_the_neighbour(monkeypatch):
     c._last_target = {"action": "close", "target": tabs[1], "candidates": tabs, "t": ctl.time.time()}
     c._relative("right")  # closed the wrong tab: reopen it, then close the right one
     assert shortcuts == ["reopen_tab"] and done[-1] == ("close", "t2")
+
+
+def test_gaze_indicator_shows_the_most_important_state(monkeypatch):
+    from gaze.control import controller as ctl
+    from gaze.control.indicator import Status
+
+    c = ctl.VoiceController.__new__(ctl.VoiceController)
+    c.enabled, c._flash, c._busy_with, c.pending, c.choosing, c.clarifying, c.dictating = True, None, None, None, None, None, False
+    c.speaker = _A(speaking=False)
+    c.agent = _A(busy=False, paused=False, phase=None, doing="", _steps=0)
+    c.hud = _A(mic="idle")
+    assert c._indicator_status() is None  # nothing happening: hidden
+    c.hud.mic = "listening"
+    assert c._indicator_status().state == "listening"
+    c._busy_with = Status("thinking", "thinking")
+    assert c._indicator_status().state == "thinking"  # Jev deciding beats listening
+    c.agent.busy, c.agent._steps = True, 3
+    assert c._indicator_status() == Status("claude", "Claude · step 3")
+    c.agent.phase, c.agent.doing = "acting", "left click"
+    assert c._indicator_status() == Status("acting", "Claude: left click")
+    c.speaker.speaking = True
+    assert c._indicator_status().state == "speaking"
+    c._flash = (Status("done", "✓ clicked"), ctl.time.time() + 1)
+    assert c._indicator_status().label == "✓ clicked"
+    c.enabled = False
+    assert c._indicator_status() is None

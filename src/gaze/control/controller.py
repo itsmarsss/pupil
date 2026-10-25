@@ -8,6 +8,7 @@ to the HUD. Every command is logged as an episode (episodes.py) so routing can b
 """
 from __future__ import annotations
 
+import contextlib
 import queue
 import re
 import threading
@@ -18,6 +19,7 @@ from .agent import Agent
 from .episodes import EpisodeLog, element_dict
 from .gate import CLARIFY_PROMPTS, MAX_CANDIDATES, NO, Gate
 from .hud import Hud
+from .indicator import Indicator, Status
 from .lips import LipGate
 from .screen import Screen
 from .speech import Speaker
@@ -35,6 +37,7 @@ CLARIFY_WINDOW_S = 10.0  # how long an answer to "Which one?" is taken as the an
 MAX_CLAUSES = 3  # longer chains go to the agent whole
 SETTLE_S = {"open_app": 1.5}  # wait after a compound step before deciding the next one; default below
 DEFAULT_SETTLE_S = 0.5
+FLASH_S = 0.9  # how long "✓ clicked" stays on the gaze indicator
 CHOOSE_WINDOW_S = 12.0  # how long "which one?" waits for an answer
 RELATIVE_WINDOW_S = 20.0  # "no, the left one" refers to the last target this recently
 NUMBERS = ["one", "two", "three"]
@@ -86,6 +89,9 @@ class VoiceController:
         self.choosing = None  # "which one?" asked: options, action, deadline
         self._cloud = None  # gaze heat for the command being handled
         self._last_target = None  # what the last element action hit, for "no, the left one"
+        self.indicator = Indicator()  # status pill trailing the gaze
+        self._busy_with: Status | None = None  # the worker is waiting on Jev / the dictation model
+        self._flash: tuple[Status, float] | None = None  # brief "done" / error, until the time given
         self.snap = (None, [])  # (target, candidates) for the live gaze, refreshed by _snap_loop
         self.commands: queue.Queue = queue.Queue()  # commands run one at a time, off the UI thread
         self._typed = typed
@@ -203,6 +209,7 @@ class VoiceController:
                 self.flash_until = time.time() + 0.4
         h = self.hud
         h.gaze = self.gaze.point()
+        self.indicator.update(self._indicator_status(), h.gaze)
         if self.speaker.speaking and self.lips is not None and self.lips.would_open():
             self.speaker.stop()  # barge-in: you started talking (lips, not sound: the speaker would trigger that)
         if self.lips:
@@ -315,6 +322,7 @@ class VoiceController:
             except Exception as e:  # keep the worker alive; show what went wrong
                 ep["error"] = str(e)
                 self._status(f"Error: {e}")
+                self._flash = (Status("error", "error"), time.time() + FLASH_S * 2)
             finally:
                 self._ep = None
                 self.episodes.finish(ep)
@@ -322,7 +330,8 @@ class VoiceController:
     def _handle(self, cmd, t0, t1):
         ep = self._ep
         if cmd.kind == "dictation":
-            text = dictation.format(cmd.args["text"])
+            with self._working("writing", "writing…"):
+                text = dictation.format(cmd.args["text"])
             actions.type_text(text)
             ep.update(route="dictation", typed=text, acted=True)
             self._status(f"Typed: {text[:60]}")
@@ -346,7 +355,8 @@ class VoiceController:
         if self.agent.busy:  # talking to Claude mid-task: it hears this at its next step, if it's meant for it
             if self.gate.available and cmd.kind == "unknown":
                 try:
-                    p, _ = self.gate.is_for_the_task(cmd.text, ep.get("agent_request") or self.agent.request)
+                    with self._working("thinking", "thinking"):
+                        p, _ = self.gate.is_for_the_task(cmd.text, ep.get("agent_request") or self.agent.request)
                 except Exception:
                     p = 1.0  # can't tell: better to pass it on than lose an instruction
                 ep["steer_p"] = round(p, 3)
@@ -405,7 +415,8 @@ class VoiceController:
             fit = None
             if self.gate.available:
                 try:
-                    fit = self.gate.element_fit(cmd.text, gaze, els)
+                    with self._working("thinking", "thinking"):
+                        fit = self.gate.element_fit(cmd.text, gaze, els)
                 except Exception:
                     pass  # heat alone
             shares = heat.scores(els, cloud, fit)
@@ -448,7 +459,8 @@ class VoiceController:
             self._start_agent(request, gaze, target, candidates, app)
             return
         try:
-            d = self.gate.decide(request, gaze, candidates, app, allow_clarify=allow_clarify, cloud=self._cloud)
+            with self._working("thinking", "thinking"):
+                d = self.gate.decide(request, gaze, candidates, app, allow_clarify=allow_clarify, cloud=self._cloud)
         except Exception as e:
             self._status(f"Jev unavailable ({e}); asking Claude...")
             ep["decision"] = "agent"
@@ -657,7 +669,8 @@ class VoiceController:
             d = None
             if sub is not None and sub.kind == "unknown" and self.gate.available:
                 try:
-                    d = self.gate.decide(clause, gaze, candidates, app, allow_clarify=False, allow_compound=False)
+                    with self._working("thinking", "thinking"):
+                        d = self.gate.decide(clause, gaze, candidates, app, allow_clarify=False, allow_compound=False)
                     self._candidates = candidates
                 except Exception as e:
                     step["error"] = str(e)
@@ -683,7 +696,48 @@ class VoiceController:
             return
         self._status(f"Done: {'; '.join(done)}")
 
+    @contextlib.contextmanager
+    def _working(self, state, label):
+        """Show the worker waiting on a model (Jev deciding, dictation being formatted) on the gaze indicator."""
+        self._busy_with = Status(state, label)
+        try:
+            yield
+        finally:
+            self._busy_with = None
+
+    def _indicator_status(self) -> Status | None:
+        """What the gaze indicator shows, most important first; None hides it."""
+        now = time.time()
+        if not self.enabled:
+            return None
+        if self._flash and now < self._flash[1]:
+            return self._flash[0]
+        if self.speaker.speaking:
+            return Status("speaking", "speaking")
+        if self.agent.busy:
+            if self.agent.phase == "acting":
+                return Status("acting", f"Claude: {self.agent.doing}")
+            return Status("claude", f"Claude · step {max(self.agent._steps, 1)}")
+        if self.agent.paused or self.pending:
+            return Status("waiting", 'say "confirm"')
+        if self.choosing is not None:
+            return Status("waiting", "which one?")
+        if self.clarifying is not None and now < self.clarifying[2]:
+            return Status("waiting", "answer?")
+        if self._busy_with is not None:
+            return self._busy_with
+        if self.hud.mic == "listening":
+            return Status("listening", "listening")
+        if self.hud.mic == "transcribing":
+            return Status("hearing", "hearing…")
+        if self.dictating:
+            return Status("dictating", "dictating")
+        return None
+
     def _acted(self, kind, args, where=None):
+        what = {"click": "clicked", "scroll": "scrolled", "key": "pressed", "type": "typed",
+                "open_app": "opened"}.get(kind, "done")
+        self._flash = (Status("done", f"✓ {what}"), time.time() + FLASH_S)
         if self._ep is not None:
             self._ep["acted"] = True
             self._ep.setdefault("actions", []).append({"kind": kind, **args, **({"where": where} if where else {})})
@@ -711,7 +765,8 @@ class VoiceController:
         elif kind == "type":
             actions.click(x, y)
             time.sleep(0.1)  # focus lands before reading the field for context
-            text = dictation.format(args["text"])
+            with self._working("writing", "writing…"):
+                text = dictation.format(args["text"])
             actions.type_text(text)
             if self._ep is not None:
                 self._ep["typed"] = text

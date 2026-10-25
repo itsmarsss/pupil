@@ -98,6 +98,7 @@ class Agent:
         self._on_done, self._steps, self._started = None, 0, 0.0
         self._tools = TOOLS
         self.request = ""
+        self.phase, self.doing = None, ""  # "thinking" | "acting" and which tool, for the gaze indicator
         self.on_reply = lambda text: None  # the run's final or paused message (read aloud)
         self._steer: list[str] = []  # what the user said while the agent was working
         self._steer_lock = threading.Lock()
@@ -183,6 +184,7 @@ class Agent:
             result = "Can't reach the Anthropic API."
         except Exception as e:  # never die silently in the worker thread
             result = f"Agent error: {e}"
+        self.phase, self.doing = None, ""
         self.on_status(result)
         self.on_reply(result)
         if self._on_done is not None and not self.paused:
@@ -227,6 +229,7 @@ class Agent:
                 else:
                     messages.append({"role": "user", "content": steer})
             self.on_status(f"Claude thinking... (step {step + 1})")
+            self.phase, self.doing = "thinking", ""
             self._steps += 1
             t0 = time.perf_counter()
             with self.client.beta.messages.stream(
@@ -342,6 +345,7 @@ class Agent:
                     results.append({"type": "tool_result", "tool_use_id": call.id, "is_error": True, "content": HALT_TEXT})
                     continue
                 self.on_status(f"{call.name.replace('_', ' ')}...")
+                self.phase, self.doing = "acting", call.name.replace("_", " ")
                 try:
                     text, error = self._custom(call.name, call.input)
                 except Exception as e:
@@ -354,6 +358,7 @@ class Agent:
                 results.append({**result, "is_error": True, "content": HALT_TEXT})
                 continue
             self.on_status(f"{call.name.replace('_', ' ')}...")
+            self.phase, self.doing = "acting", call.name.replace("_", " ")
             try:
                 results.append({**result, "content": self.executor.run(call.name, call.input)})
             except Exception as e:  # report to Claude so it can recover
